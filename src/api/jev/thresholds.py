@@ -13,6 +13,11 @@ ATTEMPT_FAILED_NOUL = 0.62
 NEEDS_EXTRA_CONTEXT_NOUL = 0.48
 RANK_CONFIDENCE_FLOOR = 0.38
 MAX_INJECT_ITEMS = 3
+# What the Context Compiler does with the winner: "pointer" names it (title,
+# one line, path) so the agent opens it; "excerpt" pastes the body up to the
+# budgets below. An excerpt cost ~3,150 chars per turn and still had to be
+# opened in full, so pointer is the default.
+RANK_INJECT_MODE = "pointer"
 MAX_INJECT_CHARS = 8000
 PER_ITEM_CHARS = 2800
 

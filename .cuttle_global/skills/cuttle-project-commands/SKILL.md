@@ -167,7 +167,7 @@ the finished Discord text, not a description of it:
 ```json
 { "id": "cause", "type": "checkbox", "value": true,
   "label": "Cause",
-  "line": "• The 2024 halo never wrote to Steam stats, so it vanished on relaunch." }
+  "line": "• The saved setting now persists after relaunch." }
 ```
 
 Also: `POST /api/action-form/run` executes submissions without going through the chat LLM path.

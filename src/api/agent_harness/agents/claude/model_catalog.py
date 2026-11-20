@@ -113,6 +113,7 @@ def _run_claude_initialize() -> Tuple[List[Dict[str, Any]], Optional[List[str]],
             cwd=str(Path.home()),
             env=agent_cli_env(),
             timeout=45,
+            encoding="utf-8", errors="replace",
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return [], None, str(exc)[:200]

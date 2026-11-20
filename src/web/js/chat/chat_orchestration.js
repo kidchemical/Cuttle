@@ -8,6 +8,9 @@
    agent turn. Display decisions live in CuttleChatOrchestrationModel;
    capabilities come in through `create(host)`. Hidden until the
    `orchestrator` flag resolves on.
+   Studio (L4): the same slot draws the header pill with a live dot and
+   Pause / Resume and Stop all inline (same routes). `setWorking(bool)` shows a
+   "Working" pill while a turn runs when no playbook is bound.
    ================================================================ */
 (function (root) {
     'use strict';
@@ -56,7 +59,22 @@
             const el = slot();
             if (!el) return;
             const c = enabled ? M.chip(binding) : null;
+            if (!c && studioOn() && working) {
+                // Studio, not orchestrated: the turn is running. A live "Working" pill, no controls.
+                el.innerHTML = '<span class="chat-orch-studio-pill" role="status" aria-live="polite">'
+                    + '<span class="studio-live-dot" aria-hidden="true"></span>'
+                    + '<span class="chat-orch-working-label">Working</span></span>';
+                el.hidden = false;
+                closePopover();
+                return;
+            }
             if (!c) { el.hidden = true; el.innerHTML = ''; closePopover(); return; }
+            if (studioOn()) {
+                el.innerHTML = studioPillHtml(c);
+                el.hidden = false;
+                if (popover) popover.innerHTML = popoverHtml(c);
+                return;
+            }
             el.innerHTML = '<button type="button" class="chat-supervision-pill is-orchestrator' + (c.missing ? ' is-warn' : '')
                 + (c.hold ? ' is-paused' : '')
                 + '" data-orch-open="1" title="' + esc(c.goal ? 'Goal: ' + c.goal : 'Orchestrator playbook')
@@ -74,6 +92,38 @@
             halt: { label: 'Stop all work', tip: 'Pause, and also stop the running jobs and drop the waiting wake-ups.' },
             resume: { label: 'Resume', tip: 'Let the orchestrator work again. Supervision this paused resumes and waiting wake-ups are delivered.' },
         };
+
+        // ---- Studio header pill (L4) ----
+
+        /** Studio display: the host's answer, else the shared helper. */
+        function studioOn() {
+            if (typeof host.isStudio === 'function') return !!host.isStudio();
+            const display = root.CuttleChatDisplay;
+            return !!(display && typeof display.isStudio === 'function' && display.isStudio());
+        }
+
+        /** Studio pill: live dot while running, the chip text, and Pause / Resume and Stop all inline. */
+        function studioPillHtml(c) {
+            const dot = c.hold ? '' : '<span class="studio-live-dot" aria-hidden="true"></span>';
+            return '<span class="chat-orch-studio-pill">'
+                + '<button type="button" class="chat-supervision-pill is-orchestrator' + (c.missing ? ' is-warn' : '')
+                + (c.hold ? ' is-paused' : '') + '" data-orch-open="1" title="'
+                + esc(c.goal ? 'Goal: ' + c.goal : 'Orchestrator playbook')
+                + '" aria-haspopup="dialog">' + dot + (c.missing ? '⚠ ' : '') + esc(c.text) + '</button>'
+                + c.actions.map((a) => '<button type="button" class="chat-orch-quick' + (a === 'halt' ? ' is-danger' : '')
+                    + '" data-orch-quick="' + a + '" title="' + esc(CONTROL[a].tip) + '">'
+                    + esc(CONTROL[a].label) + '</button>').join('')
+                + '</span>';
+        }
+
+        /** The turn is running (Studio shows "Working" in the header while it is). */
+        let working = false;
+        function setWorking(on) {
+            const next = !!on;
+            if (next === working) return;
+            working = next;
+            render();
+        }
 
         function agentsHtml(agents) {
             if (!agents.length) return '<div class="chat-supervision-empty">No sub-agents yet.</div>';
@@ -165,6 +215,12 @@
 
         function onClick(ev) {
             const t = ev.target;
+            const quick = t.closest && t.closest('[data-orch-quick]');
+            if (quick && slot() && slot().contains(quick)) {
+                closePopover();
+                act(quick.getAttribute('data-orch-quick'));
+                return;
+            }
             const open = t.closest && t.closest('[data-orch-open]');
             if (open && slot() && slot().contains(open)) {
                 if (popover) closePopover(); else openPopover(open);
@@ -331,6 +387,9 @@
 
         doc.addEventListener('click', onClick);
         doc.addEventListener('click', onMenuClick, true);
+        // Studio on/off changes the pill's markup: repaint with the current binding.
+        const display = host.display || root.CuttleChatDisplay;
+        if (display && typeof display.onChange === 'function') display.onChange(() => render());
         root.addEventListener('message', (ev) => {
             if (ev.origin === root.location.origin && ev.data && ev.data.type === 'cuttle-experimental-flags-changed') {
                 syncFlag();
@@ -339,7 +398,7 @@
         doc.addEventListener('visibilitychange', () => { if (doc.visibilityState === 'visible') refresh(); });
         syncFlag();
 
-        return { setSession, refresh, menuHtml, openDialog, isEnabled: () => enabled };
+        return { setSession, refresh, menuHtml, openDialog, isEnabled: () => enabled, setWorking };
     }
 
     root.CuttleChatOrchestration = { create };

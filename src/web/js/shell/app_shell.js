@@ -757,6 +757,7 @@ const PAGE_TITLES = {
     '/agent_profiles_page.html': 'Agents',
     '/ide_page.html': 'IDE',
     '/tasks_page.html': 'Tasks',
+    '/media_page.html': 'Media',
     '/projects_page.html': 'Projects',
     '/settings_page.html': 'Settings',
     '/query_log.html': 'Query log',

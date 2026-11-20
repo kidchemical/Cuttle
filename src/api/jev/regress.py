@@ -210,6 +210,7 @@ def run_pytest(paths: List[str], *, timeout_s: int = T.PYTEST_TIMEOUT_S) -> Dict
             text=True,
             timeout=max(30, int(timeout_s)),
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            encoding="utf-8", errors="replace",
         )
         return {
             "ran": True,

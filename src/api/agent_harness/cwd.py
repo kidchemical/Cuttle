@@ -22,7 +22,7 @@ def _norm(path: str) -> str:
 def cwd_alias_candidates(cwd: str) -> list:
     """Same-repo aliases so git root and ``src/`` / ``source/`` share a session.
 
-    Does **not** include unrelated projects. Cuttle vs Escape Purgatory must
+    Does **not** include unrelated projects. Cuttle vs Demo Game must
     never alias each other.
     """
     out: list = []
@@ -80,9 +80,7 @@ def resolve_harness_cwd(
     2. Nested git worktree one level down (Unity ``source/``, Cuttle ``src/``)
     3. ``fallback`` (registered default project), then process cwd
 
-    Never replace a valid project directory with process cwd. That is how
-    Escape Purgatory chats silently ran inside Cuttle after the harness
-    landed (CH-000164).
+    Never replace a valid project directory with process cwd. This keeps the CLI in the project selected by the user.
     """
     chosen = _existing_dir(project_path)
     if not chosen:

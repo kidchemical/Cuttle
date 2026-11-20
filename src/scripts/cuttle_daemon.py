@@ -419,6 +419,7 @@ def _warn_primary_port_conflicts() -> None:
             capture_output=True,
             text=True,
             timeout=10,
+            encoding="utf-8", errors="replace",
         )
         raw = (result.stdout or "").strip()
         if not raw:
@@ -706,6 +707,7 @@ def _primary_port_listeners() -> List[int]:
                 capture_output=True,
                 text=True,
                 timeout=10,
+                encoding="utf-8", errors="replace",
             )
             for line in (result.stdout or "").splitlines():
                 line = line.strip()
@@ -737,6 +739,7 @@ def _primary_port_listeners() -> List[int]:
             capture_output=True,
             text=True,
             timeout=8,
+            encoding="utf-8", errors="replace",
         )
         for line in (result.stdout or "").splitlines():
             if "pid=" not in line:

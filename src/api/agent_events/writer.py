@@ -191,7 +191,7 @@ class EventWriter:
     def _spool(self,batch):
         try:
             folder=self.root/'pending';folder.mkdir(parents=True,exist_ok=True)
-            (self.root/'capture_status.json').write_text(json.dumps({'error':str(self.error),'at':time.time()}))
+            (self.root/'capture_status.json').write_text(json.dumps({'error':str(self.error),'at':time.time()}), encoding="utf-8")
             path=folder/f'{time.time_ns()}-{uuid4().hex}.json.gz'
             temporary=path.with_suffix('.tmp')
             with temporary.open('wb') as handle:

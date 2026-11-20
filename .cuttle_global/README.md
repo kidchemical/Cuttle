@@ -24,9 +24,7 @@ checkout may surface an ancestor project's actions for compatibility — see
 
 Install-local facts belong under `<home>/personal/` for shared configuration
 or `{project}/.cuttle/personal/` for a project. Rule/doc Markdown merges by
-appending a personal delta to tracked text; supported non-Markdown overlays such
-as action YAML replace by basename. This is not a universal replacement promise
-for every loader or literal script path. See the [overlay contract](../docs/architecture/cuttle-home.md#personal-overlays).
+appending a personal delta to tracked text. See the [overlay contract](../docs/architecture/cuttle-home.md#personal-overlays).
 
 Scratch belongs under `{project}/temp/`; see the scratch invariant in
 `rules/00-core.md`. New projects are scaffolded through

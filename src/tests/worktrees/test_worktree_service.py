@@ -111,6 +111,7 @@ def _branch_exists(repo, branch):
     proc = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "--verify", f"refs/heads/{branch}"],
         capture_output=True, text=True,
+        encoding="utf-8",
     )
     return proc.returncode == 0
 

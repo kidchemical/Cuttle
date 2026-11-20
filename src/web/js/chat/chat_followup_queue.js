@@ -559,11 +559,15 @@
             }
             if (!data || !data.steered) return false;
             if (host.sessionIdsEqual(host.currentSession(), sid)) {
+                const M = root.CuttleChatThreadModel;
                 host.addUserMessage(text, {
                     timestamp: Date.now(),
                     steered: true,
                     steer_idle: !!data.steer_idle,
                     steered_agent: data.agent,
+                    // The receipt starts from the server's reply and follows live status from here.
+                    steer: (M && M.sentReceipt && M.sentReceipt(data)) || undefined,
+                    turn_id: data.turn_id || undefined,
                 });
                 host.autoScroll();
                 host.saveUserMessage(text);

@@ -23,9 +23,18 @@
    Reveal: dispatch `cuttle:reveal` (bubbling) on a row to open its
    thread first (message-nav jumps, find-in-chat).
 
+   Studio (`host.isStudio()`, default CuttleChatDisplay.isStudio()): a steer
+   reply shows its receipt — the label line (↳) above the steer bubble and,
+   on the last covered row only, the agent's reply excerpt below it — from the row's
+   saved receipt (`metadata.steer`, kept on the row as `__cuttleSteer`), overlaid by the live `steers`
+   extra for the current turn. Classic adds no markup at all.
+   The integration calls `refreshReceipts()` when live status changes; that
+   re-renders receipts only, never the transcript.
+
    host: { doc, win, container(), sessionId(), storage, escapeHtml,
            renderHandleLink(handle), avatarHtml(avatar),
-           isFollowingLatest(), revealTop(el) }
+           isFollowingLatest(), revealTop(el),
+           isStudio(), liveSteers(), liveTurnId() }
    Loaded after chat_thread_model.js, before chat_page.js.
    ================================================================ */
 (function (root) {
@@ -54,6 +63,7 @@
         let rafId = 0;
         let saveTimer = 0;
         let applying = false;
+        let unsubscribeDisplay = null;
 
         // Per-chat state, swapped when the chat changes.
         let sid = null;
@@ -149,7 +159,7 @@
             delete el.dataset.threadKey;
             const wrap = el.querySelector(':scope > .message-content-wrapper');
             if (!wrap) return;
-            wrap.querySelectorAll(':scope > .chat-thread-bar, :scope > .chat-thread-subagents, :scope > .chat-thread-tail')
+            wrap.querySelectorAll(':scope > .chat-thread-bar, :scope > .chat-thread-subagents, :scope > .chat-thread-tail, :scope > .chat-thread-receipt, :scope > .chat-thread-excerpt')
                 .forEach((n) => n.remove());
         }
 
@@ -241,6 +251,129 @@
             bar.dataset.threadKey = thread.key;
 
 
+        }
+
+        function studioOn() {
+            if (typeof h.isStudio === 'function') return !!h.isStudio();
+            const display = root.CuttleChatDisplay;
+            return !!(display && display.isStudio && display.isStudio());
+        }
+
+        function liveSteerState() {
+            const steers = typeof h.liveSteers === 'function' ? h.liveSteers() : null;
+            const turnId = typeof h.liveTurnId === 'function' ? h.liveTurnId() : null;
+            return { steers: Array.isArray(steers) ? steers : [], turnId: turnId == null ? '' : String(turnId) };
+        }
+
+        /** The receipt view for one steer row (chat_thread_model.js), or null. */
+        function receiptFor(el, live) {
+            const M = model();
+            if (!M || !M.steerReceipt) return null;
+            const steer = el.__cuttleSteer && typeof el.__cuttleSteer === 'object' ? el.__cuttleSteer : null;
+            const mid = el.dataset.messageId;
+            const row = {
+                messageId: mid != null && mid !== '' ? Number(mid) : null,
+                turnId: String(el.dataset.turnId || el.dataset.queryId || ''),
+                steerIdle: el.dataset.steerIdle === '1',
+                metadata: steer ? { steer } : undefined,
+            };
+            return M.steerReceipt(row, live.steers, live.turnId);
+        }
+
+        /** The label line (↳) that sits above the steer bubble. */
+        function receiptHtml(view) {
+            return '<div class="chat-thread-receipt-label"><span class="chat-thread-receipt-icon" aria-hidden="true">↳</span>'
+                + '<span class="chat-thread-receipt-text">' + esc(view.label) + '</span></div>';
+        }
+
+        /** The agent's reply excerpt that sits below the steer bubble (last covered row only). */
+        function excerptHtml(view) {
+            const M = model();
+            return '<div class="chat-thread-excerpt-label">' + esc(M.EXCERPT_LABEL) + '</div>'
+                + '<p class="chat-thread-excerpt-text">' + esc(view.excerpt) + '</p>';
+        }
+
+        /**
+         * Mount (or remove, when view is null) the receipt around a steer row's
+         * bubble: the label above it, and the excerpt below it when the row carries the reply.
+         */
+        function mountReceipt(el, view) {
+            const wrap = el.querySelector(':scope > .message-content-wrapper');
+            if (!wrap) return;
+            const content = wrap.querySelector(':scope > .message-content');
+            let node = wrap.querySelector(':scope > .chat-thread-receipt');
+            let tail = wrap.querySelector(':scope > .chat-thread-excerpt');
+            if (!view || !content) {
+                if (node) node.remove();
+                if (tail) tail.remove();
+                return;
+            }
+            if (!node) {
+                node = h.doc.createElement('div');
+                node.className = 'chat-thread-receipt';
+                node.setAttribute('data-chat-find-skip', '');
+            }
+            if (node.nextElementSibling !== content) content.insertAdjacentElement('beforebegin', node);
+            node.dataset.state = view.state || '';
+            const html = receiptHtml(view);
+            if (node.__cuttleReceiptHtml !== html) {
+                node.innerHTML = html;
+                node.__cuttleReceiptHtml = html;
+            }
+            if (!view.excerpt) {
+                if (tail) tail.remove();
+                return;
+            }
+            if (!tail) {
+                tail = h.doc.createElement('blockquote');
+                tail.className = 'chat-thread-excerpt';
+                tail.setAttribute('data-chat-find-skip', '');
+            }
+            if (tail.previousElementSibling !== content) content.insertAdjacentElement('afterend', tail);
+            const excerpt = excerptHtml(view);
+            if (tail.__cuttleExcerptHtml !== excerpt) {
+                tail.innerHTML = excerpt;
+                tail.__cuttleExcerptHtml = excerpt;
+            }
+        }
+
+        /**
+         * Re-paint receipts of the current steer rows only (live steers changed).
+         * Covers steers folded into a thread and idle steers that stand on their own row.
+         */
+        function renderReceipts(box, live) {
+            const on = studioOn();
+            // Classic mounts nothing: skip the walk unless a receipt is still on screen.
+            if (!on && !box.querySelector('.chat-thread-receipt, .chat-thread-excerpt')) return;
+            const state = live || liveSteerState();
+            box.querySelectorAll('.message.thread-reply--steer, .message.is-steered').forEach((el) => {
+                if (!el.__cuttleSteer && !el.classList.contains('thread-reply--steer')) return;
+                mountReceipt(el, on ? receiptFor(el, state) : null);
+            });
+        }
+
+        function refreshReceipts() {
+            const box = h.container && h.container();
+            if (!box || !enabled) return;
+            renderReceipts(box);
+        }
+
+        /**
+         * A steer row learned its saved state (history sync, optimistic claim):
+         * copy the receipt and turn id from the server message onto the row and
+         * re-paint. Safe for any row; non-steer messages are left alone.
+         */
+        function stampSteer(el, msg) {
+            if (!el || !msg) return;
+            let meta = msg.metadata;
+            if (typeof meta === 'string') {
+                try { meta = JSON.parse(meta); } catch (_) { meta = null; }
+            }
+            if (!meta || typeof meta !== 'object' || !meta.steer) return;
+            el.__cuttleSteer = meta.steer;
+            const turnId = meta.turn_id || msg.turn_id;
+            if (turnId) el.dataset.turnId = String(turnId);
+            refreshReceipts();
         }
 
         function priorKeys(els) {
@@ -391,6 +524,8 @@
                 if (threadOf[i] < 0) clearRow(el);
             });
             const followLatest = !!(h.isFollowingLatest && h.isFollowingLatest());
+            const studio = studioOn();
+            const live = studio ? liveSteerState() : null;
             grouped.threads.forEach((thread) => {
                 const rootEl = rows[thread.root];
                 const memberEls = [rootEl].concat(thread.replies.map((r) => rows[r.index]));
@@ -425,6 +560,7 @@
                     el.classList.toggle('thread-reply-hidden', !open);
                     el.dataset.threadKey = thread.key;
                     elKey.set(el, thread.key);
+                    mountReceipt(el, studio && r.kind === 'steer' ? receiptFor(el, live) : null);
                 });
                 const preview = (!open && (unreadCount || thread.live)) ? previewFor(thread, rows) : '';
                 mountBar(rootEl, thread, open, unreadCount, preview);
@@ -447,7 +583,7 @@
 
         function insideOwnUi(node) {
             const el = node && (node.nodeType === 1 ? node : node.parentElement);
-            return !!(el && el.closest && el.closest('.chat-thread-bar, .chat-thread-subagents'));
+            return !!(el && el.closest && el.closest('.chat-thread-bar, .chat-thread-subagents, .chat-thread-receipt, .chat-thread-excerpt'));
         }
 
         function onMutations(list) {
@@ -543,6 +679,11 @@
             started = true;
             const box = h.container && h.container();
             if (box) observe(box);
+            // Studio on/off changes which rows carry a receipt: re-settle at once.
+            const display = root.CuttleChatDisplay;
+            if (!unsubscribeDisplay && display && typeof display.onChange === 'function') {
+                unsubscribeDisplay = display.onChange(() => reconcile());
+            }
             reconcile();
         }
 
@@ -572,7 +713,7 @@
                 .catch(() => enabled);
         }
 
-        return { start, setEnabled, syncFlag, reconcile, reveal, flush: flushSave,
+        return { start, setEnabled, syncFlag, reconcile, reveal, refreshReceipts, stampSteer, flush: flushSave,
             resetView: (id) => loadSession(id == null ? null : String(id)) };
     }
 

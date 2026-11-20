@@ -403,7 +403,7 @@ def test_host_fingerprint_matches_client_pin(monkeypatch, tmp_path):
     tls_cert.ensure_certificate(lan_ip="192.168.1.30")
     second = tls_cert.current_fingerprint()
     assert first["spki_sha256"] == second["spki_sha256"]
-    pem = Path(cert_path).read_text()
+    pem = Path(cert_path).read_text(encoding="utf-8")
     from cryptography import x509
     from cryptography.hazmat.primitives.serialization import Encoding
 
@@ -1088,7 +1088,7 @@ def test_packaged_python_is_bundled_only(tmp_path):
     daemon_py = tmp_path / "daemon-python"
     for p in (venv, daemon_py):
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("")
+        p.write_text("", encoding="utf-8")
     script = (
         "const fs = require('fs'); const path = require('path');\n"
         "const app = { isPackaged: true };\n"

@@ -3,6 +3,7 @@
 Contracts pinned here:
 - the toolbar offers the quick replies and Reply, each quick one canned;
 - a clip needs selected text and a reply; quotes are trimmed and capped;
+- editing a clip keeps its quote; an edited quick reply becomes a typed one;
 - a clip is sent as a Markdown blockquote followed by its reply, clips ahead
   of the typed text — except typed slash commands, which stay first;
 - the toolbar sits above the selection, below when there is no room (or on
@@ -26,7 +27,7 @@ node_only = pytest.mark.skipif(shutil.which("node") is None, reason="node not av
 
 
 def _node(script: str) -> None:
-    proc = subprocess.run(["node", "-e", script, str(OWNER)], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["node", "-e", script, str(OWNER)], capture_output=True, text=True, timeout=30, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
 
 
@@ -54,6 +55,14 @@ const long = Q.normalizeQuote('x'.repeat(Q.MAX_QUOTE_CHARS + 50));
 assert.strictEqual(long.length, Q.MAX_QUOTE_CHARS + 1);
 assert.ok(long.endsWith('…'));
 assert.strictEqual(Q.excerpt('one\n two   three', 9), 'one two…');
+
+// Editing keeps the quote; a changed quick reply becomes a typed one.
+const typed = Q.makeClip('reply', 'q', 'first');
+assert.deepStrictEqual(Q.editClip(typed, ' second '), { action: 'reply', quote: 'q', reply: 'second' });
+const agree = Q.makeClip('agree', 'q');
+assert.strictEqual(Q.editClip(agree, 'I agree with this.').action, 'agree');
+assert.deepStrictEqual(Q.editClip(agree, 'Agreed, ship it'), { action: 'reply', quote: 'q', reply: 'Agreed, ship it' });
+assert.strictEqual(Q.editClip(typed, '  '), null);
 """)
 
 

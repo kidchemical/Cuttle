@@ -111,12 +111,12 @@ def test_electron_launch_argv_opens_the_host_profile(tmp_path, monkeypatch):
     import core.runtime_paths as rp
 
     exe = tmp_path / "Cuttle.exe"
-    exe.write_text("")
+    exe.write_text("", encoding="utf-8")
     monkeypatch.setattr(rp, "electron_packaged_exe", lambda _root: exe)
     assert rp.electron_launch_argv(tmp_path)[-1] == "--mode=host"
 
     dev = tmp_path / "electron.exe"
-    dev.write_text("")
+    dev.write_text("", encoding="utf-8")
     monkeypatch.setattr(rp, "electron_packaged_exe", lambda _root: None)
     monkeypatch.setattr(rp, "electron_dev_bin", lambda _root: dev)
     argv = rp.electron_launch_argv(tmp_path)
@@ -131,8 +131,8 @@ def test_windows_dev_electron_prefers_the_real_binary(tmp_path, monkeypatch):
     bin_dir = tmp_path / "electron" / "node_modules"
     (bin_dir / ".bin").mkdir(parents=True)
     (bin_dir / "electron" / "dist").mkdir(parents=True)
-    (bin_dir / ".bin" / "electron.cmd").write_text("")
-    (bin_dir / "electron" / "dist" / "electron.exe").write_text("")
+    (bin_dir / ".bin" / "electron.cmd").write_text("", encoding="utf-8")
+    (bin_dir / "electron" / "dist" / "electron.exe").write_text("", encoding="utf-8")
     assert rp.electron_dev_bin(tmp_path).name == "electron.exe"
 
 

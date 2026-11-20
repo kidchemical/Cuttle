@@ -774,3 +774,54 @@ def test_personal_only_rule_triggers_delta(fake_stores, fake_globals, tmp_path):
     (personal / "09-local.md").write_text("local only", encoding="utf-8")
     delta = delta_text("S-pers-only", "cursor", path)
     assert delta is not None and "09-local.md" in delta
+
+
+# --- bare turns (api.cuttle_brain.bare) ---
+
+
+def _run_model(monkeypatch, manifest, adapter, prompt, sid, project, model):
+    from api.agent_harness import kernel
+
+    monkeypatch.setattr(
+        kernel, "get_agent", lambda _id, project_path=None: (manifest, adapter)
+    )
+    monkeypatch.setattr(
+        "api.chat_run_registry.begin_run", lambda _s, _q: threading.Event()
+    )
+    return kernel.run_agent_web_command(
+        manifest.id, prompt, sid, project_path=str(project), model_override=model
+    )
+
+
+def test_bare_model_gets_the_typed_request_only(fake_stores, tmp_path, monkeypatch):
+    """A plain-chat model behind a harness used to receive the whole briefing."""
+    from api.cuttle_brain import bare
+
+    guest = _guest(tmp_path)
+    manifest, adapter = _manifest(), _FakeAdapter()
+    monkeypatch.setattr(bare, "bare_model_patterns", lambda: [f"{manifest.id}:web/*"])
+
+    _run_model(monkeypatch, manifest, adapter, "draw a fox", "S-bare", guest, "web/chat-1")
+    assert adapter.prompts[-1] == "draw a fox"
+
+    # Another model of the same harness still gets the full briefing.
+    _run_model(monkeypatch, manifest, adapter, "fix the bug", "S-full", guest, "other/model")
+    assert FULL_PREAMBLE in adapter.prompts[-1]
+
+
+def test_bare_manifest_and_pattern_matching():
+    from types import SimpleNamespace
+
+    from api.cuttle_brain import bare
+
+    assert bare.is_bare_turn(SimpleNamespace(id="plain", context="bare"), None)
+    full = SimpleNamespace(id="opencode", context="full")
+    assert not bare.is_bare_turn(full, "g4f/gpt-6")  # no pattern configured
+    import pytest
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(bare, "bare_model_patterns", lambda: ["opencode:g4f/*"])
+        assert bare.is_bare_turn(full, "g4f/gpt-6")
+        assert not bare.is_bare_turn(full, "openai/gpt-4o")
+        assert not bare.is_bare_turn(full, None)  # unpinned: nothing to match
+        assert not bare.is_bare_turn(SimpleNamespace(id="codex", context="full"), "g4f/gpt-6")

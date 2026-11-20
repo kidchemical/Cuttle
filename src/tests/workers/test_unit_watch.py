@@ -278,7 +278,7 @@ def test_a_poll_from_another_process_skips_while_the_lock_is_held(monkeypatch, t
     with jw._PollLock() as lock:
         assert lock.acquired
         proc = subprocess.run([sys.executable, "-m", "api.job_watch", "poll-units"], capture_output=True,
-                              text=True, timeout=60, env=env, cwd=str(src))
+                              text=True, timeout=60, env=env, cwd=str(src), encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout.strip().splitlines()[-1]) == {"resolved": []}
     assert len(jw.unit_watch_records()) == 1 and _notices() == []
@@ -305,9 +305,9 @@ def _strand_claim(monkeypatch, *, queued):
     info = _register()
     [record] = jw.unit_watch_records()
     claimed = jw._claim_record(record)
-    data = json.loads(claimed.read_text())
+    data = json.loads(claimed.read_text(encoding="utf-8"))
     data.update(claimed_by=999999, claimed_ts=jw.time.time() - jw.UNIT_WATCH_CLAIM_STALE_SEC - 5)
-    claimed.write_text(json.dumps(data))
+    claimed.write_text(json.dumps(data), encoding="utf-8")
     if queued:
         jw._post_unit_resume(record, {"state": "done", "exit": 0})
     monkeypatch.setattr(jw, "pid_alive", lambda pid: False)

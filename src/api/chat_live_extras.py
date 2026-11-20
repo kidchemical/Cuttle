@@ -12,6 +12,11 @@ each chat's payload:
   chat bound to an orchestration (``api.orchestrator.control.state``); with
   ``background.watchers`` it lets the chat say what will wake it next
 
+- ``thinking``: the running turn's reasoning so far, the tail of what its
+  reply will carry in ``<think>`` (``api.agent_harness.reasoning_reply
+  .live_thinking``); ``''`` while idle. The live bubble shows it collapsed
+  (``chat_live_thinking.js``)
+
 Each owner failing degrades to its empty value; live-status never fails on it.
 """
 
@@ -39,4 +44,21 @@ def live_status_extras(session_id: Any) -> Dict[str, Any]:
         orchestration = state(session_id)
     except Exception:
         orchestration = ""
-    return {"subagents": subagents, "background": background, "orchestration": orchestration}
+    thinking = ""
+    try:
+        from api.chat_live_status import get_live_status
+
+        live = get_live_status(session_id) or {}
+        if live.get("active") and live.get("query_id"):
+            from api.agent_harness.reasoning_reply import live_thinking
+
+            thinking = live_thinking(live["query_id"])
+    except Exception:
+        thinking = ""
+    try:
+        from api.agent_harness.steer_receipts import live
+        steers = live(session_id)
+    except Exception:
+        steers = []
+    return {"steers": steers, "subagents": subagents, "background": background, "orchestration": orchestration,
+            "thinking": thinking}

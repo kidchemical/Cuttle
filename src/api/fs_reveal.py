@@ -60,6 +60,7 @@ def _launch_default_app(argv: list[str]) -> None:
     proc = subprocess.Popen(
         argv, env=desktop_launch_environment(), stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE, text=True, close_fds=True,
+        encoding="utf-8", errors="replace",
     )
     try:
         _, stderr = proc.communicate(timeout=2)

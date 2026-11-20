@@ -24,6 +24,7 @@
         let popover = null;
         let seq = 0;
         let pauseMenuFor = null;
+        let studio = null; // Studio panel state while one is open (see openStudioPanel)
 
         const slot = () => doc.getElementById(host.slotId || 'chatSupervisionSlot');
         const now = () => host.now() / 1000;
@@ -53,7 +54,12 @@
             if (!enabled || !sid) { overview = null; render(); reportSupervised(session, false); return; }
             try {
                 const data = await call('GET', '/api/chat-ops/sessions/' + sid);
-                if (mine === seq) { overview = data; render(); reportSupervised(session, M.isSupervised(data), M.supervisorOf(data)); }
+                if (mine === seq) {
+                    overview = data;
+                    render();
+                    reportSupervised(session, M.isSupervised(data), M.supervisorOf(data));
+                    if (studio) loadStudio(false);
+                }
             } catch (_) {
                 if (mine === seq) { overview = null; render(); }
             }
@@ -100,7 +106,9 @@
             }
             el.innerHTML = parts.join('');
             el.hidden = false;
-            if (popover && popover.__key) {
+            if (popover && popover.__key && popover.__key.studio) {
+                studioPaint();
+            } else if (popover && popover.__key) {
                 const still = popoverContent(popover.__key.kind, popover.__key.id, v);
                 if (still) popover.innerHTML = still; else closePopover();
             }
@@ -189,8 +197,16 @@
             return '';
         }
 
+        function placeAt(anchor) {
+            const r = anchor.getBoundingClientRect();
+            const W = host.viewportWidth();
+            popover.style.top = Math.round(r.bottom + 6) + 'px';
+            popover.style.left = Math.round(Math.max(8, Math.min(r.left, W - popover.offsetWidth - 8))) + 'px';
+        }
+
         function openPopover(kind, id, anchor) {
             closePopover();
+            if ((kind === 'chip' || kind === 'badge') && studioOn()) { openStudioPanel(kind, id, anchor); return; }
             const v = overview && M.view(overview, now());
             const html = v && popoverContent(kind, id, v);
             if (!html) return;
@@ -200,15 +216,130 @@
             popover.__key = { kind, id };
             popover.innerHTML = html;
             doc.body.appendChild(popover);
-            const r = anchor.getBoundingClientRect();
-            const W = host.viewportWidth();
-            popover.style.top = Math.round(r.bottom + 6) + 'px';
-            popover.style.left = Math.round(Math.max(8, Math.min(r.left, W - popover.offsetWidth - 8))) + 'px';
+            placeAt(anchor);
+        }
+
+        // ---- Studio panel: the chip and the worker's "Supervised by" badge open a
+        // timeline panel instead of the Classic popover. Read from the projection
+        // route; Classic markup and behaviour are untouched.
+
+        function studioOn() {
+            if (typeof host.isStudio === 'function') return !!host.isStudio();
+            return !!(root.CuttleChatDisplay && root.CuttleChatDisplay.isStudio());
+        }
+
+        // Which schedules the panel covers and whose timeline it reads. The chip's panel
+        // is the supervisor's whole view; a badge's panel is the supervisor's timeline
+        // narrowed to this chat (the server returns every chat the supervisor runs).
+        function studioScope(kind, id) {
+            if (!overview) return null;
+            if (kind === 'chip') {
+                const sid = numericSession(session);
+                const own = overview.supervising || [];
+                if (!sid || !own.some((s) => s.id === id)) return null;
+                return { sid, filterChat: '', schedules: own, title: '' };
+            }
+            const one = (overview.supervised_by || []).find((s) => s.id === id);
+            const n = one ? Number(String(one.supervisor || '').replace(/^CH-/, '')) : 0;
+            const worker = String(overview.handle || '');
+            if (!(n > 0) || !worker) return null;
+            return {
+                sid: String(n),
+                filterChat: worker,
+                schedules: overview.supervised_by.filter((s) => s.supervisor === one.supervisor),
+                title: 'Supervised by ' + one.supervisor,
+            };
+        }
+
+        function studioPaint() {
+            if (!popover || !studio) return;
+            const scope = studioScope(studio.kind, studio.id);
+            if (!scope) { closePopover(); return; }
+            const picked = scope.filterChat ? M.filterChat(studio.items, scope.filterChat) : studio.items;
+            const rows = M.timelineRows(picked, now());
+            const chats = new Set(rows.map((r) => r.chat).filter(Boolean));
+            popover.innerHTML = M.panelHeaderHtml(M.panelHeader(scope.schedules, { title: scope.title }))
+                + M.timelineHtml(rows, {
+                    loading: studio.loading, error: studio.error, more: !!studio.nextBefore,
+                    showChat: !scope.filterChat && chats.size > 1,
+                })
+                + studioControls();
+        }
+
+        // The schedule's own controls (Open, Edit, Pause/Resume, Cancel): the same
+        // markup and handlers as the Classic popover, under the timeline.
+        function studioControls() {
+            const v = overview && M.view(overview, now());
+            if (!v || !studio) return '';
+            if (studio.kind === 'chip') {
+                const c = v.chips.find((x) => x.id === studio.id);
+                return c ? controls(c.id, c.paused, c.target, 'Open ' + c.target) : '';
+            }
+            const b = v.badges.find((x) => x.id === studio.id);
+            return b ? controls(b.id, b.paused, b.supervisor, 'Open ' + b.supervisor) : '';
+        }
+
+        // First page on open and on each refresh (the poll path); "Show older" appends.
+        // A response for a panel that was closed or re-opened in the meantime is dropped.
+        async function loadStudio(older) {
+            const st = studio;
+            if (!st || !popover || (older && !st.nextBefore)) return;
+            const before = older ? st.nextBefore : '';
+            // A background refresh never interrupts a "Show older" request in flight.
+            if (!older && st.loadingOlder) return;
+            const mine = ++st.seq;
+            // "Loading…" shows for the first page and for "Show older", not for a
+            // background refresh of rows already on screen.
+            st.loading = older || !st.items.length;
+            st.loadingOlder = !!older;
+            st.error = '';
+            studioPaint();
+            const q = '?limit=50' + (before ? '&before=' + encodeURIComponent(before) : '');
+            try {
+                const data = await call('GET', '/api/chat-ops/sessions/' + st.sid + '/timeline' + q);
+                if (studio !== st || st.seq !== mine) return;
+                const page = Array.isArray(data.items) ? data.items : [];
+                if (older) {
+                    st.items = M.mergeItems(st.items, page);
+                    st.nextBefore = data.next_before || null;
+                    st.paged = true;
+                } else if (!st.paged) {
+                    st.items = M.mergeItems(page);
+                    st.nextBefore = data.next_before || null;
+                } else {
+                    // Older pages are already loaded: keep the cursor, take the newer rows.
+                    st.items = M.mergeItems(page, st.items);
+                }
+                st.loading = false;
+                st.loadingOlder = false;
+            } catch (e) {
+                if (studio !== st || st.seq !== mine) return;
+                st.loading = false;
+                st.loadingOlder = false;
+                st.error = String(e.message || e);
+            }
+            studioPaint();
+        }
+
+        function openStudioPanel(kind, id, anchor) {
+            if (!studioScope(kind, id)) return;
+            popover = doc.createElement('div');
+            popover.className = 'sup-studio-panel';
+            popover.setAttribute('role', 'dialog');
+            popover.setAttribute('aria-label', 'Supervision timeline');
+            popover.__key = { kind, id, studio: true };
+            studio = { kind, id, sid: studioScope(kind, id).sid, items: [], nextBefore: null, paged: false,
+                loading: true, error: '', seq: 0 };
+            studioPaint();
+            doc.body.appendChild(popover);
+            placeAt(anchor);
+            loadStudio(false);
         }
 
         function closePopover() {
             if (popover) { popover.remove(); popover = null; }
             pauseMenuFor = null;
+            studio = null;
         }
 
         async function act(verb, id, choice) {
@@ -249,6 +380,7 @@
                 return;
             }
             if (popover && popover.contains(t)) {
+                if (t.closest && t.closest('[data-sup-more]')) { loadStudio(true); return; }
                 const chosen = t.closest('[data-sup-pause]');
                 if (chosen) {
                     act('pause', chosen.getAttribute('data-sup-id'), chosen.getAttribute('data-sup-pause'));
@@ -360,6 +492,12 @@
                     + M.CHECKPOINTS.map(cpRow).join('')
                     + '<p class="chat-supervision-meta">On top of the interval and the usual stops (question, error, open'
                     + ' Tasks, branch rules). “Stop the chat” halts it until the supervisor or you send it on.</p></fieldset>'
+                + '<fieldset class="chat-supervision-tasks"><legend>System care</legend>'
+                    + M.SYSTEM_CARE.map((c) => '<label class="chat-supervision-task"><span>'
+                        + esc(c.label) + ' <small>' + esc(c.hint) + '</small></span><input type="checkbox" role="switch" name="sys_'
+                        + c.id + '"' + (d.system[c.id] ? ' checked' : '') + '></label>').join('')
+                    + '<p class="chat-supervision-meta">The host measures; the supervisor decides what to end. It never'
+                    + ' ends a working chat’s processes or a Cuttle host.</p></fieldset>'
                 + '<details class="chat-supervision-advanced"><summary>Advanced: Focus notes and model guidance</summary>'
                 + '<div class="chat-supervision-focus"><div class="chat-supervision-focus-head"><span>Focus (optional)</span>'
                 + '<button type="button" class="chat-supervision-focus-edit" data-sup-focus-edit aria-label="Edit Focus" title="Edit Focus">✎</button></div>'
@@ -473,6 +611,7 @@
                     agent: fd.get('agent'), model: fd.get('model'), effort: fd.get('effort'), every: Number(fd.get('every')), instructions: fd.get('instructions'),
                     requiredBranch: fd.get('requiredBranch'), forbidden: forbidden.slice(),
                     involveUser: fd.get('involveUser'), nudge: fd.get('nudge'),
+                    system: Object.fromEntries(M.SYSTEM_CARE.map((c) => [c.id, fd.get('sys_' + c.id) != null])),
                     worker: fd.get('worker'), expert: fd.get('expert'), taskIds: fd.getAll('taskIds'),
                     checkpoints: Object.fromEntries(M.CHECKPOINTS.map((c) => [c.id, {
                         on: fd.get('cp_on_' + c.id) != null, do: fd.get('cp_do_' + c.id) || 'wake',

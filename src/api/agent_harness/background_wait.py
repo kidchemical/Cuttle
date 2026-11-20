@@ -115,6 +115,13 @@ class BackgroundWait:
         self._row: Optional[Dict[str, Any]] = None
         # Run-log events before the first reply's query id is known (bind).
         self._log_pending: List[Dict[str, Any]] = []
+        # This run's own steer registration (api.agent_harness.steer): a send
+        # into the wait must reach *this* CLI, never a replacement's.
+        self.steer_token: Optional[int] = None
+
+    def claim_steer(self, token: Optional[int]) -> None:
+        """The CLI's steer registration token (None once it unregisters)."""
+        self.steer_token = token
 
     # -- CLI side ---------------------------------------------------------
 
@@ -142,6 +149,16 @@ class BackgroundWait:
     @property
     def running(self) -> bool:
         return self._state == "running"
+
+    @property
+    def base_turn(self) -> str:
+        """Turn id (query id) of the turn this detached run still belongs to.
+
+        A steer into this wait joins that turn, and its receipt is fenced
+        against it (``api.agent_harness.steer_receipts``).
+        """
+        with self._lock:
+            return str((self._base or {}).get("query_id") or "")
 
     def progress(self, label: str) -> None:
         if self.running:
@@ -508,17 +525,35 @@ def steer_detached(chat_session_id: Any, agent_id: Optional[str], text: str) -> 
 
     if steer.active_agent(chat_session_id) != agent_id:
         return None
-    info = steer.steer(chat_session_id, text)
+    # Capture the original turn before sending; it may finish during delivery.
+    base_turn = wait.base_turn
+    with wait._lock:
+        was_waiting = wait.phase == "waiting"
+    # Target this wait's own registration: another run may have replaced it
+    # between the lookup above and the send. No token means the CLI already
+    # unregistered (``_close_input`` clears it before closing stdin), so there
+    # is nothing of ours left to steer — sending without an expectation would
+    # write into whatever run registered since and stamp the reply with this
+    # wait's old turn id.
+    token = wait.steer_token
+    if token is None:
+        return None
+    info = steer.steer(chat_session_id, text, turn_id=base_turn or None,
+                       expect_token=token)
     if not info.get("steered"):
         return None
     # The detached run is still the first reply's turn: the steer threads there.
-    with wait._lock:
-        base_turn = str((wait._base or {}).get("query_id") or "")
     if base_turn:
         info["turn_id"] = base_turn
     # Sent while the chat looked idle (only background tasks running): to the
     # user this is a new message, not a reply to the old turn's bubble.
-    info["background_idle"] = wait.phase == "waiting"
+    info["background_idle"] = was_waiting
+    if was_waiting:
+        from api.agent_harness.steer_receipts import accepted_detached
+
+        # Accepted into the background run: ``mode: detached`` and still
+        # pending — ``delivered`` is only ever a confirmed echo.
+        accepted_detached(info.get("steer_id"))
     wait.log("status", f"Message steered in: {(text or '').strip()[:500]}")
     # The answer is on its way: show the typing bubble now, not at the echo.
     wait.working(f"{wait.label} is answering your message…", force=True)

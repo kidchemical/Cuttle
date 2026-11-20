@@ -440,7 +440,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--child",
         action="append",
         default=[],
-        help='Child JSON: {"title","agent","model","effort","message","profile","avatar"} (repeat)',
+        help='Child JSON: {"title","agent","model","effort","message","profile","avatar","task"} '
+             '(repeat). "task":"<gizmo>:<item>" assigns the child to a plan item in a Tasks list.',
     )
     sp.add_argument("--children-json", default=None, help="JSON array of child objects")
     sp.add_argument(

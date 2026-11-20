@@ -2,6 +2,7 @@ id: codex
 label: Codex
 slash: /codex
 icon: "⬢"
+color: "#19c37d"  # Settings/Studio identity dot; #rrggbb
 requires_cloud: true
 auth_command: codex login
 sticky: true

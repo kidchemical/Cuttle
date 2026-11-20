@@ -312,7 +312,7 @@ def test_retired_shared_token_cannot_authenticate_or_enroll(client, monkeypatch,
     else:
         path = secrets_dir() / "worker_shared_token.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"token": shared}))
+        path.write_text(json.dumps({"token": shared}), encoding="utf-8")
     assert config.worker_token() == ""
     headers = _bearer(shared)
     assert client.post("/api/workers/jobs/claim", json={}, headers=headers, environ_base=LAN).status_code == 401
@@ -426,6 +426,7 @@ def test_pairing_and_rotated_token_survive_fresh_processes(client):
         result = subprocess.run(
             [sys.executable, "-c", code, rid, SECRET],
             env=env, capture_output=True, text=True, check=True, timeout=15,
+            encoding="utf-8",
         )
         return json.loads(result.stdout)
 

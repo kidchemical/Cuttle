@@ -1,5 +1,7 @@
 # Sub-agents (child chats)
 
+Chat handles in the examples are fictional. Substitute handles from the current installation.
+
 Any Cuttle chat can spawn **real child chats**. Each child is a normal
 `chat_sessions` row (`origin=subagent`, `parent_session_id` set) that you can
 open from history. This is **not** `/coordinate` (synthetic worker ids) and
@@ -13,7 +15,11 @@ Claude chat launches enforce this boundary with `--disallowedTools` for
 picker). This applies on fresh sessions, resumes and API-credit retries; it
 does not depend on Brain repeating an unchanged rule. Background `Bash`,
 `Monitor`, `TaskStop` and `TaskOutput` remain available for OS jobs and Cuttle
-`spawn --wait` commands. The trajectory's `harness_policy` event records the
+`spawn --wait` commands. A child chat's Claude turn waits at most 5 idle minutes
+on its own leftover background tasks (`CLAUDE_SUBAGENT_BACKGROUND_WAIT_SEC`),
+because the parent's batch is blocked until that turn ends; a child that is
+itself waiting on sub-agents it spawned keeps the ordinary budget
+([headless-turns.md](headless-turns.md)). The trajectory's `harness_policy` event records the
 launch policy and deny list. Already running Claude processes retain their
 original tools until they finish; a Flask restart does not retrofit a live run.
 
@@ -24,7 +30,7 @@ sibling, or any existing chat), use `python -m api.chat_cli send|status|snapshot
 ## Spawn
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m api.subagents spawn --parent CH-000535 --wait --json \
+PYTHONPATH=src .venv/bin/python -m api.subagents spawn --parent CH-900008 --wait --json \
   --collect all \
   --lifetime one_shot \
   --child "{\"title\":\"Chef A\",\"agent\":\"cursor\",\"message\":\"What should I cook with eggs and spinach?\"}" \
@@ -36,7 +42,16 @@ PYTHONPATH=src .venv/bin/python -m api.subagents spawn --parent CH-000535 --wait
 (harness id: `cursor`, `codex`, `muse`, …), `model`, `effort`, `route` (bool),
 `profile` (catalog id or inline `{name,avatar,agent}`), `avatar`, `tier`
 (orchestrator chats: a playbook tier; Cuttle runs its first agent with budget
-left — `features/orchestrator/docs/orchestrator.md`).
+left — `features/orchestrator/docs/orchestrator.md`), `task` (`"<gizmo>:<item>"`).
+
+`task` assigns the child to one item of one of your Tasks lists (`gizmos.md`).
+On spawn the item gets this child as its owner and shows in progress. When the
+child finishes, the item is checked off; when it fails, is cancelled or is lost,
+the item is no longer in progress but keeps its owner and stays open. Only the
+child that currently owns an item can move it, so an older child cannot finish
+an item that was handed to a newer one. A spawn with a missing list, a missing
+item or an already-done item is refused before any chat is created. Linking a
+list to a chat only shows it there; it does not assign anything.
 
 A pinned child whose account is out of usage (a recent quota failure, or the
 cached `/usage` plan windows at their limit) is refused before any chat is
@@ -134,19 +149,19 @@ long). `--tasks` pins a parent Tasks gizmo with one item per child.
 ## Other verbs
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m api.subagents status --parent CH-000535 --json
+PYTHONPATH=src .venv/bin/python -m api.subagents status --parent CH-900008 --json
 PYTHONPATH=src .venv/bin/python -m api.subagents status --batch "<batch-id>" --json
-PYTHONPATH=src .venv/bin/python -m api.subagents status --parent CH-000535 --context --json
+PYTHONPATH=src .venv/bin/python -m api.subagents status --parent CH-900008 --context --json
 PYTHONPATH=src .venv/bin/python -m api.subagents wait "<batch-id>" --json
-PYTHONPATH=src .venv/bin/python -m api.subagents message --session CH-000540 --text "follow up" --wait --json
+PYTHONPATH=src .venv/bin/python -m api.subagents message --session CH-900009 --text "follow up" --wait --json
 PYTHONPATH=src .venv/bin/python -m api.subagents cancel --batch "<batch-id>" --json
-PYTHONPATH=src .venv/bin/python -m api.subagents cancel --session CH-000540 --json
-PYTHONPATH=src .venv/bin/python -m api.subagents list --parent CH-000535 --json
+PYTHONPATH=src .venv/bin/python -m api.subagents cancel --session CH-900009 --json
+PYTHONPATH=src .venv/bin/python -m api.subagents list --parent CH-900008 --json
 PYTHONPATH=src .venv/bin/python -m api.subagents close "<batch-id>" --json
 PYTHONPATH=src .venv/bin/python -m api.subagents profiles list --json
 ```
 
-`--session` / `--parent` accept `CH-000535` or a numeric id. Tests may pass `--db`.
+`--session` / `--parent` accept `CH-900008` or a numeric id. Tests may pass `--db`.
 
 `status --context` adds each child's agent window fill (`context.percent`,
 `compact_available`). A conversational child you keep reusing that runs above
@@ -272,7 +287,7 @@ the spec or pick another profile rather than resending it unchanged.
 ## Parent reply
 
 After `--wait`, synthesize **one** answer in the parent chat. Cite children with
-bare `CH-000540` tokens (never markdown-wrapped). Do not dump every child
+bare `CH-900009` tokens (never markdown-wrapped). Do not dump every child
 transcript unless the user asks.
 
 ## Git worktrees for children
@@ -312,5 +327,5 @@ Windows PowerShell spawn (substitute the actual parent chat):
 
 ```powershell
 $env:PYTHONPATH = "src"
-.\.venv\Scripts\python.exe -m api.subagents spawn --parent CH-000535 --wait --json --collect all --child '{"title":"Scout","agent":"cursor","message":"Inspect the requested change."}'
+.\.venv\Scripts\python.exe -m api.subagents spawn --parent CH-900008 --wait --json --collect all --child '{"title":"Scout","agent":"cursor","message":"Inspect the requested change."}'
 ```

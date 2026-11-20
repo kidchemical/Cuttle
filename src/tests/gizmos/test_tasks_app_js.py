@@ -137,7 +137,7 @@ def test_v14_migration_stashes_tasks_and_keeps_v13_pins():
                           capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert out["v13"]["layout_version"] == 14
+    assert out["v13"]["layout_version"] == 15
     assert "nav-tasks" in out["v13"]["rail_hidden"]
     assert out["v13"]["rail_items"] == ["nav-chat", "nav-orchestrator", "nav-apps"]  # v13 pin survives
     assert "nav-orchestrator" in out["v12"]["rail_hidden"]  # v13 step still applies to v12

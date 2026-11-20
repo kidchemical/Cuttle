@@ -255,10 +255,10 @@ def test_project_worktree_folder_overrides_and_returns_to_cuttle_default(page_ct
     status.wait_for()
     assert 'Using the Cuttle default: /big/worktrees' in status.inner_text()
     assert page.get_by_role('button', name='Use Cuttle default', exact=True).is_disabled()
-    page.locator('#worktree-folder-form [name="worktree_root"]').fill('/galaxy/Game Dev')
+    page.locator('#worktree-folder-form [name="worktree_root"]').fill('/example/Game Projects')
     page.get_by_role('button', name='Save folder', exact=True).click()
-    page.get_by_text("Using this project's folder: /galaxy/Game Dev", exact=False).wait_for()
-    assert ('POST', '/api/settings/worktrees', {'project_roots': {'7': '/galaxy/Game Dev'}}) in api.calls
+    page.get_by_text("Using this project's folder: /example/Game Projects", exact=False).wait_for()
+    assert ('POST', '/api/settings/worktrees', {'project_roots': {'7': '/example/Game Projects'}}) in api.calls
     page.screenshot(path='temp/projects-worktree-folder.png', full_page=True)
     page.get_by_role('button', name='Use Cuttle default', exact=True).click()
     page.get_by_text('Using the Cuttle default: /big/worktrees', exact=False).wait_for()

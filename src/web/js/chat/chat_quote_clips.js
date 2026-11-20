@@ -6,6 +6,8 @@
    composer: the selected text plus a reply — canned for the quick
    buttons, typed in a small panel for Reply. Clips are removable cards
    above the composer text, several at once, kept per chat until sent.
+   Clicking a card reopens the panel on its reply to edit it (an edited
+   quick reply becomes a typed one).
 
    A clip is plain message text: at send the page asks `source(input)`
    and each clip becomes a Markdown blockquote followed by its reply,
@@ -13,7 +15,7 @@
    Experimental flag `chat_quote_clips` (default on).
 
    Pure (node-testable): `ACTIONS`, `actionFor`, `normalizeQuote`,
-   `makeClip`, `clipText`, `composeBody`, `previewHtml`, `excerpt`,
+   `makeClip`, `editClip`, `clipText`, `composeBody`, `previewHtml`, `excerpt`,
    `placeToolbar`, `toolbarOrder`.
    Controller: `create(host)` →
      { start, setEnabled, syncFlag, source, compose, clear, render,
@@ -61,6 +63,19 @@
         const reply = String(action.reply != null ? action.reply : (replyText || '')).trim();
         if (!reply) return null;
         return { action: action.id, quote: q, reply };
+    }
+
+    /**
+     * `clip` with its reply replaced by `replyText`, or null when the new
+     * reply is empty. A quick reply whose canned text was changed becomes a
+     * typed Reply clip.
+     */
+    function editClip(clip, replyText) {
+        const reply = String(replyText == null ? '' : replyText).trim();
+        if (!clip || !reply) return null;
+        const action = actionFor(clip.action);
+        const kept = action && (action.reply == null || action.reply === reply) ? action.id : 'reply';
+        return { action: kept, quote: clip.quote, reply };
     }
 
     /** The message text of one clip: blockquote, blank line, reply. */
@@ -159,6 +174,7 @@
         let lastPointerTouch = false;
         let timer = 0;
         let barPressUntil = 0;
+        let replyAnchor = null; // { el?, rect }: what the reply panel sits next to
 
         // ---- clip state (per chat) ---------------------------------------
         const NEW_KEY = 'cuttle.quoteClips.new'; // a chat with no id yet: memory only
@@ -203,6 +219,17 @@
             const clips = load().slice();
             if (clips.length >= MAX_CLIPS) clips.shift();
             clips.push(clip);
+            save(clips);
+            changed();
+            return true;
+        }
+
+        /** Replace a staged clip's reply; false when it was sent or removed meanwhile. */
+        function editAt(idx, quote, replyText) {
+            const clips = load().slice();
+            const next = clips[idx] && clips[idx].quote === quote ? editClip(clips[idx], replyText) : null;
+            if (!next) return false;
+            clips[idx] = next;
             save(clips);
             changed();
             return true;
@@ -261,7 +288,17 @@
                     const card = doc.createElement('span');
                     card.className = 'quote-clip';
                     card.setAttribute('data-action', clip.action);
-                    card.title = clip.reply + '\n\n“' + clip.quote + '”';
+                    card.title = 'Edit reply: ' + clip.reply + '\n\n“' + clip.quote + '”';
+                    card.setAttribute('role', 'button');
+                    card.tabIndex = 0;
+                    const edit = (e) => {
+                        e.preventDefault();
+                        showReplyPanel(clip.quote, card, { index: idx, reply: clip.reply });
+                    };
+                    card.addEventListener('click', edit);
+                    card.addEventListener('keydown', (e) => {
+                        if (e.target === card && (e.key === 'Enter' || e.key === ' ')) edit(e);
+                    });
                     const text = doc.createElement('span');
                     text.className = 'quote-clip-text';
                     const head = doc.createElement('span');
@@ -310,7 +347,9 @@
         function place(rect) {
             if (!bar) return;
             const size = { width: bar.offsetWidth, height: bar.offsetHeight };
-            const view = { width: doc.documentElement.clientWidth, height: win.innerHeight };
+            // The visual viewport excludes an overlaying phone keyboard.
+            const vv = win.visualViewport;
+            const view = { width: doc.documentElement.clientWidth, height: vv ? vv.offsetTop + vv.height : win.innerHeight };
             const pos = placeToolbar(rect, size, view, lastPointerTouch && mode === 'toolbar');
             bar.style.top = pos.top + 'px';
             bar.style.left = pos.left + 'px';
@@ -321,6 +360,18 @@
             bar = null;
             mode = '';
             pendingQuote = '';
+            replyAnchor = null;
+        }
+
+        /** Re-place the reply panel next to its anchor (the keyboard opening moves the composer). */
+        function placeReply() {
+            if (mode !== 'reply' || !replyAnchor) return;
+            const el = replyAnchor.el;
+            if (el && el.isConnected) {
+                const r = el.getBoundingClientRect();
+                if (r.width || r.height) replyAnchor.rect = r;
+            }
+            place(replyAnchor.rect);
         }
 
         function mount(className, label) {
@@ -412,9 +463,15 @@
             });
         }
 
-        function showReplyPanel(quote, rect) {
+        /**
+         * Reply panel for a new clip, or with `editing` { index, reply } for a
+         * staged one. `anchor` is the selection rect or the clip card element.
+         */
+        function showReplyPanel(quote, anchor, editing) {
             mode = 'reply';
             pendingQuote = quote;
+            const isEl = anchor && typeof anchor.getBoundingClientRect === 'function';
+            replyAnchor = isEl ? { el: anchor, rect: anchor.getBoundingClientRect() } : { rect: anchor };
             const el = mount('quote-reply-panel', 'dialog');
             const preview = doc.createElement('div');
             preview.className = 'quote-reply-quote';
@@ -424,6 +481,7 @@
             input.rows = 3;
             input.placeholder = 'Reply to this…';
             input.setAttribute('aria-label', 'Your reply');
+            if (editing) input.value = editing.reply;
             const actions = doc.createElement('div');
             actions.className = 'quote-reply-actions';
             const cancel = doc.createElement('button');
@@ -433,11 +491,12 @@
             const accept = doc.createElement('button');
             accept.type = 'button';
             accept.className = 'quote-reply-accept';
-            accept.textContent = 'Accept';
-            accept.disabled = true;
+            accept.textContent = editing ? 'Save' : 'Accept';
+            accept.disabled = !input.value.trim();
             const submit = () => {
                 if (!input.value.trim()) return;
-                add('reply', quote, input.value);
+                if (editing) editAt(editing.index, quote, input.value);
+                else add('reply', quote, input.value);
                 hide();
             };
             input.addEventListener('input', () => { accept.disabled = !input.value.trim(); });
@@ -453,8 +512,9 @@
             el.appendChild(preview);
             el.appendChild(input);
             el.appendChild(actions);
-            place(rect);
+            placeReply();
             try { input.focus({ preventScroll: true }); } catch (_) { input.focus(); }
+            if (editing) input.setSelectionRange(input.value.length, input.value.length);
         }
 
         function dropSelection() {
@@ -505,7 +565,14 @@
             doc.addEventListener('keydown', (e) => { if (e.key === 'Escape' && mode === 'toolbar') hide(); });
             // The transcript scrolls under a fixed toolbar: follow the selection.
             doc.addEventListener('scroll', () => { if (mode === 'toolbar') schedule(0); }, true);
-            win.addEventListener('resize', () => { if (mode === 'toolbar') schedule(0); });
+            // A phone keyboard opening for the reply shrinks the viewport:
+            // keep the panel above it, next to its card / selection.
+            const onResize = () => {
+                if (mode === 'toolbar') schedule(0);
+                else if (mode === 'reply') placeReply();
+            };
+            win.addEventListener('resize', onResize);
+            if (win.visualViewport) win.visualViewport.addEventListener('resize', onResize);
             render();
         }
 
@@ -538,7 +605,7 @@
         return { start, setEnabled, syncFlag, source, compose, clear, render, count, add, hide };
     }
 
-    const api = { ACTIONS, MAX_QUOTE_CHARS, actionFor, normalizeQuote, makeClip, clipText, composeBody, previewHtml, excerpt, placeToolbar, toolbarOrder, create };
+    const api = { ACTIONS, MAX_QUOTE_CHARS, actionFor, normalizeQuote, makeClip, editClip, clipText, composeBody, previewHtml, excerpt, placeToolbar, toolbarOrder, create };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     root.CuttleChatQuoteClips = api;
 })(typeof window !== 'undefined' ? window : globalThis);

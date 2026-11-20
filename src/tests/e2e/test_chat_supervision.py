@@ -97,7 +97,7 @@ def _model():
     if not node:
         pytest.skip("node not installed")
     out = subprocess.run([node, "-e", HARNESS], capture_output=True, text=True, timeout=30,
-                         env={**os.environ, "MODEL": str(MODEL)})
+                         env={**os.environ, "MODEL": str(MODEL)}, encoding="utf-8")
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout)
 
@@ -346,6 +346,10 @@ def test_menu_opens_dialog_and_posts_supervise(browser, static_server):
         form.locator(".chat-supervision-task-search").fill("")
         expect(rows.locator("visible=true")).to_have_count(3)
         expect(form.locator(".chat-supervision-task-more")).to_have_text("2 more (1 followed) · search to find them")
+        # System care: leftover-process cleanup on by default, memory watch opt-in.
+        expect(form.locator("[name=sys_processes]")).to_be_checked()
+        expect(form.locator("[name=sys_memory]")).not_to_be_checked()
+        form.locator("[name=sys_memory]").check()
         # Focus sits under Advanced, read-only until the pencil.
         form.locator('.chat-supervision-advanced summary').click()
         focus = form.locator("[name=instructions]")
@@ -365,6 +369,7 @@ def test_menu_opens_dialog_and_posts_supervise(browser, static_server):
         assert body["forbidden_branches"] == ["main", "feature"] and body["required_branch"] == "dev/x"
         assert body["task_ids"] == ["t0", "t4"] and body["instructions"] == "Animation first."
         assert body["involve_user"] == "blocked" and body["nudge"] == "agent"
+        assert body["system"] == {"processes": True, "memory": True}
         # New schedules wake on milestones and repeated failures by default.
         assert body["checkpoints"] == {"milestone": {"do": ["wake"]}, "repeat_failures": {"do": ["wake"], "n": 3}}
         assert not errors
@@ -476,7 +481,7 @@ def _node_model(expr, **env):
               "const input = JSON.parse(process.env.INPUT);\n"
               f"console.log(JSON.stringify({expr}));")
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30,
-                         env={**os.environ, "MODEL": str(MODEL), "INPUT": json.dumps(env)})
+                         env={**os.environ, "MODEL": str(MODEL), "INPUT": json.dumps(env)}, encoding="utf-8")
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout)
 
@@ -567,6 +572,6 @@ def test_cuttle_notice_has_no_launcher_back_to_its_own_chat():
               "console.log(JSON.stringify({ notice: L.parentRefs({ ...base, chat_op_kind: 'notice' }).length,"
               " send: L.parentRefs({ ...base, chat_op_kind: 'send', parent_label: 'Sent by CH-002369' }).length }));")
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30,
-                         env={**os.environ, "JS": str(js)})
+                         env={**os.environ, "JS": str(js)}, encoding="utf-8")
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout) == {"notice": 0, "send": 1}

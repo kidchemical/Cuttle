@@ -2,6 +2,7 @@ id: opencode
 label: OpenCode
 slash: /opencode
 icon: "○"
+color: "#4f46e5"  # Settings/Studio identity dot; #rrggbb
 requires_cloud: true
 auth_command: opencode auth login
 sticky: true

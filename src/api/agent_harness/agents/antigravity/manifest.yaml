@@ -2,6 +2,7 @@ id: antigravity
 label: Antigravity CLI
 slash: /antigravity
 icon: "▲"
+color: "#0d9488"  # Settings/Studio identity dot; #rrggbb
 requires_cloud: true
 auth_command: agy login
 sticky: true

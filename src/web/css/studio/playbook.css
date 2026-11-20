@@ -1,0 +1,283 @@
+/* ================================================================
+   Studio playbook view (orchestrator Org chart tab, lane L9).
+
+   Every rule that changes the look is under `:root.cuttle-studio`, so Classic
+   keeps the list/ladder it has always had. The only rules outside it hide the
+   two intro paragraphs that this lane added (`.orch-intro-studio` is new markup).
+
+   Layout: tiers are columns in escalation order with arrows between them. A
+   container query turns the row into a stack below ~720px of chart width (split
+   panes, narrow windows). Colour comes from studio_tokens.css; nothing here
+   hard-codes a palette. Motion uses the duration tokens, which reduced motion
+   zeroes.
+   ================================================================ */
+
+/* Intro copy: Studio gets the read-left-to-right paragraph; Classic keeps its own. */
+.orch-intro-studio { display: none; }
+:root.cuttle-studio .orch-intro-studio { display: block; }
+:root.cuttle-studio .orch-intro-classic { display: none; }
+
+:root.cuttle-studio .studio-playbook {
+    container-type: inline-size;
+    display: flex;
+    flex-direction: column;
+    gap: var(--studio-space-4);
+    margin: 0 0 var(--studio-space-6);
+    color: var(--studio-ink);
+}
+
+/* ── Tiers: columns (wide) or stacked (narrow) ───────────────────── */
+
+:root.cuttle-studio .studio-playbook .sp-tiers {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--studio-space-2);
+}
+
+@container (min-width: 720px) {
+    :root.cuttle-studio .studio-playbook .sp-tiers {
+        flex-direction: row;
+        gap: 0;
+    }
+}
+
+:root.cuttle-studio .studio-playbook .sp-tier {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--studio-space-3);
+    padding: var(--studio-space-4);
+    background: var(--studio-card-bg);
+    border-radius: var(--studio-radius-lg);
+    box-shadow: var(--studio-shadow-card);
+}
+
+:root.cuttle-studio .studio-playbook .sp-tier-head {
+    display: flex;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: var(--studio-space-2);
+    min-width: 0;
+}
+
+:root.cuttle-studio .studio-playbook .sp-tier-step {
+    display: inline-grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--studio-accent-soft);
+    color: var(--studio-accent-ink);
+    font-size: var(--studio-text-2xs);
+    font-weight: var(--studio-weight-bold);
+}
+
+:root.cuttle-studio :root.cuttle-studio .studio-playbook .sp-tier-title {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+:root.cuttle-studio .studio-playbook .sp-tier-name {
+    margin: 0;
+    min-width: 0;
+    font-size: var(--studio-text-xs);
+    font-weight: var(--studio-weight-bold);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--studio-ink-muted);
+    overflow-wrap: anywhere;
+}
+
+:root.cuttle-studio .studio-playbook .sp-tier-role {
+    font-size: var(--studio-text-xs);
+    color: var(--studio-ink-faint);
+}
+
+:root.cuttle-studio .studio-playbook .sp-tier-note,
+:root.cuttle-studio .studio-playbook .sp-tier-hint,
+:root.cuttle-studio .studio-playbook .sp-member-empty {
+    margin: 0;
+    font-size: var(--studio-text-xs);
+    line-height: var(--studio-leading-base);
+    color: var(--studio-ink-muted);
+}
+
+:root.cuttle-studio .studio-playbook .sp-tier-hint { color: var(--studio-ink-faint); }
+
+/* Arrows: down between stacked tiers, right between columns. */
+:root.cuttle-studio .studio-playbook .sp-arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 100%;
+    height: 28px;
+}
+
+:root.cuttle-studio .studio-playbook .sp-arrow svg {
+    width: 24px;
+    height: 32px;
+    overflow: visible;
+    transform: rotate(90deg);
+}
+
+@container (min-width: 720px) {
+    :root.cuttle-studio .studio-playbook .sp-arrow {
+        width: 28px;
+        height: auto;
+    }
+    :root.cuttle-studio .studio-playbook .sp-arrow svg {
+        width: 28px;
+        height: 17px;
+        transform: none;
+    }
+}
+
+:root.cuttle-studio .studio-playbook .sp-arrow path {
+    fill: none;
+    stroke: var(--studio-accent);
+    stroke-width: 2.25;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: 0.55;
+    stroke-dasharray: 40;
+    animation: sp-draw var(--studio-dur-slow) var(--studio-ease-out) both;
+}
+
+@keyframes sp-draw {
+    from { stroke-dashoffset: 40; }
+    to { stroke-dashoffset: 0; }
+}
+
+/* ── Members (agent identity: dot + harness name, model as quiet text) ── */
+
+:root.cuttle-studio .studio-playbook .sp-members {
+    display: flex;
+    flex-direction: column;
+    gap: var(--studio-space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+:root.cuttle-studio .studio-playbook .sp-member { margin: 0; }
+
+:root.cuttle-studio .studio-playbook .sp-member-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 2px;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    margin: 0;
+    padding: var(--studio-space-2) var(--studio-space-3);
+    border: 0;
+    border-radius: var(--studio-radius-md);
+    background: var(--studio-surface-base);
+    box-shadow: var(--studio-card-ring);
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: box-shadow var(--studio-dur-base) var(--studio-ease-out),
+        transform var(--studio-dur-fast) var(--studio-ease-out);
+}
+
+:root.cuttle-studio .studio-playbook .sp-member-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--studio-shadow-card);
+}
+
+:root.cuttle-studio .studio-playbook .sp-member-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--studio-focus-ring);
+}
+
+:root.cuttle-studio .studio-playbook .sp-member.is-default .sp-member-btn {
+    box-shadow: inset 3px 0 0 var(--studio-accent), var(--studio-card-ring);
+}
+
+:root.cuttle-studio .studio-playbook .sp-member.is-off .sp-member-btn { opacity: 0.55; }
+
+:root.cuttle-studio .studio-playbook .sp-member.is-missing .sp-member-btn {
+    outline: 1px dashed var(--studio-ink-faint);
+    outline-offset: -1px;
+}
+
+:root.cuttle-studio .studio-playbook .sp-member-id {
+    display: flex;
+    align-items: center;
+    gap: var(--studio-space-2);
+    min-width: 0;
+    max-width: 100%;
+    font-size: var(--studio-text-base);
+    font-weight: var(--studio-weight-semibold);
+    line-height: var(--studio-leading-tight);
+    overflow-wrap: anywhere;
+}
+
+:root.cuttle-studio .studio-playbook .sp-member-meta {
+    font-size: var(--studio-text-xs);
+    line-height: var(--studio-leading-base);
+    color: var(--studio-ink-muted);
+    overflow-wrap: anywhere;
+}
+
+:root.cuttle-studio .studio-playbook .sp-member-state {
+    font-size: var(--studio-text-2xs);
+    font-weight: var(--studio-weight-semibold);
+    letter-spacing: 0.04em;
+    color: var(--studio-ink-faint);
+}
+
+:root.cuttle-studio .studio-playbook .sp-member.is-default .sp-member-state { color: var(--studio-accent-ink); }
+
+/* Fallback for the shared identity classes (lane L4 owns them globally; this keeps
+   the dot visible here until then). Scoped to the chart. */
+:root.cuttle-studio .studio-playbook .agent-identity {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--studio-space-2);
+    min-width: 0;
+}
+
+:root.cuttle-studio .studio-playbook .agent-dot {
+    flex: 0 0 auto;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+/* ── Rule chips (from stored playbook fields only) ────────────────── */
+
+:root.cuttle-studio .studio-playbook .sp-rules {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--studio-space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+:root.cuttle-studio .studio-playbook .sp-chip {
+    padding: 4px 12px;
+    border-radius: var(--studio-radius-pill);
+    background: var(--studio-accent-soft);
+    color: var(--studio-accent-ink);
+    font-size: var(--studio-text-sm);
+    font-weight: var(--studio-weight-semibold);
+    line-height: var(--studio-leading-base);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root.cuttle-studio .studio-playbook .sp-arrow path { animation: none; }
+    :root.cuttle-studio .studio-playbook .sp-member-btn { transition: none; }
+    :root.cuttle-studio .studio-playbook .sp-member-btn:hover { transform: none; }
+}

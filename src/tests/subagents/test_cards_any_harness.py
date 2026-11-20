@@ -81,7 +81,7 @@ def _install(monkeypatch, agent, db, db_path, seen):
     async def execute(prompt, **kwargs):
         env = {**agent_cli_env(), "PYTHONPATH": str(SRC)}
         proc = subprocess.run([sys.executable, "-c", _SPAWN, str(db_path)], capture_output=True,
-                              text=True, timeout=60, env=env, cwd=str(SRC))
+                              text=True, timeout=60, env=env, cwd=str(SRC), encoding="utf-8")
         seen["proc"] = proc
         if proc.returncode == 0:
             seen["spawn"] = json.loads(proc.stdout.strip().splitlines()[-1])
@@ -157,7 +157,7 @@ def test_no_turn_env_manual_run_uses_the_anchor_else_the_latest_bubble(authed, t
     env = {k: v for k, v in os.environ.items() if not k.startswith("CUTTLE_TURN")}
     env.update(PYTHONPATH=str(SRC), CUTTLE_CHAT_SESSION_ID=str(sid))
     proc = subprocess.run([sys.executable, "-c", _SPAWN, str(db_path)], capture_output=True, text=True,
-                          timeout=60, env=env, cwd=str(SRC))
+                          timeout=60, env=env, cwd=str(SRC), encoding="utf-8")
     assert proc.returncode == 0, proc.stderr[-3000:]
     [batch] = store.list_batches_for_parent(db, sid)
     assert batch.turn_id == "" and batch.attach_message_id == latest

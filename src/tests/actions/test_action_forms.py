@@ -991,31 +991,26 @@ def test_watch_cancel_stops_job(tmp_path: Path, monkeypatch):
     assert "stopped" in (res.get("toast") or "").lower()
 
 
-def test_resolve_action_across_projects():
+def test_resolve_action_across_projects(tmp_path: Path, monkeypatch):
     from api.project_actions import find_project_action_resolved
+    from managers.project_manager import project_manager
 
-    # No channel hint → legacy EP preference for Cuttle-chip chats
-    action, path = find_project_action_resolved(
-        r"C:\Projects\Cuttle\src", "discord.post"
+    projects = [tmp_path / "first", tmp_path / "preferred"]
+    for project, channel in zip(projects, ("general", "updates")):
+        _write_action(project, "post", f"name: demo.post\ntype: discord.post\nchannels:\n  {channel}: '123'\n")
+    monkeypatch.setattr(project_manager, "get_projects", lambda: [{"path": str(p)} for p in projects])
+    monkeypatch.setattr("core.runtime_paths.personal_dir", lambda: tmp_path)
+    (tmp_path / "path-aliases.json").write_text(
+        json.dumps({"action_prefer_substrings_no_channel": ["preferred"]}), encoding="utf-8",
     )
-    if action is None:
-        pytest.skip("Escape-Purgatory / Epochs dogfood projects not mounted")
-    assert "escape-purgatory" in path.lower().replace("_", "-")
-
-    # Channel alias routes to the project that allowlists it
-    epochs_action, epochs_path = find_project_action_resolved(
-        r"C:\Projects\Cuttle", "discord.post", channel="general"
-    )
-    assert epochs_action is not None
-    assert "epochs" in epochs_path.lower()
-    assert "general" in (epochs_action.get("channels") or {})
-
-    ep_action, ep_path = find_project_action_resolved(
-        r"C:\Projects\Cuttle", "discord.post", channel="feature-updates"
-    )
-    assert ep_action is not None
-    assert "escape-purgatory" in ep_path.lower().replace("_", "-")
-    assert "feature-updates" in (ep_action.get("channels") or {})
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    for channel, expected in ((None, projects[1]), ("general", projects[0]), ("updates", projects[1])):
+        action, path = find_project_action_resolved(str(primary), "demo.post", channel=channel)
+        assert action is not None
+        assert Path(path) == expected
+        if channel:
+            assert channel in action["channels"]
 
 
 def test_qa_form_resume_flag():

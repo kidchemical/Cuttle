@@ -30,6 +30,15 @@ def add_parser(sub):
             p.add_argument('--ops', help='JSON patch object: add, remove, set_text, items, description, …')
             p.add_argument('--set-done', action='append', help='item id(s), comma-separated; repeatable')
             p.add_argument('--set-undone', action='append', help='item id(s), comma-separated; repeatable')
+            p.add_argument('--owner', action='append', metavar='ITEM=OWNER',
+                           help='who owns an item: ITEM=CH-… (a chat of yours), ITEM=user, '
+                                'ITEM=agent:<id>, or ITEM=none to clear; repeatable')
+            p.add_argument('--label', action='append', metavar='ITEM=LABEL',
+                           help='short display label (1-3 words) for an item; ITEM= clears; repeatable')
+            p.add_argument('--working', action='append', metavar='ITEM',
+                           help='mark item(s) as being worked on, comma-separated; repeatable')
+            p.add_argument('--not-working', action='append', metavar='ITEM',
+                           help='clear the in-progress mark, comma-separated; repeatable')
             p.add_argument('--description')
             p.add_argument('--title')
             p.add_argument('--status', choices=['active', 'archived'])
@@ -43,6 +52,24 @@ def add_parser(sub):
 
 def _split(values):
     return [v.strip() for v in ','.join(values or []).split(',') if v.strip()]
+
+
+def _owner_value(value):
+    """CLI owner spelling → owner object (``None`` clears). Chat handles are
+    resolved and ownership-checked by ``tasks`` on write."""
+    low = value.lower()
+    if low in ('', 'none', 'clear'):
+        return None
+    if low == 'user':
+        return {'kind': 'user', 'label': 'You'}
+    if low.startswith('agent:'):
+        agent = low.split(':', 1)[1].strip()
+        if not agent:
+            raise GizmoError('--owner agent:<id> needs an agent id')
+        return {'kind': 'agent', 'agent': agent, 'label': agent}
+    if tasks.parse_handle(value) is not None:
+        return {'kind': 'chat', 'id': value}
+    raise GizmoError('--owner must be CH-…, user, agent:<id> or none')
 
 
 def run(args):
@@ -85,12 +112,34 @@ def run(args):
             values = _split(getattr(args, key))
             if values:
                 ops[key] = list(ops.get(key) or []) + values
+        owners = {}
+        for spec in args.owner or []:
+            item, sep, value = str(spec).partition('=')
+            if not sep or not item.strip():
+                raise GizmoError('--owner must be ITEM=CH-…, ITEM=user, ITEM=agent:<id> or ITEM=none')
+            owners[item.strip()] = _owner_value(value.strip())
+        if owners:
+            ops['set_owner'] = {**(ops.get('set_owner') or {}), **owners}
+        labels = {}
+        for spec in args.label or []:
+            item, sep, value = str(spec).partition('=')
+            if not sep or not item.strip():
+                raise GizmoError('--label must be ITEM=LABEL')
+            labels[item.strip()] = value.strip()
+        if labels:
+            ops['set_label'] = {**(ops.get('set_label') or {}), **labels}
+        working = _split(args.working)
+        if working:
+            ops['set_in_progress'] = list(ops.get('set_in_progress') or []) + working
+        not_working = _split(args.not_working)
+        if not_working:
+            ops['clear_in_progress'] = list(ops.get('clear_in_progress') or []) + not_working
         for key in ('description', 'title', 'status'):
             value = getattr(args, key)
             if value is not None:
                 ops[key] = value
         if not ops:
-            raise GizmoError('pass --ops, --set-done or another patch option')
+            raise GizmoError('pass --ops, --set-done, --owner, --working or another patch option')
         return {'success': True, 'gizmo': tasks.patch(args.gizmo_id, ops, user_id=uid,
                                                      session_id=sid, actor=actor)}
     row = tasks.get(args.gizmo_id, user_id=uid)

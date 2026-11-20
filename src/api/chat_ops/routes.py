@@ -40,6 +40,20 @@ def session_overview(session: str):
     return _call(service.overview, session, _uid())
 
 
+@chat_ops_bp.get("/sessions/<session>/timeline")
+@authenticated_required
+def session_timeline(session: str):
+    def read():
+        sid = service.session_id(session)
+        from api.auth_db import get_auth_db
+        if not get_auth_db().get_chat_session(sid, _uid()):
+            raise LookupError('Chat not found')
+        from api.chat_ops.timeline import project
+        return project(sid, before=request.args.get('before'), limit=request.args.get('limit', 50),
+                       include_quiet=request.args.get('include_quiet') == '1')
+    return _call(read)
+
+
 @chat_ops_bp.get("/sessions/<session>/defaults")
 @authenticated_required
 def supervise_defaults(session: str):
@@ -67,6 +81,7 @@ def start_supervision():
             task_ids=data.get("task_ids") if isinstance(data.get("task_ids"), list) else None,
             checkpoints=data.get("checkpoints") if isinstance(data.get("checkpoints"), dict) else None,
             involve_user=str(data.get("involve_user") or ""), nudge=str(data.get("nudge") or ""),
+            system=data.get("system"),
         )
 
     return _call(run)

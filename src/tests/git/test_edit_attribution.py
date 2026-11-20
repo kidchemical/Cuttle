@@ -49,8 +49,8 @@ def test_append_and_build_attribution_unattributed(journal_db, tmp_path):
     Path(repo).mkdir()
     _git_init(Path(repo))
     (Path(repo) / "src").mkdir()
-    (Path(repo) / "src/a.py").write_text("final a")
-    (Path(repo) / "src/b.py").write_text("final b")
+    (Path(repo) / "src/a.py").write_text("final a", encoding="utf-8")
+    (Path(repo) / "src/b.py").write_text("final b", encoding="utf-8")
     digest = lambda text: hashlib.sha256(text.encode()).hexdigest()
     append_events(
         [
@@ -228,7 +228,7 @@ def test_commit_pending_changes_adds_trailers(journal_db, tmp_path):
 def test_old_content_cannot_credit_a_later_unobserved_change(journal_db,tmp_path):
     from api.edit_attribution.journal import append_events,build_commit_attribution
     repo=tmp_path/'proof';repo.mkdir();_git_init(repo)
-    path=repo/'file.txt';path.write_text('human final')
+    path=repo/'file.txt';path.write_text('human final', encoding="utf-8")
     append_events([{'repo_root':str(repo),'rel_path':'file.txt','agent_id':'codex',
                     'digest_after':hashlib.sha256(b'agent earlier').hexdigest()}])
     assert build_commit_attribution(str(repo),['file.txt'])['attributed_count']==0
@@ -237,7 +237,7 @@ def test_old_content_cannot_credit_a_later_unobserved_change(journal_db,tmp_path
 def test_ambiguous_edits_never_get_trailers(journal_db,tmp_path):
     from api.edit_attribution.journal import append_events,build_commit_attribution
     repo=tmp_path/'overlap';repo.mkdir();_git_init(repo)
-    (repo/'file.txt').write_text('overlap')
+    (repo/'file.txt').write_text('overlap', encoding="utf-8")
     append_events([{'repo_root':str(repo),'rel_path':'file.txt','agent_id':'codex',
                     'digest_after':hashlib.sha256(b'overlap').hexdigest(),'ambiguous':True}])
     assert build_commit_attribution(str(repo),['file.txt'])['attributed_count']==0
@@ -246,7 +246,7 @@ def test_ambiguous_edits_never_get_trailers(journal_db,tmp_path):
 def test_terminal_commit_settles_by_content(journal_db,tmp_path):
     from api.edit_attribution.journal import append_events,reconcile_commits,open_events_for_paths,_db_path
     repo=tmp_path/'terminal';repo.mkdir();_git_init(repo)
-    (repo/'file.txt').write_text('agent change')
+    (repo/'file.txt').write_text('agent change', encoding="utf-8")
     append_events([{'repo_root':str(repo),'rel_path':'file.txt','agent_id':'codex',
                     'digest_after':hashlib.sha256(b'agent change').hexdigest()}])
     subprocess.run(['git','add','.'],cwd=repo,check=True,capture_output=True)
@@ -285,7 +285,7 @@ def test_deletion_settles_to_the_deleting_commit(journal_db,tmp_path):
     import time
     from api.edit_attribution.journal import reconcile_commits,_db_path
     repo=tmp_path/'del';repo.mkdir();_git_init(repo)
-    (repo/'file.txt').write_text('keep me');_commit(repo,'add')
+    (repo/'file.txt').write_text('keep me', encoding="utf-8");_commit(repo,'add')
     _edit(repo,'q-del','keep me',None,time.time()-5)
     (repo/'file.txt').unlink();_commit(repo,'delete')
     assert reconcile_commits(_db_path())['settled']==1
@@ -296,10 +296,10 @@ def test_chained_edit_settles_with_the_later_commit(journal_db,tmp_path):
     import time
     from api.edit_attribution.journal import reconcile_commits,_db_path
     repo=tmp_path/'chain';repo.mkdir();_git_init(repo)
-    (repo/'file.txt').write_text('A');_commit(repo,'base')
+    (repo/'file.txt').write_text('A', encoding="utf-8");_commit(repo,'base')
     _edit(repo,'q1','A','B',time.time()-20)
     _edit(repo,'q2','B','C',time.time()-10)
-    (repo/'file.txt').write_text('C');_commit(repo,'terminal commit of C')
+    (repo/'file.txt').write_text('C', encoding="utf-8");_commit(repo,'terminal commit of C')
     stats=reconcile_commits(_db_path())
     assert stats['settled']==1 and stats['chained']==1
     rows=_settlements(repo)
@@ -310,11 +310,11 @@ def test_broken_chain_supersedes_the_earlier_edit(journal_db,tmp_path):
     import time
     from api.edit_attribution.journal import reconcile_commits,_db_path,build_commit_attribution
     repo=tmp_path/'broken';repo.mkdir();_git_init(repo)
-    (repo/'file.txt').write_text('A');_commit(repo,'base')
+    (repo/'file.txt').write_text('A', encoding="utf-8");_commit(repo,'base')
     _edit(repo,'q1','A','B',time.time()-20)
     # Someone else turned B into X between the two observed edits.
     _edit(repo,'q2','X','Y',time.time()-10)
-    (repo/'file.txt').write_text('Y')
+    (repo/'file.txt').write_text('Y', encoding="utf-8")
     stats=reconcile_commits(_db_path())
     assert stats['superseded']==1
     rows=_settlements(repo)
@@ -328,9 +328,9 @@ def test_revert_closes_after_grace_only(journal_db,tmp_path):
     import time
     from api.edit_attribution.journal import reconcile_commits,_db_path
     repo=tmp_path/'revert';repo.mkdir();_git_init(repo)
-    (repo/'file.txt').write_text('A');_commit(repo,'base')
+    (repo/'file.txt').write_text('A', encoding="utf-8");_commit(repo,'base')
     _edit(repo,'fresh','A','B',time.time()-60)
-    (repo/'file.txt').write_text('A')
+    (repo/'file.txt').write_text('A', encoding="utf-8")
     assert reconcile_commits(_db_path())['reverted']==0  # within grace: maybe a branch switch
     assert reconcile_commits(_db_path(),now=time.time()+2*86400)['reverted']==1
     assert _settlements(repo)['fresh'][0]=='reverted'
@@ -340,7 +340,7 @@ def test_net_noop_chain_is_reverted(journal_db,tmp_path):
     import time
     from api.edit_attribution.journal import reconcile_commits,_db_path
     repo=tmp_path/'noop';repo.mkdir();_git_init(repo)
-    (repo/'file.txt').write_text('A');_commit(repo,'base')
+    (repo/'file.txt').write_text('A', encoding="utf-8");_commit(repo,'base')
     # Edits happen after the base commit (an identical earlier blob never settles).
     _edit(repo,'there','A','B',time.time()+5)
     _edit(repo,'back','B','A',time.time()+10)
@@ -353,9 +353,9 @@ def test_content_changed_before_commit_is_superseded(journal_db,tmp_path):
     import time
     from api.edit_attribution.journal import reconcile_commits,_db_path
     repo=tmp_path/'later';repo.mkdir();_git_init(repo)
-    (repo/'file.txt').write_text('A');_commit(repo,'base')
+    (repo/'file.txt').write_text('A', encoding="utf-8");_commit(repo,'base')
     _edit(repo,'agent','A','B',time.time()-30)
-    (repo/'file.txt').write_text('B plus a human tweak');_commit(repo,'human commit')
+    (repo/'file.txt').write_text('B plus a human tweak', encoding="utf-8");_commit(repo,'human commit')
     stats=reconcile_commits(_db_path(),now=time.time()+2*86400)
     assert stats['superseded']==1 and stats['settled']==0
     assert _settlements(repo)['agent'][0]=='superseded'
@@ -365,9 +365,9 @@ def test_uncommitted_current_edit_stays_open(journal_db,tmp_path):
     import time
     from api.edit_attribution.journal import reconcile_commits,_db_path
     repo=tmp_path/'pending';repo.mkdir();_git_init(repo)
-    (repo/'file.txt').write_text('A');_commit(repo,'base')
+    (repo/'file.txt').write_text('A', encoding="utf-8");_commit(repo,'base')
     _edit(repo,'agent','A','B',time.time()-30)
-    (repo/'file.txt').write_text('B')
+    (repo/'file.txt').write_text('B', encoding="utf-8")
     stats=reconcile_commits(_db_path(),now=time.time()+2*86400)
     assert stats=={'settled':0,'chained':0,'superseded':0,'reverted':0}
     assert _settlements(repo)['agent'][0]=='open'
@@ -379,14 +379,14 @@ def test_overlapping_duplicate_observations_do_not_supersede(journal_db,tmp_path
     import time
     from api.edit_attribution.journal import append_events,reconcile_commits,_db_path
     repo=tmp_path/'dupe';repo.mkdir();_git_init(repo)
-    (repo/'file.txt').write_text('A');_commit(repo,'base')
+    (repo/'file.txt').write_text('A', encoding="utf-8");_commit(repo,'base')
     for qid,ts in (('run-a',time.time()+5),('run-b',time.time()+6)):
         append_events([{'repo_root':str(repo),'rel_path':'file.txt','agent_id':'codex','query_id':qid,
                         'digest_before':_sha('A'),'digest_after':_sha('B'),'ts':ts,'ambiguous':True}])
     stats=reconcile_commits(_db_path(),now=time.time()+2*86400)
     assert stats['superseded']==0 and stats['reverted']==0
     assert {state for state,_ in _settlements(repo).values()}=={'open'}
-    (repo/'file.txt').write_text('B')
+    (repo/'file.txt').write_text('B', encoding="utf-8")
     import os
     os.utime(repo/'file.txt')
     subprocess.run(['git','add','-A'],cwd=repo,check=True,capture_output=True)
@@ -399,11 +399,11 @@ def test_reconcile_walks_history_once_per_repository(journal_db,tmp_path,monkeyp
     """Settling many paths must not start a git process per path or per commit."""
     from api.edit_attribution.journal import append_events,reconcile_commits,_db_path
     repo=tmp_path/'many';repo.mkdir();_git_init(repo)
-    (repo/'seed.txt').write_text('seed');_commit(repo,'seed')
+    (repo/'seed.txt').write_text('seed', encoding="utf-8");_commit(repo,'seed')
     names=[f'dir {i}/file {i}.txt' for i in range(40)]
     for name in names:
         (repo/name).parent.mkdir(exist_ok=True)
-        (repo/name).write_text('agent '+name)
+        (repo/name).write_text('agent '+name, encoding="utf-8")
     append_events([{'repo_root':str(repo),'rel_path':name,'agent_id':'codex','query_id':name,
                     'digest_after':_sha('agent '+name)} for name in names])
     _commit(repo,'forty files')
@@ -420,7 +420,7 @@ def test_reconcile_walks_history_once_per_repository(journal_db,tmp_path,monkeyp
 def test_renamed_away_path_settles_as_deleted(journal_db,tmp_path):
     from api.edit_attribution.journal import append_events,reconcile_commits,_db_path
     repo=tmp_path/'rename';repo.mkdir();_git_init(repo)
-    (repo/'old.txt').write_text('same content\n'*20);_commit(repo,'base')
+    (repo/'old.txt').write_text('same content\n'*20, encoding="utf-8");_commit(repo,'base')
     append_events([{'repo_root':str(repo),'rel_path':'old.txt','agent_id':'codex',
                     'digest_before':_sha('same content\n'*20),'digest_after':None}])
     subprocess.run(['git','mv','old.txt','new.txt'],cwd=repo,check=True,capture_output=True)
@@ -433,12 +433,12 @@ def test_reconcile_keeps_finished_repositories_when_a_later_one_fails(journal_db
     import sqlite3
     from api.edit_attribution import journal
     good=tmp_path/'good';good.mkdir();_git_init(good)
-    (good/'file.txt').write_text('agent change')
+    (good/'file.txt').write_text('agent change', encoding="utf-8")
     journal.append_events([{'repo_root':str(good),'rel_path':'file.txt','agent_id':'codex','query_id':'g',
                             'digest_after':_sha('agent change'),'ts':2000}])
     _commit(good,'good')
     bad=tmp_path/'bad';bad.mkdir();_git_init(bad)
-    (bad/'file.txt').write_text('x');_commit(bad,'bad')
+    (bad/'file.txt').write_text('x', encoding="utf-8");_commit(bad,'bad')
     journal.append_events([{'repo_root':str(bad),'rel_path':'file.txt','agent_id':'codex','query_id':'b',
                             'digest_after':_sha('other'),'ts':1000}])
     real=journal._commits_by_path

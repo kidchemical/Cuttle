@@ -138,7 +138,7 @@ def test_page_places_each_live_card_once_keyed_to_its_turn():
     import os
 
     out = subprocess.run(["node", "-e", _PLACE_DRIVER], capture_output=True, text=True, timeout=30,
-                         env={"PATH": os.environ["PATH"], "JS": str(LAUNCHERS_JS)})
+                         env={"PATH": os.environ["PATH"], "JS": str(LAUNCHERS_JS)}, encoding="utf-8")
     assert out.returncode == 0, out.stderr
     r = json.loads(out.stdout)
     handles = lambda xs: [x["handle"] for x in xs]  # noqa: E731

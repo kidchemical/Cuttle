@@ -59,6 +59,7 @@ def results():
         ["node", "-e", HARNESS],
         capture_output=True, text=True, check=True,
         env={**os.environ, "CONN_JS": str(CONN_JS)},
+        encoding="utf-8",
     )
     return json.loads(out.stdout)
 

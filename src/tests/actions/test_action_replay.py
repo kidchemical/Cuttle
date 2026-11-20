@@ -12,7 +12,7 @@ from api.action_replay import claim, key
 def recipe(tmp_path, replay=""):
     folder = tmp_path / '.cuttle' / 'actions'
     folder.mkdir(parents=True)
-    (folder / 'test.yaml').write_text('name: test.run\ntype: shell\nrun: echo fake\n' + replay)
+    (folder / 'test.yaml').write_text('name: test.run\ntype: shell\nrun: echo fake\n' + replay, encoding="utf-8")
 
 
 def token(tmp_path, **extra):

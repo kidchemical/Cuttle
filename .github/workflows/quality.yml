@@ -42,6 +42,8 @@ jobs:
         # On PRs the composition-root growth guard compares against the target branch.
         env:
           CUTTLE_GROWTH_BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+          # pytest.ini turns EncodingWarning into an error: no default-encoding text I/O.
+          PYTHONWARNDEFAULTENCODING: '1'
         run: ${{ matrix.python }} -m pytest src/tests/ --basetemp="${{ runner.temp }}/pytest"
   browser:
     runs-on: ubuntu-latest

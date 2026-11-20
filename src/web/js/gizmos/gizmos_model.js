@@ -70,9 +70,19 @@
         if (!gizmo) return '';
         if (gizmo.type === 'usage_meter') {
             const cfg = gizmo.config || {};
-            return 'usage:' + String(cfg.agent || '') + (cfg.api_credit ? '+api_credit' : '');
+            const view = cfg.agent === 'claude' ? claudeBilling(cfg) : 'subscription';
+            return 'usage:' + String(cfg.agent || '') + (view === 'subscription' ? '' : '+' + view);
         }
         return 'gizmo:' + gizmo.id;
+    }
+
+    /** What a Claude meter shows; stored configs may carry the old api_credit flag. */
+    const BILLING_VIEWS = ['subscription', 'api', 'both', 'current'];
+    const BILLING_LABELS = { subscription: 'Subscription', api: 'API credit', both: 'Both', current: 'Current mode' };
+    function claudeBilling(cfg) {
+        const v = String((cfg && cfg.billing) || '');
+        if (BILLING_VIEWS.includes(v)) return v;
+        return cfg && cfg.api_credit ? 'both' : 'subscription';
     }
 
     function meterModel(gizmo, data, nowMs) {
@@ -84,9 +94,10 @@
             title, agentLabel, show, pct: 0, value: '…', valueLabel: show === 'used' ? 'used' : 'left',
             caption: '', resetText: '', rows: [], tone: 'unknown', state: 'loading',
             error: '', stale: false, plan: '', updatedAt: null, unblockAt: null, extras: {},
-            hasBar: false, metric: 'percent', notifyArmed: !!cfg.notify_on_unblock,
+            hasBar: false, metric: 'percent', notifyArmed: !!cfg.notify_on_unblock, billing: null,
         };
         if (!data) return base;
+        base.billing = (data.billing && typeof data.billing === 'object') ? data.billing : null;
         const windows = Array.isArray(data.windows) ? data.windows : [];
         const readout = (data.readout && typeof data.readout === 'object') ? data.readout : null;
         if (!windows.length && !readout) {
@@ -200,14 +211,18 @@
         return s.length > 8 ? s.slice(0, 7) + '…' : s;
     }
 
+    /** Rows stack label · reset · value over a full-width bar, so every
+     * meter's bars span the same width whatever its labels or values say. */
     function renderRows(model) {
         return '<div class="gizmo-rows">' + model.rows.map(r =>
             '<div class="gizmo-row tone-' + r.tone + (r.active ? ' is-active' : '') + '">'
+            + '<div class="gizmo-row-line">'
             + '<span class="gizmo-row-label">' + escape(r.label) + '</span>'
-            + bar(r.pct, 'gizmo-bar--row')
+            + (r.resetText ? '<span class="gizmo-row-reset" title="' + escape('Resets ' + r.resetAbs) + '">'
+                + escape(r.resetText.replace(/^in /, '')) + '</span>' : '')
             + '<span class="gizmo-row-value">' + (r.valueText ? escape(r.valueText) : Math.round(r.pct) + '%') + '</span>'
-            + '<span class="gizmo-row-reset" title="' + escape(r.resetAbs) + '">'
-            + escape(r.resetText ? 'resets ' + r.resetText : '') + '</span></div>').join('') + '</div>';
+            + '</div>'
+            + bar(r.pct, 'gizmo-bar--row') + '</div>').join('') + '</div>';
     }
 
     /** variant: titlebar | rail | float | popout | card */
@@ -257,25 +272,41 @@
             + escape(gizmo && gizmo.id) + '"><span class="gizmo-title">Unknown gizmo</span></div>';
     }
 
+    /** Secondary facts for the detail panel's info tooltip (one per line). */
+    function detailInfoLines(model) {
+        const extras = model.extras || {};
+        const lines = [];
+        if (model.plan) lines.push('Plan: ' + model.plan);
+        if (extras.resets_available) lines.push(extras.resets_available + ' saved reset' + (extras.resets_available === 1 ? '' : 's'));
+        if (extras.credits) lines.push('Credits: ' + extras.credits);
+        if (extras.note) lines.push(extras.note);
+        if (extras.api_credit) lines.push('API credit: ' + extras.api_credit);
+        const b = model.billing;
+        if (b && b.view === 'current') lines.push('Current mode: showing ' + (b.shown === 'api' ? 'API credit' : 'the subscription'));
+        if (model.notifyArmed) lines.push('Will notify when this account unblocks.');
+        if (model.updatedAt) {
+            lines.push('Updated ' + new Date(model.updatedAt * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
+        }
+        if (model.error && model.rows.length) lines.push('⚠ ' + model.error);
+        return lines;
+    }
+
     /** Detail popover body (shell click / right-click). */
     function renderDetailHtml(gizmo, data, nowMs) {
         if (!gizmo || gizmo.type !== 'usage_meter') return '<div class="gizmo-detail">Unknown gizmo</div>';
         const model = meterModel(gizmo, data, nowMs);
-        const extras = model.extras || {};
-        const notes = [];
-        if (model.plan) notes.push('Plan: ' + model.plan);
-        if (extras.resets_available) notes.push(extras.resets_available + ' saved reset' + (extras.resets_available === 1 ? '' : 's'));
-        if (extras.credits) notes.push('Credits: ' + extras.credits);
-        if (extras.note) notes.push(extras.note);
-        if (extras.api_credit) notes.push('API credit: ' + extras.api_credit);
+        const info = detailInfoLines(model);
+        const head = '<div class="gizmo-detail-head">'
+            + '<span class="gizmo-detail-title">' + escape(model.title) + '</span>'
+            + (model.plan ? '<span class="gizmo-detail-plan">' + escape(model.plan) + '</span>' : '')
+            + (model.stale ? '<span class="gizmo-stale">stale</span>' : '')
+            + (info.length ? '<button type="button" class="cuttle-info" aria-label="About this meter" data-tooltip="'
+                + escape(info.join('\n')) + '">i</button>' : '')
+            + '</div>';
         const status = model.state === 'blocked'
             ? '<div class="gizmo-detail-status tone-blocked">Blocked' + (model.unblockAt
-                ? ' · unblocks ' + escape(relative(model.unblockAt, nowMs)) + ' (' + escape(absolute(model.unblockAt)) + ')' : '') + '</div>'
+                ? ' · unblocks ' + escape(relative(model.unblockAt, nowMs)) : '') + '</div>'
             : '';
-        const updated = model.updatedAt
-            ? 'Updated ' + new Date(model.updatedAt * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
-        const armed = model.notifyArmed
-            ? '<div class="gizmo-detail-notes">Will notify when this account unblocks.</div>' : '';
         let body;
         if (model.rows.length) {
             body = renderRows(model);
@@ -286,15 +317,7 @@
                 + (model.valueLabel ? ' ' + model.valueLabel : '');
             body = '<div class="gizmo-detail-empty">' + escape(readout || 'Loading…') + '</div>';
         }
-        return '<div class="gizmo-detail">'
-            + '<div class="gizmo-detail-title">' + escape(model.title) + '</div>'
-            + status
-            + body
-            + (notes.length ? '<div class="gizmo-detail-notes">' + notes.map(escape).join(' · ') + '</div>' : '')
-            + armed
-            + '<div class="gizmo-detail-meta">' + escape(updated)
-            + (model.error && model.rows.length ? ' · ⚠ ' + escape(model.error) : '') + '</div>'
-            + '</div>';
+        return '<div class="gizmo-detail">' + head + status + body + '</div>';
     }
 
     /** Where a gizmo actually renders on this surface. */
@@ -322,8 +345,8 @@
     }
 
     const api = {
-        DOCKS, DOCK_LABELS, escape, clampPct, formatDuration, relative, absolute, toneFor,
-        pickWindow, dataKey, meterModel, tooltipText, renderGizmoHtml, renderDetailHtml,
+        DOCKS, DOCK_LABELS, BILLING_VIEWS, BILLING_LABELS, claudeBilling, escape, clampPct, formatDuration, relative, absolute, toneFor,
+        pickWindow, dataKey, meterModel, tooltipText, renderGizmoHtml, renderDetailHtml, detailInfoLines,
         effectiveDock, sortForDock, orderBetween, compactValue,
     };
     root.CuttleGizmos = api;

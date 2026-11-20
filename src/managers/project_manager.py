@@ -598,7 +598,7 @@ class ProjectManager:
             
             # Pull latest changes
             result = subprocess.run(['git', 'pull'], cwd=local_path, 
-                                  capture_output=True, text=True, check=True)
+                                  capture_output=True, text=True, check=True, encoding="utf-8", errors="replace")
             
             # Update last accessed time
             conn = sqlite3.connect(self.db_path, timeout=30.0)

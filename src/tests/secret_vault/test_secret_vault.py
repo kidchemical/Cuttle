@@ -123,7 +123,7 @@ def _run(plan, values, tmp_path, **kw):
     out, err = tmp_path / "out.bin", tmp_path / "err.bin"
     with out.open("wb") as o, err.open("wb") as e:
         code = deliver.run(plan, values.__getitem__, stdout=o, stderr=e, **kw)
-    return code, out.read_text(), err.read_text()
+    return code, out.read_text(encoding="utf-8"), err.read_text(encoding="utf-8")
 
 
 def test_env_file_and_stdin_delivery_with_redaction(tmp_path):
@@ -177,7 +177,7 @@ def test_askpass_answers_password_prompt_and_refuses_hostkey(tmp_path):
         for _ in range(3):
             again = subprocess.run([ask, "deploy@prod's password: "], capture_output=True, text=True)
         print("after-limit", again.returncode, repr(again.stdout))
-    """))
+    """), encoding="utf-8")
     fake_ssh.chmod(fake_ssh.stat().st_mode | stat.S_IXUSR)
     p = deliver.plan([str(fake_ssh)], [deliver.Injection("askpass", "prod")])
     code, out, _ = _run(p, {"prod": SECRET}, tmp_path, askpass_max=3)
@@ -214,7 +214,7 @@ def test_command_backend_round_trip_with_a_fake_manager(tmp_path):
             f.write_text(sys.stdin.read().rstrip("\\n"))
         elif verb == "rm":
             f.unlink(missing_ok=True)
-    """))
+    """), encoding="utf-8")
     b = backends.CommandBackend("fake", get=[PY, str(mgr), "get", "{ref}"],
                                 set=[PY, str(mgr), "set", "{ref}"],
                                 delete=[PY, str(mgr), "rm", "{ref}"], first_line=True)
@@ -255,7 +255,7 @@ def test_flag_registered_default_off():
 
 def test_metadata_file_never_contains_values(vault):
     service.put_secret("prod-ssh", value=SECRET, description="ssh pw")
-    raw = service.vault_path().read_text()
+    raw = service.vault_path().read_text(encoding="utf-8")
     assert SECRET not in raw
     assert service.resolve_value("prod-ssh") == SECRET
     row = service.get_secret("prod-ssh")
@@ -364,7 +364,7 @@ def test_cli_run_needs_approval_then_runs_redacted(vault, capfd, monkeypatch):
 
 def test_cli_run_without_session_and_no_tty_refuses(vault, capfd, monkeypatch):
     service.put_secret("api", value=SECRET)
-    monkeypatch.setattr(sys, "stdin", open(os.devnull))
+    monkeypatch.setattr(sys, "stdin", open(os.devnull, encoding="utf-8"))
     assert cli.main(["run", "--env", "K=api", "--", PY, "-c", "pass"]) == cli.EXIT_APPROVAL
     assert "no chat session" in capfd.readouterr().err
 

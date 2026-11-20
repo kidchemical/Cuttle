@@ -24,7 +24,13 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # Generous dump guardrail for the global always-on body (current ~10.1K;
 # the old ~12.3K payload fails). Catches a future full-runbook paste;
 # never freeze an exact length.
-GLOBAL_RULE_BODY_BUDGET = 12000
+# Ceilings, not targets: measured 2026-11-20 after the context trim at
+# 6,706 (global rule bodies), 13,845 (Cuttle-repo envelope) and the guest
+# figure printed below. Raising one means always-on text grew: move the
+# procedure to its runbook instead (`rule-authoring.md`).
+GLOBAL_RULE_BODY_BUDGET = 7500
+CUTTLE_ENVELOPE_BUDGET = 15500
+GUEST_ENVELOPE_BUDGET = 11500
 
 CUTTLE_POINTERS = (
     "ARCHITECTURE_PRINCIPLES.md",
@@ -149,6 +155,30 @@ def test_personal_overlay_appends_explicitly(
     assert "Overlay marker" in env
 
 
+def test_personal_only_rule_is_labelled_install_local(
+        tmp_path, _no_providers_and_isolated_install):
+    """A personal rule with no tracked twin must not read as shipped guidance:
+    an agent quoting it has to be able to say where it came from."""
+    personal = personal_dir()
+    (personal / "rules").mkdir(parents=True, exist_ok=True)
+    (personal / "rules" / "10-local-only.md").write_text(
+        "# Local\n\nLocal-only marker.\n", encoding="utf-8")
+    env = _env("hello", _guest(tmp_path))
+    head, _, body = env.partition("Local-only marker")
+    assert body and "Install-local (`personal/rules/10-local-only.md`" in head[-200:]
+
+
+def test_shipped_always_on_text_names_no_retired_process(tmp_path):
+    """Discord is REST-only agent-ops: there is no bot process to protect, and a
+    kill prohibition naming one sends agents hunting for it."""
+    from api.cuttle_ui_capabilities import cuttle_ui_capabilities_block
+    from api.restart_safety_policy import RESTART_SAFETY_BRIEF
+
+    shipped = _env("hello", _guest(tmp_path)) + cuttle_ui_capabilities_block() + RESTART_SAFETY_BRIEF
+    assert "discord bot" not in shipped.lower()
+    assert "cuttle_daemon" in shipped and "web_chat_api" in shipped
+
+
 def test_global_rule_body_budget_with_counts(tmp_path, capsys):
     bodies = dict(_compiler.load_global_rules())
     total = sum(len(text) for text in bodies.values())
@@ -156,6 +186,15 @@ def test_global_rule_body_budget_with_counts(tmp_path, capsys):
     print(f"global_rule_bodies={total} "
           f"files={len(bodies)} envelope={len(env)}")
     assert total < GLOBAL_RULE_BODY_BUDGET
+
+
+def test_fresh_envelope_stays_inside_its_budget(tmp_path, capsys):
+    """A fresh `hello` briefing (tracked rules, no personal overlay, no ranker)."""
+    cuttle = len(_env("hello", _cuttle_project(tmp_path)))
+    guest = len(_env("hello", _guest(tmp_path)))
+    print(f"cuttle_envelope={cuttle} guest_envelope={guest}")
+    assert cuttle < CUTTLE_ENVELOPE_BUDGET
+    assert guest < GUEST_ENVELOPE_BUDGET
 
 
 @pytest.mark.parametrize("prompt", ["hello", "Fix the native input integration"])

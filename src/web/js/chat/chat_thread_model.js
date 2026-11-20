@@ -183,7 +183,59 @@
         return s;
     }
 
-    const api = { KIND, group, summary, previewText, threadKeyFor };
+    /** Label for the agent's reply text under a steer (exact copy from the receipt contract). */
+    const EXCERPT_LABEL = 'Agent response excerpt';
+
+    /**
+     * Project a steered row's receipt into truthful, display-ready copy.
+     * `row`: { messageId, turnId, steerIdle, metadata: { steer } }. A row sent from
+     * this page carries the `/api/chat-steer` reply as its first `steer` (see `sentReceipt`).
+     * `liveSteers`: the live-status `steers` extra (current turn only); when it
+     * names this row, it wins over the saved receipt, even if the row has none yet.
+     * `liveTurnId`: the chat's live turn id, or '' when nothing is running.
+     * Returns { label, state, excerpt } or null for an unknown shape (no `v: 1`).
+     */
+    function steerReceipt(row, liveSteers, liveTurnId) {
+        if (!row) return null;
+        const stored = row.metadata && row.metadata.steer;
+        // A saved row matches its live steer by message id. A row drawn locally has
+        // no message id yet: it matches by the steer id it was sent with.
+        const steerId = row.messageId == null && stored && stored.steer_id ? String(stored.steer_id) : '';
+        const live = Array.isArray(liveSteers)
+            ? liveSteers.find((item) => item && item.v === 1 && (row.messageId != null
+                ? String(item.message_id) === String(row.messageId)
+                : (!!steerId && String(item.steer_id) === steerId)))
+            : undefined;
+        const current = live || stored;
+        if (!current || current.v !== 1) return null;
+        let label = 'Not confirmed';
+        if (current.mode === 'live' && current.state === 'delivered') label = 'Steered into the live turn · no restart';
+        else if (current.mode === 'live' && current.state === 'pending') {
+            label = String(row.turnId || '') === String(liveTurnId || '') && !!liveTurnId
+                ? 'Sending into the live turn…' : 'Not confirmed';
+        } else if (current.mode === 'detached' && current.state === 'pending') label = 'Accepted into the background run';
+        else if (current.mode === 'detached' && current.state === 'delivered') label = 'Read by the background run';
+        else if (current.state === 'undelivered') label = 'Ended without confirmation';
+        // The reply rides on the last covered row only; an idle steer never shows it.
+        const covers = Array.isArray(current.covers) ? current.covers : [];
+        const carriesReply = covers.length > 0 && row.messageId != null
+            && String(covers[covers.length - 1]) === String(row.messageId);
+        const excerpt = !row.steerIdle && carriesReply && current.reply && current.reply.text
+            ? String(current.reply.text) : null;
+        return { label, state: current.state, excerpt };
+    }
+
+    /**
+     * The receipt a just-sent steer row starts with, from the `/api/chat-steer`
+     * reply (`steer_id`, `delivered`, `steer_idle`). Null when the reply has no id.
+     */
+    function sentReceipt(reply) {
+        if (!reply || !reply.steer_id) return null;
+        return { v: 1, steer_id: String(reply.steer_id), state: reply.delivered ? 'delivered' : 'pending',
+            delivered_at: null, mode: reply.steer_idle ? 'detached' : 'live', reply: null, covers: [] };
+    }
+
+    const api = { KIND, group, summary, previewText, threadKeyFor, steerReceipt, sentReceipt, EXCERPT_LABEL };
 
     const ns = (root.CuttleChatThreadModel = root.CuttleChatThreadModel || {});
     Object.assign(ns, api);

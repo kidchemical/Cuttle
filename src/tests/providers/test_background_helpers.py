@@ -231,7 +231,7 @@ def test_helper_lifecycle_stages_system_prompt_and_unregisters(monkeypatch):
     request = HelperRequest('title',system='Multi-line\n' + 'context '*2000)
     with helper.helper_process(['/fake/claude','--system-prompt-file','{helper_system_prompt}'],request) as (runner, cwd):
         prompt = Path(captured['args'][2])
-        assert prompt.read_text().startswith(request.system)
+        assert prompt.read_text(encoding="utf-8").startswith(request.system)
         assert request.system not in captured['args']
         assert get_executing_jobs()
         assert runner.next()['result'] == 'title'

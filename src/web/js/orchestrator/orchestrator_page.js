@@ -177,6 +177,84 @@
         host.innerHTML = tiers.map((t, i) => tierHtml(t, i, tiers.length)).join('');
     }
 
+    // ── Studio org chart: a read-only view of the draft (tiers as columns, rule chips).
+    // Editing stays in the ladder below; a member here jumps to its ladder row.
+    // Classic never renders it: the host stays hidden unless Studio is on.
+
+    const display = window.CuttleChatDisplay || null;
+    const identity = window.CuttleAgentIdentity;
+
+    function isStudio() {
+        if (display) return display.isStudio();
+        return document.documentElement.classList.contains('cuttle-studio');
+    }
+
+    const MEMBER_STATE = { default: 'Default', alt: 'Alternate', off: 'Off', missing: 'Missing' };
+
+    /** One member: agent identity (dot + harness name) first, then the saved profile name and model · effort. */
+    function chartMemberHtml(m, tierIndex, memberIndex) {
+        const who = m.agent ? identity.forAgent(m.agent, state.catalog) : null;
+        let primary = M.esc(m.name);
+        if (!m.missing) primary = who ? identity.labelHtml(who) : 'Any harness';
+        // A saved profile's own name adds information; a temporary agent is already its pin.
+        const profileName = who && !m.missing && !m.temporary && m.name !== who.name ? m.name : '';
+        const secondary = [m.missing ? 'Profile not found' : profileName, m.detail].filter(Boolean).map(M.esc).join(' · ');
+        const status = m.missing ? 'missing' : !m.on ? 'off' : m.isDefault ? 'default' : 'alt';
+        return `<li class="sp-member is-${status}">
+            <button type="button" class="sp-member-btn" data-jump-tier="${tierIndex}" data-jump-member="${memberIndex}" title="Edit this agent in the ladder below">
+                <span class="sp-member-id">${primary}</span>
+                ${secondary ? `<span class="sp-member-meta">${secondary}</span>` : ''}
+                <span class="sp-member-state">${MEMBER_STATE[status]}${m.temporary ? ' · temporary' : ''}</span>
+            </button>
+        </li>`;
+    }
+
+    function chartHtml(tiers, chips) {
+        const arrow = '<span class="sp-arrow" aria-hidden="true"><svg viewBox="0 0 40 24"><path d="M3 12H34M26 4L35 12L26 20"/></svg></span>';
+        const columns = tiers.map((t, i) => {
+            const members = t.members.map((m, j) => chartMemberHtml(m, i, j)).join('')
+                || '<li class="sp-member-empty">No agents yet</li>';
+            return `${i > 0 ? arrow : ''}<section class="sp-tier" aria-labelledby="sp-tier-${i}">
+                <header class="sp-tier-head">
+                    <span class="sp-tier-step" aria-hidden="true">${i + 1}</span>
+                    <div class="sp-tier-title">
+                        <h3 class="sp-tier-name" id="sp-tier-${i}">${M.esc(t.label)}</h3>
+                        <span class="sp-tier-role">${M.esc(t.roleLabel)}</span>
+                    </div>
+                </header>
+                <ul class="sp-members">${members}</ul>
+                ${t.skipped ? '<p class="sp-tier-note">Every agent here is off, so this tier is skipped.</p>' : ''}
+                ${t.hint ? `<p class="sp-tier-hint">${M.esc(t.hint)}</p>` : ''}
+            </section>`;
+        }).join('');
+        const rules = chips.length
+            ? `<ul class="sp-rules" aria-label="Playbook rules">${chips.map((c) => `<li class="sp-chip">${M.esc(c.text)}</li>`).join('')}</ul>`
+            : '';
+        return `<div class="sp-tiers">${columns}</div>${rules}`;
+    }
+
+    function renderChart() {
+        const host = $('orchChart');
+        if (!host) return;
+        const on = isStudio() && !!state.draft;
+        host.hidden = !on;
+        if (!on) { host.innerHTML = ''; return; }
+        const tiers = M.chartTiers(state.draft, state.profiles);
+        host.innerHTML = tiers.length
+            ? chartHtml(tiers, M.ruleChips(state.draft))
+            : '<p class="orch-help">Add a tier to see the chart.</p>';
+    }
+
+    $('orchChart').addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-jump-tier]');
+        if (!btn) return;
+        const row = tiersEl.querySelector(`.orch-tier[data-index="${btn.dataset.jumpTier}"] [data-member="${btn.dataset.jumpMember}"]`);
+        if (!row) return;
+        row.scrollIntoView({ block: 'center' });
+        (row.querySelector('[data-grip]') || row).focus({ preventScroll: true });
+    });
+    if (display) display.onChange(() => renderChart());
+
     // ── Limits / supervisor ─────────────────────────────────────────────
 
     function renderLimits() {
@@ -296,6 +374,7 @@
         renderSavebar();
         const d = state.draft;
         $('orchStartCmd').querySelector('code').textContent = startCommand(d);
+        renderChart();
     }
 
     function setTab(tab) {
@@ -772,5 +851,6 @@
 
     window.addEventListener('beforeunload', (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
     $('orchRefresh').addEventListener('click', () => { if (!isDirty() || window.confirm('Discard unsaved changes?')) load(); });
+    if (display) display.syncFlag();
     load();
 })();

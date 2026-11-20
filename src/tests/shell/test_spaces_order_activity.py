@@ -260,7 +260,7 @@ const ok = A.noteNewReplies([{ id: '5', attention: att(15, true) }, { id: '6' }]
 process.stdout.write(JSON.stringify({ seed, same, err, read, ok }));
 """
     out = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True,
-                         env={"SPACES_DIR": str(SPACES_DIR), "PATH": __import__("os").environ["PATH"]})
+                         env={"SPACES_DIR": str(SPACES_DIR), "PATH": __import__("os").environ["PATH"]}, encoding="utf-8")
     got = json.loads(out.stdout)
     assert got["seed"] == [] and got["same"] == [] and got["read"] == []
     assert got["err"] == [{"bare": "5", "isError": True, "awaitingInput": False}]

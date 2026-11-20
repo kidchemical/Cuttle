@@ -22,7 +22,7 @@ and aborts the transaction by exiting non-zero in the `prepared` phase.
   is not on that branch, so agents working in the dev/core checkout keep
   working. The kernel sets the marker per turn (`git_hook.supervised_reason`).
   A top-level chat the user drives directly may update protected branches when
-  asked (v1 refused every agent chat, CH-001998); the user's terminal, Unity,
+  asked (v1 refused every agent chat); the user's terminal, Unity,
   and the Git UI pass untouched.
 - **Upgrade**: the script carries a version marker (`cuttle-protect-branch-hook
   vN`); re-running `install-hook <repo>` replaces any older Cuttle version in

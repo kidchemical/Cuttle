@@ -534,7 +534,7 @@ def test_structured_restore_and_copy_text():
 def test_copy_and_speech_keep_original_then_processed_text_without_wire_markup():
     response = '<cuttle_original_response>' + json.dumps('Original with **Markdown**') + '</cuttle_original_response>\n\nSummary'
     script = 'const m=require(process.argv[1]); process.stdout.write(JSON.stringify([m.postprocessedBody(process.argv[2]),m.postprocessedBody("Plain"),m.postprocessedBody("<cuttle_original_response>bad</cuttle_original_response>Tail")]));'
-    proc = subprocess.run(['node', '-e', script, str(MOD_JS), response], text=True, capture_output=True, check=True)
+    proc = subprocess.run(['node', '-e', script, str(MOD_JS), response], text=True, capture_output=True, check=True, encoding="utf-8")
     assert json.loads(proc.stdout) == ['Original with **Markdown**\n\nSummary', 'Plain', '<cuttle_original_response>bad</cuttle_original_response>Tail']
 
 
@@ -567,6 +567,16 @@ out.linkInCode = E('```\\n[not a link](https://example.com/z)\\n```\\n[real](htt
 out.fakePlaceholder = E('keep {{CUTTLE_CODE_9}} and {{CUTTLE_LINK_9}}');
 out.empty = E('');
 out.nullText = E(null);
+globalThis.location = { origin: 'https://host:8080' };
+out.outputHref = normalizeMdHref('/output/reports/a.html');
+out.outputSafe = [isSafeMdHref('/output/reports/a.html'), isSafeMdHref('/mnt/elsewhere/a.html')];
+delete globalThis.location;
+const thumbDeps = Object.assign({}, deps, { buildMediaThumbHtml: (src, o) => JSON.stringify({ src, d: o.description }) });
+out.imageDescs = [
+  '![a](/output/shared/x.png "the prompt \\'a fox\\' it\\'s from")',
+  "![a](/output/shared/x.png 'say \\"hi\\"')",
+  '![a](/output/shared/x.png)',
+].map((t) => JSON.parse(A.extractCodeLinkBlocks(t, thumbDeps).blocks.image[0]));
 const combinedBlocks = {};
 for (const part of [out.code.blocks, out.link.blocks, out.bare.blocks]) {
   for (const k of Object.keys(part)) combinedBlocks[k] = (combinedBlocks[k] || []).concat(part[k]);
@@ -621,6 +631,24 @@ def test_link_planning_chips_and_safety():
     assert res["nullText"] == {"text": "", "blocks": {"code": [], "link": [], "image": []}}
     assert "{{CUTTLE_" not in res["restored"]
     assert "message-code-block" in res["restored"]
+
+
+@node_only
+def test_image_description_may_contain_the_other_quote_character():
+    """A double-quoted description with apostrophes used to fold into the URL (dead image)."""
+    assert _run_codelink()["imageDescs"] == [
+        {"src": "/output/shared/x.png", "d": "the prompt 'a fox' it's from"},
+        {"src": "/output/shared/x.png", "d": 'say "hi"'},
+        {"src": "/output/shared/x.png", "d": ""},
+    ]
+
+
+@node_only
+def test_cuttle_served_output_path_is_a_clickable_web_link():
+    """[report](/output/reports/x.html) used to render as dead text (no scheme)."""
+    res = _run_codelink()
+    assert res["outputHref"] == "https://host:8080/output/reports/a.html"
+    assert res["outputSafe"] == [True, False]
 
 
 FULL_PIPELINE_HARNESS = """

@@ -24,7 +24,7 @@ class FakeProvider:
     def index(self, store, *, force=False):
         from api.knowledge_graph.protocol import IndexResult
         store.root.mkdir(parents=True, exist_ok=True)
-        (store.root / "fake.json").write_text("{}")
+        (store.root / "fake.json").write_text("{}", encoding="utf-8")
         return IndexResult(ok=True, artifact=self.artifact(store), meta={"nodes": 1})
     def update(self, store): return self.index(store)
     def query(self, store, question, *, budget=100):
@@ -34,7 +34,7 @@ class FakeProvider:
     def export(self, store, target_dir):
         from api.knowledge_graph.protocol import ExportResult
         target_dir.mkdir(parents=True, exist_ok=True)
-        (target_dir / "fake.md").write_text("fake")
+        (target_dir / "fake.md").write_text("fake", encoding="utf-8")
         return ExportResult(ok=True, project_dir=str(target_dir.parent), graph_dir=str(target_dir))
 
 def build_provider():
@@ -57,9 +57,10 @@ def _write_fake_provider(base: Path, pid: str = "fakekg") -> Path:
     d.mkdir(parents=True, exist_ok=True)
     (d / "manifest.yaml").write_text(
         f"id: {pid}\nlabel: Fake KG\nstore_root: fakekg\n"
-        "capabilities: [index, query]\nexecutable_names: [fake]\n"
+        "capabilities: [index, query]\nexecutable_names: [fake]\n",
+        encoding="utf-8",
     )
-    (d / "adapter.py").write_text(FAKE_ADAPTER)
+    (d / "adapter.py").write_text(FAKE_ADAPTER, encoding="utf-8")
     return d
 
 
@@ -92,7 +93,7 @@ def test_is_indexable(tmp_path, monkeypatch):
     assert service.is_indexable(str(plain)) is False
     code = tmp_path / "c"
     code.mkdir()
-    (code / "m.py").write_text("x=1\n")
+    (code / "m.py").write_text("x=1\n", encoding="utf-8")
     assert service.is_indexable(str(code)) is True
 
 
@@ -121,7 +122,7 @@ def test_resolve_unknown(tmp_path, monkeypatch):
 def test_manifest_validation(tmp_path):
     good = tmp_path / "ok" / "manifest.yaml"
     good.parent.mkdir()
-    good.write_text("id: ok\nstore_root: ok\ncapabilities: [index, query]\n")
+    good.write_text("id: ok\nstore_root: ok\ncapabilities: [index, query]\n", encoding="utf-8")
     info = load_manifest(good, expect_id="ok")
     assert info.id == "ok" and info.store_root == "ok"
 
@@ -130,7 +131,7 @@ def test_manifest_validation(tmp_path):
 
     bad_caps = tmp_path / "bad" / "manifest.yaml"
     bad_caps.parent.mkdir()
-    bad_caps.write_text("id: bad\ncapabilities: [query]\n")  # missing index
+    bad_caps.write_text("id: bad\ncapabilities: [query]\n", encoding="utf-8")  # missing index
     with pytest.raises(ValueError):
         load_manifest(bad_caps)
 
@@ -192,8 +193,8 @@ def _init_repo(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
     (path / "pkg").mkdir(exist_ok=True)
     (path / "pkg" / "a.py").write_text(
-        "# NOTE: entry\nfrom pkg import util\nclass Service:\n    def run(self):\n        return util.helper()\n")
-    (path / "pkg" / "util.py").write_text("def helper():\n    return 42\n")
+        "# NOTE: entry\nfrom pkg import util\nclass Service:\n    def run(self):\n        return util.helper()\n", encoding="utf-8")
+    (path / "pkg" / "util.py").write_text("def helper():\n    return 42\n", encoding="utf-8")
     subprocess.run(["git", "init", "-q"], cwd=path, check=True)
     subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"], cwd=path, check=True)
     subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "x"], cwd=path, check=True)
@@ -232,25 +233,25 @@ def test_graphify_provider_roundtrip(tmp_path, monkeypatch):
     assert [p.name for p in (vault / "Subsystems").iterdir()] == ["Demo (root).md"]  # 2 files roll up
     assert not (vault / "Graphify").exists()
     manual = vault / "Notes" / "n.md"
-    manual.write_text("# mine\n")
+    manual.write_text("# mine\n", encoding="utf-8")
     service.export_obsidian(ctx)
-    assert manual.read_text() == "# mine\n"
+    assert manual.read_text(encoding="utf-8") == "# mine\n"
 
 
 def test_export_archives_legacy_per_node_export(tmp_path, monkeypatch):
     monkeypatch.setenv("CUTTLE_HOME", str(tmp_path / "home"))
     project = tmp_path / "vault" / "Demo"
     (project / "Graphify").mkdir(parents=True)
-    (project / "Graphify" / "finalize().md").write_text("x")
+    (project / "Graphify" / "finalize().md").write_text("x", encoding="utf-8")
     (project / "Architecture").mkdir()
-    (project / "Architecture" / "Demo Graph Report.md").write_text("report")
-    (project / "Architecture" / "Mine.md").write_text("# mine\n")
+    (project / "Architecture" / "Demo Graph Report.md").write_text("report", encoding="utf-8")
+    (project / "Architecture" / "Mine.md").write_text("# mine\n", encoding="utf-8")
 
     dest = service._archive_legacy_export(project)
     assert dest and (tmp_path / "home" / "archive") in Path(dest).parents
     assert not (project / "Graphify").exists()
     assert not (project / "Architecture" / "Demo Graph Report.md").exists()
-    assert (project / "Architecture" / "Mine.md").read_text() == "# mine\n"
+    assert (project / "Architecture" / "Mine.md").read_text(encoding="utf-8") == "# mine\n"
 
 
 @pytest.mark.skipif(not _graphify_available(), reason="graphify CLI not installed")

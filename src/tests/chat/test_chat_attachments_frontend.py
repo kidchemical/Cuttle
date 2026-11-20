@@ -245,6 +245,7 @@ def test_clipboard_image_paste_plan():
         ["node", "-e", PASTE_HARNESS],
         capture_output=True, text=True, timeout=30,
         env={**__import__("os").environ, "MOD_JS": str(MOD_JS)},
+        encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout)

@@ -72,6 +72,66 @@ independently of Background helpers.
 Details and teardown owners: [chat-prompts.md](chat-prompts.md). The global kill
 switch also disables the pass.
 
+**Studio chat display:** flag `chat_studio_display` (default off). Adds a second
+chat look, Studio, with the layout of the v4 promo mocks; Classic is unchanged. Studio is a
+shape layer over the active theme: its colours derive from the theme's variables and it
+sets no font, so every theme, wallpaper and Text & fonts pref carries through
+(`css/studio/studio_tokens.css`; guarded by `src/tests/studio/test_studio_foundation.py`). Studio
+shows the in-bubble work panel (tasks and sub-agent cards), the push tray for
+peeked children, the Working pill, steer receipts in the reply thread and the
+open THINKING box, the supervision timeline, the composer prefix highlight and
+the Orchestrate chip in the sent bubble. The orchestrator playbook view uses it
+too. To turn it on, enable the flag (Settings → Experimental, or
+`python -m api.experimental set chat_studio_display on`), then choose Studio
+under Settings → Appearance → Display. That row stays hidden until the flag is
+on. The choice is per browser (`cuttleChatDisplay` in local storage); a flag
+that is off, or the kill switch, returns that browser to Classic. Owners:
+`src/web/js/shared/chat_display.js` (`CuttleChatDisplay`: `mode`, `setMode`,
+`syncFlag`, `onChange`; `ui_boot.js` sets `cuttle-studio` on `<html>` before
+first paint), the look in `src/web/css/studio/`, and
+`src/web/js/chat/chat_work_panel.js`. Each chat owner branches on its
+`isStudio()` host hook; none reads storage. Steer receipts (`metadata.steer`)
+are not Studio-only: they are always written and Classic simply does not show
+them. See the [Receipt contract](../../docs/guides/AGENT_STEERING.md#receipt-contract-metadatasteer).
+Plan and deferred work: [studio-display-plan.md](studio-display-plan.md).
+
+**Teardown (Studio chat display):** removing Studio touches:
+
+- Flag: the `chat_studio_display` row in `src/api/experimental/features.py`.
+- Boot and helpers: the `cuttle-studio` branch and the `cuttleChatDisplay` /
+  `cuttleChatStudioFlag` keys in `src/web/js/shared/ui_boot.js`;
+  `src/web/js/shared/chat_display.js`; `src/web/js/shared/agent_identity.js`.
+- Settings: the `chatDisplayRow` and `chatDisplaySelect` markup in
+  `src/web/settings_page.html`, the `syncFlag` calls there, and
+  `bindChatDisplay` in `src/web/js/settings/settings_chat_preferences.js`.
+- Styles: `src/web/css/studio/` (eight files) and their links in
+  `src/web/chat_page.html` and `src/web/orchestrator_page.html`.
+- Owner files: `src/web/js/chat/chat_work_panel.js` and its tag in
+  `chat_page.html`.
+- Studio branches (delete the branch, keep the Classic path): `chat_threads.js`,
+  `chat_live_thinking.js`, `chat_subagent_peek.js` (push layout),
+  `chat_slash_palette.js`, the `chat_supervision*` files (Studio panel
+  placement), `chat_messages.js` (bubble chip), `chat_orchestration.js` (Working
+  pill), `chat_subagent_fleet.js` (`renderStudioCardsHtml`),
+  `chat_subagent_launchers.js` (work-panel mount), `gizmos/tasks_gizmo.js`
+  (Studio row render), `orchestrator/orchestrator_page.js` (playbook view).
+- Call sites: `src/web/js/chat/chat_page.js` (`studioOn()`, the `isStudio` deps,
+  the steer-receipt dataset gate, the `syncFlag` call on load) and
+  `src/web/chat_page.html` (the `chat_display.js` and `agent_identity.js` tags,
+  the `chat_work_panel.js` tag, and the `css/studio` links).
+- Tests: `src/tests/studio/`, `src/tests/e2e/test_studio_*.py`,
+  `src/tests/e2e/test_chat_supervision_studio.py`,
+  `src/tests/chat/test_chat_supervision_studio_model.py`,
+  `src/tests/chat/test_chat_live_thinking.py`,
+  `src/tests/chat/test_slash_prefix_highlight.py`,
+  `src/tests/chat/test_orchestrate_bubble_chip.py`,
+  `src/tests/orchestrator/test_orchestrator_chart_model.py`.
+- Stays (data, useful to Classic too): Tasks fields (`gizmos/tasks_*`),
+  sub-agent spec and store additions, the supervision timeline
+  (`chat_ops/timeline.py`), `steer_receipts.py` and `metadata.steer`, and the
+  manifest `color:` field with `catalog.public_catalog`. Studio adds no routes of
+  its own; the flag is read from `GET /api/experimental/flags`.
+
 **UI**: Settings → 🧪 **Experimental** tab. Rows are rendered from the registry,
 so anything listed there is a real flag on the server.
 

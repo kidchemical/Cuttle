@@ -134,6 +134,52 @@ def test_spawn_wait_all_collects_replies(tmp_path: Path):
             assert asst_chips[0]["category"] == "codex"
 
 
+def test_child_reply_local_image_is_staged_like_a_normal_chat(tmp_path: Path):
+    """A child reply's local image path used to be saved raw (dead image in the child chat)."""
+    db, _db_path, _owner, parent = _seed(tmp_path)
+    image = tmp_path / "made by agent.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+    payload = service.spawn(
+        parent_session_id=parent,
+        children=[{"title": "Painter", "agent": "cursor", "message": "draw"}],
+        wait=True,
+        timeout=8,
+        runner=_runner_factory({"Painter": f"Here it is:\n\n![fox]({image})"}),
+        db=db,
+    )
+    child = payload["children"][0]
+    assert "](/output/shared/" in child["result"] and str(image) not in child["result"]
+    saved = [m["content"] for m in db.get_messages(child["session_id"]) if m["role"] == "assistant"]
+    assert saved and "](/output/shared/" in saved[-1] and str(image) not in saved[-1]
+
+
+def test_child_turn_caps_its_background_wait(tmp_path: Path, monkeypatch):
+    """Every child turn hands its harness the sub-agent idle-wait cap: the parent's
+    batch is blocked until the turn ends (CH-002669 held one for 78 minutes)."""
+    monkeypatch.setenv("CLAUDE_SUBAGENT_BACKGROUND_WAIT_SEC", "120")
+    db, _db_path, _owner, parent = _seed(tmp_path)
+    seen: list[dict] = []
+
+    def runner(**kw):
+        opts = dict(kw.get("execute_kwargs") or {})
+        cap = opts.pop("background_wait_cap")
+        seen.append({**opts, "cap": cap.seconds, "held": cap.held()})
+        return {"success": True, "response": "ok"}
+
+    service.spawn(
+        parent_session_id=parent,
+        children=[
+            {"title": "Plain", "agent": "claude", "message": "a"},
+            {"title": "Pinned", "agent": "claude", "effort": "high", "message": "b"},
+        ],
+        collect="all", wait=True, timeout=8, runner=runner, db=db,
+    )
+    assert sorted(seen, key=len) == [
+        {"cap": 120.0, "held": False},  # no sub-agents of its own: the cap stands
+        {"cap": 120.0, "held": False, "reasoning_effort": "high"},
+    ]
+
+
 def test_collect_first_cancels_the_rest(tmp_path: Path):
     db, _db_path, _owner, parent = _seed(tmp_path)
     release_slow = threading.Event()

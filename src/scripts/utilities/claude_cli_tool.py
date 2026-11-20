@@ -79,6 +79,7 @@ def claude_cli_health() -> bool:
             [claude_executable() or "claude", "--version"],
             env=agent_cli_env(), capture_output=True, text=True, timeout=3,
             creationflags=flags,
+            encoding="utf-8", errors="replace",
         )
         return result.returncode == 0
     except Exception:
@@ -86,6 +87,7 @@ def claude_cli_health() -> bool:
             result = subprocess.run(
                 ["wsl", "which", "claude"], env=agent_cli_env(),
                 capture_output=True, text=True, timeout=5, creationflags=flags,
+                encoding="utf-8", errors="replace",
             )
             return result.returncode == 0
         except Exception:
@@ -101,11 +103,11 @@ def _default_timeout() -> float:
 
 
 def _background_wait_seconds() -> float:
-    """How long one root ``result`` may wait on pending background tasks (0 = never).
+    """How long one turn may sit idle waiting on pending background tasks (0 = never).
 
-    The window restarts at every root ``result``: a follow-up turn that ends
-    while other tasks are still running opens a fresh wait, so a long chain of
-    short waits stays steerable instead of tripping one turn-wide budget.
+    One budget for the whole turn (``api.agent_harness.background_budget``): only
+    idle waiting counts, and a follow-up reply does not refill it, so leftover
+    waiters that never exit cannot hold the turn open reply after reply.
 
     Kept under the 3600s idle budget: the wait is silent on stdout, so the
     idle deadline would otherwise end it first with a timeout instead of a note.
@@ -395,14 +397,6 @@ def _merge_results(parsed: List[Dict[str, Any]]) -> Dict[str, Any]:
     return last
 
 
-def _undelivered_notice(texts: List[str]) -> str:
-    lines = "\n".join(f"- {' '.join(t.split())[:200]}" for t in texts)
-    return (
-        "Claude Code ended this turn before reading your follow-up"
-        f"{'s' if len(texts) > 1 else ''}:\n{lines}\nSend it again to continue."
-    )
-
-
 def _waiting_label(tasks: List[Dict[str, Any]]) -> str:
     from api.agent_harness.background_wait import waiting_label
 
@@ -413,23 +407,21 @@ def _waiting_label(tasks: List[Dict[str, Any]]) -> str:
 _UNREAD_STEER_GRACE_SEC = 20.0
 
 def _unread_steers(st: Dict[str, Any]) -> List[str]:
-    unread = list(st["echoed"])
-    out: List[str] = []
-    for text in st["sent"]:
-        if text in unread:
-            unread.remove(text)
-        else:
-            out.append(text)
-    return out
+    return list(st["delivery"].undelivered)
+
+
+def _closing_notice(st: Dict[str, Any]) -> Optional[str]:
+    """The run's one notice for follow-ups it never confirmed reading."""
+    return st["delivery"].closing_notice("Claude Code")
 
 
 def _finish_detached(wait: Any, run: Any, st: Dict[str, Any], bg_wait: float,
                      chat_session_id: Optional[str] = None) -> None:
     """End of a run that outlived its turn: terminal card state + closing notice bubble."""
     notes: List[str] = []
-    undelivered = _unread_steers(st)
-    if undelivered:
-        notes.append(_undelivered_notice(undelivered))
+    notice = _closing_notice(st)
+    if notice:
+        notes.append(notice)
     if run.cancelled:
         wait.finish("failed", "Stopped")
         return
@@ -594,6 +586,7 @@ class ClaudeCliTool:
         steerable: bool = False,
         background: Any = None,
         extra_env: Optional[Dict[str, str]] = None,
+        background_wait_cap: Any = None,
         _ctl: Optional[_Detach] = None,
     ) -> Dict[str, Any]:
         if background is not None and steerable and _ctl is None:
@@ -602,7 +595,8 @@ class ClaudeCliTool:
                 prompt, cwd=cwd, resume=resume, status_queue=status_queue,
                 chat_session_id=chat_session_id, timeout=timeout,
                 permission_mode=permission_mode, cancel_event=cancel_event,
-                steerable=True, background=background, extra_env=extra_env, _ctl=ctl,
+                steerable=True, background=background, extra_env=extra_env,
+                background_wait_cap=background_wait_cap, _ctl=ctl,
             ))
         ctl = _ctl
         if not (prompt or "").strip():
@@ -696,15 +690,19 @@ class ClaudeCliTool:
         from api.agent_harness import steer as steer_registry
 
         loop = asyncio.get_running_loop()
-        # sent: steers written to stdin; echoed: those the CLI replayed back
-        # (it read them); results: every root ``result`` (a late steer adds one).
+        # delivery: the run's one steer matcher — stdin writes are accepted, a
+        # replay of that exact text is received (api.agent_harness.steer_delivery);
+        # results: every root ``result`` (a late steer adds one).
         # bg: the CLI's latest background task list; a root ``result`` while it
         # is non-empty keeps stdin open so the task's notification can start
         # the follow-up turn. The wait window restarts at each root ``result``
         # and is cancelled while a follow-up runs. At the limit stdin closes;
         # a CLI that keeps running on EOF is reaped after a short grace.
+        from api.agent_harness.steer_delivery import SteerDelivery
+
         st: Dict[str, Any] = {
-            "token": None, "open": False, "sent": [], "echoed": [], "results": [],
+            "token": None, "open": False, "delivery": SteerDelivery(),
+            "prompt_replayed": False, "results": [],
             "bg": [], "waiting": False, "wait_timer": None, "abandoned": [],
             "reap_timer": None, "reaped": False, "posted": 0,
             # task_id -> output file (from the run_in_background tool result);
@@ -713,6 +711,11 @@ class ClaudeCliTool:
         }
         proc = None
         bg_wait = min(_background_wait_seconds(), max(0.0, resolved_timeout - 60.0))
+        from api.agent_harness.background_budget import WaitBudget, capped
+
+        full_wait = bg_wait
+        bg_wait = capped(bg_wait, background_wait_cap)  # a sub-agent child's shorter cap
+        budget = WaitBudget(bg_wait)  # idle waiting for the whole turn, not per reply
 
         def _close_input() -> None:
             if st["wait_timer"] is not None:
@@ -724,6 +727,8 @@ class ClaudeCliTool:
             if st["token"] is not None:
                 steer_registry.unregister(chat_session_id, st["token"])
                 st["token"] = None
+                if ctl is not None:
+                    ctl.wait.claim_steer(None)
             if st["open"]:
                 st["open"] = False
                 try:
@@ -731,24 +736,76 @@ class ClaudeCliTool:
                 except Exception:
                     pass
 
+        def _unread() -> bool:
+            return st["delivery"].accepted_count > st["delivery"].received_count
+
+        def _note(fn: Any, *args: Any) -> None:
+            """Receipt capture must never interrupt the reader."""
+            if st["token"] is None:
+                return
+            try:
+                fn(chat_session_id, st["token"], *args)
+            except Exception:
+                pass
+
+        def _note_echoes(receipts: List[Any]) -> None:
+            """Every confirmation the matcher makes, however it was reached."""
+            for receipt in receipts:
+                if receipt.steer_id:
+                    _note(steer_registry.note_echo, receipt.steer_id)
+
+        st["delivery"].confirmed = _note_echoes
+
+        def _note_output(obj: Dict[str, Any]) -> None:
+            """Root output boundaries, so only text that STARTED after a steer's
+            replay can be reported as its reply."""
+            if st["token"] is None:
+                return
+            if obj.get("type") == "stream_event":
+                event = obj.get("event") or {}
+                if event.get("type") == "message_start":
+                    mid = (event.get("message") or {}).get("id")
+                    if mid:
+                        _note(steer_registry.note_output_start, mid)
+                return
+            if obj.get("type") == "assistant":
+                message = obj.get("message") or {}
+                mid = str(message.get("id") or "")
+                for block in message.get("content") or []:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        _note(steer_registry.note_output_text, mid, block.get("text"))
+                        break
+
         def _close_if_unread() -> None:
             st["steer_timer"] = None
-            if len(st["sent"]) > len(st["echoed"]) and not st["waiting"]:
+            if _unread() and not st["waiting"]:
                 _close_input()
 
-        def _steer_send(text: str) -> "concurrent.futures.Future":
+        def _steer_send(text: str, steer_id: Optional[str] = None) -> "concurrent.futures.Future":
             out: "concurrent.futures.Future" = concurrent.futures.Future()
 
             def _write() -> None:
-                if not st["open"]:
+                # Identity is checked here, at the write, not only when the
+                # caller looked this run up: teardown can have unregistered
+                # (and a replacement CLI registered) while this callback sat on
+                # the loop queue. A send that no longer belongs to this run's
+                # registration writes nothing.
+                if not st["open"] or st["token"] is None:
                     out.set_result((False, "Claude Code turn already finished"))
                     return
+                # On the loop, before the write: the CLI can replay the line
+                # before this future resolves.
+                receipt = st["delivery"].begin(text, steer_id)
                 try:
                     proc.stdin.write(_user_line(text))
                 except Exception as exc:
+                    # A failed pipe write is not the CLI refusing the line: part
+                    # of it may already have been flushed, so acceptance is
+                    # unknown and an in-scope echo may still be this send's own.
+                    st["delivery"].acknowledge(receipt, succeeded=False)
                     out.set_result((False, str(exc)))
                     return
-                st["sent"].append(text)
+                st["delivery"].acknowledge(receipt, succeeded=True)
                 out.set_result((True, None))
 
             loop.call_soon_threadsafe(_write)
@@ -770,7 +827,14 @@ class ClaudeCliTool:
             st["reap_timer"] = loop.call_later(_background_exit_grace_seconds(), _reap)
 
         def _give_up_waiting() -> None:
+            nonlocal bg_wait
             st["wait_timer"] = None
+            if (background_wait_cap is not None and st["open"] and st["bg"]
+                    and background_wait_cap.held() and budget.extend(full_wait)):
+                # The capped turn still owns live work (its own sub-agents).
+                bg_wait = full_wait
+                st["wait_timer"] = loop.call_later(budget.arm(), _give_up_waiting)
+                return
             st["waiting"] = False
             if st["open"] and st["bg"]:
                 st["abandoned"] = [_task_label([t]) for t in st["bg"]]
@@ -818,7 +882,7 @@ class ClaudeCliTool:
                     "claude_session_id": sid,
                     "returncode": None,
                     "stderr": "",
-                    "steered": len(st["echoed"]),
+                    "steered": st["delivery"].received_count,
                     "undelivered_steers": [],
                     "background_job": ctl.wait.job_id,
                 })
@@ -853,14 +917,21 @@ class ClaudeCliTool:
                 # again (a task of several finished, or an event order we did
                 # not anticipate) — show the typing bubble.
                 ctl.wait.working("Claude Code is following up…")
+            if not obj.get("parent_tool_use_id"):
+                _note_output(obj)
             echoed = _replay_text(obj)
             if echoed is not None:
-                pending = [t for t in st["sent"] if t not in st["echoed"]]
-                if echoed.strip() in (t.strip() for t in pending):
-                    st["echoed"].append(next(t for t in pending if t.strip() == echoed.strip()))
-                    stream.activity.emit(f"steer received: {' '.join(echoed.split())[:100]}", force=True)
-                    if detached:
-                        ctl.wait.working("Claude Code is answering your message…", force=True)
+                if not st["prompt_replayed"] and echoed.strip() == (prompt or "").strip():
+                    # ``--replay-user-messages`` replays the turn's own prompt
+                    # first: that echo must never confirm a steer.
+                    st["prompt_replayed"] = True
+                else:
+                    confirmed = st["delivery"].receive(echoed, obj.get("uuid"))
+                    if confirmed:
+                        stream.activity.emit(
+                            f"steer received: {' '.join(echoed.split())[:100]}", force=True)
+                        if detached:
+                            ctl.wait.working("Claude Code is answering your message…", force=True)
             elif obj.get("type") == "system" and obj.get("subtype") == "background_tasks_changed":
                 tasks = obj.get("tasks")
                 before = len(st["bg"])
@@ -876,6 +947,7 @@ class ClaudeCliTool:
                         st["wait_timer"].cancel()
                         st["wait_timer"] = None
                     st["waiting"] = False
+                    budget.pause()
                     stream.activity.emit("background task finished — Claude Code is following up", force=True)
                     if detached:
                         ctl.wait.working("Background task finished — Claude Code is following up…", force=True)
@@ -891,9 +963,9 @@ class ClaudeCliTool:
                     if st["wait_timer"] is not None:
                         st["wait_timer"].cancel()
                     st["waiting"] = True
-                    st["wait_timer"] = loop.call_later(bg_wait, _give_up_waiting)
+                    st["wait_timer"] = loop.call_later(budget.arm(), _give_up_waiting)
                     stream.activity.emit(f"waiting on background task: {_task_label(st['bg'])}", force=True)
-                elif len(st["sent"]) > len(st["echoed"]):
+                elif _unread():
                     # A steer that reached stdin just as this answer finished starts
                     # an extra turn: stay steerable through it, so a steer sent while
                     # it works is not refused (and queued) — close at its result.
@@ -926,6 +998,9 @@ class ClaudeCliTool:
                 st["open"] = True
                 if chat_session_id:
                     st["token"] = steer_registry.register(chat_session_id, "claude", _steer_send)
+                    if ctl is not None:
+                        # A detached send must reach this CLI's registration.
+                        ctl.wait.claim_steer(st["token"])
             elif use_stdin and proc.stdin is not None:
                 proc.stdin.write(prompt.encode("utf-8"))
                 await proc.stdin.drain()
@@ -974,20 +1049,15 @@ class ClaudeCliTool:
         # The kernel adds this turn's thinking (api.agent_harness.reasoning_reply);
         # only detached follow-ups, which bypass it, wrap their own.
         display = carry_ui_blocks(stream.earlier_writing(), display)
-        unread = list(st["echoed"])
-        undelivered: List[str] = []
-        for text in st["sent"]:
-            if text in unread:
-                unread.remove(text)
-            else:
-                undelivered.append(text)
-        if undelivered:
-            display = f"{display}\n\n{_undelivered_notice(undelivered)}".strip()
+        undelivered: List[str] = _unread_steers(st)
+        notice = _closing_notice(st)
+        if notice:
+            display = f"{display}\n\n{notice}".strip()
         handed = _hand_off(st, chat_session_id, bg_wait) if st["abandoned"] and not run.cancelled else None
         if handed is not None:
             display = f"{display}\n\n{handed[0]}".strip()
         steer_info: Dict[str, Any] = (
-            {"steered": len(st["sent"]) - len(undelivered), "undelivered_steers": undelivered}
+            {"steered": st["delivery"].received_count, "undelivered_steers": undelivered}
             if steerable else {}
         )
 

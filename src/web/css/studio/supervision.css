@@ -1,0 +1,328 @@
+/* ================================================================
+   Studio supervision panel (lane L5): the supervision chip and the worker's
+   "Supervised by" badge open one clean timeline panel instead of the Classic
+   popover (chat_supervision.css keeps that one).
+
+   Every rule is under `:root.cuttle-studio`, so Classic is untouched. Colour
+   and type come from studio_tokens.css. The four status tones (warn, bad, ok,
+   and the accent for nudges) have no token yet, so they are local variables
+   here; L0 can promote them to studio_tokens.css.
+
+   Layout: a fixed panel anchored under the chip. Rows are time | icon | text;
+   below 640px the time moves above the headline. Motion uses the duration
+   tokens (zeroed by reduced motion) and an explicit reduced-motion override.
+   ================================================================ */
+
+:root.cuttle-studio {
+    --sup-tone-warn: #b45309;
+    --sup-tone-bad: #b91c1c;
+    --sup-tone-ok: #047857;
+    --sup-tone-info: #2563eb;
+    --sup-code-bg: color-mix(in srgb, var(--text-primary) 8%, transparent);
+    --sup-divider: color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+:root.cuttle-studio.dark-mode,
+:root.cuttle-studio.midnight-mode {
+    --sup-tone-warn: #fbbf24;
+    --sup-tone-bad: #f87171;
+    --sup-tone-ok: #34d399;
+    --sup-tone-info: #60a5fa;
+}
+
+@keyframes sup-studio-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+}
+
+:root.cuttle-studio .sup-studio-panel {
+    position: fixed;
+    z-index: 170;
+    box-sizing: border-box;
+    width: min(440px, calc(100vw - 16px));
+    max-height: min(600px, calc(100dvh - 80px));
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--studio-space-3);
+    padding: var(--studio-space-4);
+    background: var(--studio-card-bg);
+    color: var(--studio-ink);
+    border-radius: var(--studio-radius-lg);
+    box-shadow: var(--studio-shadow-raised);
+    animation: sup-studio-in var(--studio-dur-base) var(--studio-ease-out) both;
+}
+
+/* ── Header: eye mark, title and subline, status pill ─────────────── */
+
+:root.cuttle-studio .sup-studio-head {
+    display: flex;
+    align-items: center;
+    gap: var(--studio-space-3);
+    min-width: 0;
+}
+
+:root.cuttle-studio .sup-studio-eye {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+    background: var(--studio-accent-soft);
+}
+
+:root.cuttle-studio .sup-studio-eye i {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--studio-accent);
+    box-shadow: 0 0 0 5px var(--studio-accent-soft);
+}
+
+:root.cuttle-studio .sup-studio-titles {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+:root.cuttle-studio .sup-studio-title {
+    font-size: var(--studio-text-md);
+    font-weight: var(--studio-weight-bold);
+    letter-spacing: var(--studio-tracking-tight);
+    color: var(--studio-ink);
+    /* One line; a long goal ends in an ellipsis instead of wrapping under the chip. */
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+:root.cuttle-studio .sup-handle {
+    white-space: nowrap;
+}
+
+:root.cuttle-studio .sup-studio-sub {
+    margin-top: 2px;
+    font-size: var(--studio-text-xs);
+    color: var(--studio-ink-muted);
+}
+
+:root.cuttle-studio .sup-studio-status {
+    flex: 0 0 auto;
+    padding: 3px 10px;
+    border-radius: var(--studio-radius-pill);
+    font-size: var(--studio-text-xs);
+    font-weight: var(--studio-weight-bold);
+}
+
+/* active: success green; paused: amber, so a stopped panel never reads as running. */
+:root.cuttle-studio .sup-studio-status.is-active {
+    background: color-mix(in srgb, var(--sup-tone-ok) 14%, transparent);
+    color: var(--sup-tone-ok);
+}
+
+:root.cuttle-studio .sup-studio-status.is-paused {
+    background: color-mix(in srgb, var(--sup-tone-warn) 16%, transparent);
+    color: var(--sup-tone-warn);
+}
+
+/* ── Timeline rows: time | icon | text ───────────────────────────── */
+
+:root.cuttle-studio .sup-tl-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--studio-space-2);
+}
+
+:root.cuttle-studio .sup-tl {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+/* Each row is its own grid, so the time column is a fixed width; an older
+   "Nov 3 12:00" wraps to two lines inside it instead of widening the column. */
+:root.cuttle-studio .sup-tl-row {
+    display: grid;
+    grid-template-columns: 56px 26px minmax(0, 1fr);
+    column-gap: var(--studio-space-3);
+    align-items: start;
+    padding: var(--studio-space-3) 0;
+    border-top: 1px solid var(--sup-divider);
+}
+
+:root.cuttle-studio .sup-tl-row:first-child {
+    border-top: 0;
+}
+
+:root.cuttle-studio .sup-tl-time {
+    padding-top: 3px;
+    color: var(--studio-ink-faint);
+    font-size: var(--studio-text-xs);
+    font-weight: var(--studio-weight-bold);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--studio-leading-tight);
+}
+
+:root.cuttle-studio .sup-tl-icon {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--studio-ink-faint);
+    color: var(--studio-bubble-user-ink);
+    font-size: var(--studio-text-xs);
+    font-weight: var(--studio-weight-bold);
+}
+
+:root.cuttle-studio .sup-tl-row.tone-warn .sup-tl-icon { background: var(--sup-tone-warn); }
+:root.cuttle-studio .sup-tl-row.tone-bad .sup-tl-icon { background: var(--sup-tone-bad); }
+:root.cuttle-studio .sup-tl-row.tone-ok .sup-tl-icon { background: var(--sup-tone-ok); }
+:root.cuttle-studio .sup-tl-row.tone-accent .sup-tl-icon { background: var(--studio-accent); }
+:root.cuttle-studio .sup-tl-row.tone-info .sup-tl-icon { background: var(--sup-tone-info); }
+
+:root.cuttle-studio .sup-tl-text {
+    min-width: 0;
+}
+
+:root.cuttle-studio .sup-tl-headline {
+    color: var(--studio-ink);
+    font-size: var(--studio-text-sm);
+    font-weight: var(--studio-weight-semibold);
+    line-height: var(--studio-leading-tight);
+    overflow-wrap: anywhere;
+}
+
+:root.cuttle-studio .sup-tl-chat {
+    margin-left: 4px;
+    color: var(--studio-ink-muted);
+    font-size: var(--studio-text-2xs);
+    font-weight: var(--studio-weight-medium);
+    white-space: nowrap;
+}
+
+/* Backtick spans from server text (inlineHtml escapes before it wraps them). */
+:root.cuttle-studio .sup-tl-code {
+    padding: 0 4px;
+    border-radius: 4px;
+    background: var(--sup-code-bg);
+    color: inherit;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.92em;
+    font-weight: var(--studio-weight-medium);
+    overflow-wrap: anywhere;
+}
+
+:root.cuttle-studio .sup-tl-detail {
+    margin-top: 2px;
+    color: var(--studio-ink-muted);
+    font-size: var(--studio-text-xs);
+    line-height: var(--studio-leading-base);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* ── States and paging ───────────────────────────────────────────── */
+
+:root.cuttle-studio .sup-tl-state {
+    padding: var(--studio-space-3) 0;
+    color: var(--studio-ink-muted);
+    font-size: var(--studio-text-xs);
+    line-height: var(--studio-leading-base);
+}
+
+:root.cuttle-studio .sup-tl-state.is-error {
+    color: var(--sup-tone-bad);
+}
+
+:root.cuttle-studio .sup-tl-more {
+    align-self: flex-start;
+    padding: 5px 12px;
+    border: 0;
+    border-radius: var(--studio-radius-pill);
+    background: var(--studio-accent-soft);
+    color: var(--studio-accent-ink);
+    font: inherit;
+    font-size: var(--studio-text-xs);
+    font-weight: var(--studio-weight-semibold);
+    cursor: pointer;
+    transition: opacity var(--studio-dur-fast) var(--studio-ease-out);
+}
+
+:root.cuttle-studio .sup-tl-more:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+:root.cuttle-studio .sup-tl-more:focus-visible {
+    outline: none;
+    box-shadow: var(--studio-focus-ring);
+}
+
+/* ── Schedule controls under the timeline (same markup as the Classic popover) ── */
+
+:root.cuttle-studio .sup-studio-panel .chat-supervision-actions {
+    margin-top: var(--studio-space-3);
+    padding-top: var(--studio-space-3);
+    border-top: 1px solid var(--sup-divider);
+}
+
+:root.cuttle-studio .sup-studio-panel .chat-supervision-actions button,
+:root.cuttle-studio .sup-studio-panel .chat-supervision-pause-menu button {
+    padding: 5px 12px;
+    border: 0;
+    border-radius: var(--studio-radius-pill);
+    background: var(--studio-accent-soft);
+    color: var(--studio-accent-ink);
+    font: inherit;
+    font-size: var(--studio-text-xs);
+    font-weight: var(--studio-weight-semibold);
+    cursor: pointer;
+}
+
+:root.cuttle-studio .sup-studio-panel .chat-supervision-actions button.is-danger {
+    background: color-mix(in srgb, var(--sup-tone-bad) 12%, transparent);
+    color: var(--sup-tone-bad);
+}
+
+:root.cuttle-studio .sup-studio-panel .chat-supervision-actions button:focus-visible,
+:root.cuttle-studio .sup-studio-panel .chat-supervision-pause-menu button:focus-visible {
+    outline: none;
+    box-shadow: var(--studio-focus-ring);
+}
+
+/* ── Narrow panes: time above the headline ───────────────────────── */
+
+@media (max-width: 640px) {
+    :root.cuttle-studio .sup-tl-row {
+        grid-template-columns: 26px minmax(0, 1fr);
+    }
+
+    :root.cuttle-studio .sup-tl-time {
+        grid-column: 2;
+        grid-row: 1;
+        padding-top: 0;
+    }
+
+    :root.cuttle-studio .sup-tl-icon {
+        grid-column: 1;
+        grid-row: 2;
+    }
+
+    :root.cuttle-studio .sup-tl-text {
+        grid-column: 2;
+        grid-row: 2;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root.cuttle-studio .sup-studio-panel,
+    :root.cuttle-studio .sup-tl-more {
+        animation: none;
+        transition: none;
+    }
+}

@@ -79,6 +79,7 @@ def _git(root: Path, *args: str, timeout: float = 8) -> tuple[int, str]:
             ['git', '-C', str(root), *args],
             capture_output=True, text=True, timeout=timeout,
             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+            encoding="utf-8", errors="replace",
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return 1, str(exc)

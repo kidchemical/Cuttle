@@ -302,5 +302,5 @@ const tick = () => new Promise((r) => setTimeout(r, 15));
   assert.deepStrictEqual(errors, []);
 })().catch((e) => { console.error(e); process.exitCode = 1; try { voice.stop(); } catch (_) {} });
 """
-    proc = subprocess.run(["node", "-e", script, str(js)], capture_output=True, text=True, timeout=20)
+    proc = subprocess.run(["node", "-e", script, str(js)], capture_output=True, text=True, timeout=20, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr

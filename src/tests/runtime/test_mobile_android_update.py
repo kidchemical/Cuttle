@@ -194,9 +194,8 @@ def test_event_stream_drains_while_foreground():
     assert "sleepQuiet(2500)" not in src or "Keep polling while the UI is open" in src
 
 
-def test_offline_login_is_default_when_pc_down():
-    main = (REPO / "apps" / "mobile" / "src" / "main.js").read_text(encoding="utf-8")
-    html = (REPO / "apps" / "mobile" / "index.html").read_text(encoding="utf-8")
+def test_styled_error_page_is_shown_when_pc_down():
+    vite = (REPO / "apps" / "mobile" / "vite.config.js").read_text(encoding="utf-8")
     java = (
         REPO
         / "apps"
@@ -211,10 +210,15 @@ def test_offline_login_is_default_when_pc_down():
         / "mobile"
         / "MainActivity.java"
     ).read_text(encoding="utf-8")
-    assert "get('offline')" in main or "offline') === '1'" in main
-    assert "offline-login" in html
-    assert "server-fab" in main
-    assert "index.html?offline=1" in java
+    # The shared page ships in the APK and replaces the old inline/offline screens.
+    assert "src/web/error_page.html" in vite and "dist/error_page.html" in vite
+    assert '"https://localhost/error_page.html"' in java
+    offline = java.split("private void showOfflineLogin(", 1)[1].split("\n    }\n", 1)[0]
+    assert "showErrorPage(" in offline
+    page = java.split("private void showErrorPage(", 1)[1].split("\n    }\n", 1)[0]
+    for param in ('"kind", "network"', '"platform", "android"', '"code"', '"url"', '"attempt"'):
+        assert param in page
+    assert "loadDataWithBaseURL" not in java.split("private void showError(", 1)[1].split("\n    }\n", 1)[0]
 
 
 def test_ios_suppresses_foreground_banners():

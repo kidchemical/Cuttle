@@ -109,6 +109,10 @@ def merge_named_files(
 _DELTA_MARKER = "*Install-local delta (`personal/{rel}` — appended after tracked; tracked above is canonical):*"
 
 
+# A personal file with no tracked twin reads like shipped guidance unless it says so.
+_PERSONAL_ONLY_MARKER = "*Install-local (`personal/{rel}`; this install only, no tracked file):*"
+
+
 def _append_delta(tracked_text: str, rel: str, personal_path: Path) -> str:
     try:
         delta = personal_path.read_text(encoding="utf-8").strip()
@@ -160,11 +164,13 @@ def read_merged_md(
             except OSError:
                 text = ""
         if not text and personal is not None:
-            # Personal-only file: included as-is.
+            # Personal-only file: included whole, marked as this install's own.
             try:
                 text = personal.read_text(encoding="utf-8").strip()
             except OSError:
                 continue
+            if text:
+                text = _PERSONAL_ONLY_MARKER.format(rel=f"{tracked_dir.name}/{personal.name}") + "\n\n" + text
         if not text:
             continue
         if tracked is not None and personal is not None and has_tracked_text:

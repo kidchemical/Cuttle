@@ -66,7 +66,7 @@ def test_stamp_skips_when_same_project_already_stored(monkeypatch):
 
 
 def test_stamp_updates_when_client_switches_project(monkeypatch):
-    """CH-000204: mid-chat /project to Escape Purgatory must replace stamped Cuttle."""
+    """CH-000204: mid-chat /project to Demo Game must replace stamped Cuttle."""
     from api import web_chat_api as api
 
     db = MagicMock()

@@ -59,7 +59,7 @@ def test_popup_surfaces_and_dropdowns_use_active_palette(browser, static_server,
         page.keyboard.press('Escape')
         page.evaluate('chips.close()')
         # Actual account and release-note markup share the same modal palette.
-        html = (Path(__file__).resolve().parents[2] / 'web/app_shell.html').read_text()
+        html = (Path(__file__).resolve().parents[2] / 'web/app_shell.html').read_text(encoding="utf-8")
         account = re.search(r'<div class="auth-modal-overlay" id="logoutConfirmModal".*?\n</div>', html, re.S).group(0)
         page.locator('body').evaluate('(el, html) => el.insertAdjacentHTML("beforeend", html)', account + _shell_modal_markup())
         page.evaluate('theme => CuttleUiBoot.applyTheme(theme)', theme)
@@ -105,7 +105,8 @@ def test_supervision_editor_fits_and_uses_shared_controls(browser, static_server
         # agent / model / effort / interval + involve / nudge + required / never-touch branch
         # + the checkpoint selects (tests: when + response; others: response)
         assert form.locator('.cuttle-combo-trigger').count() == 4 + 2 + 2 + 5
-        assert form.get_by_role('switch').count() == 3 + 4  # Tasks lists shown before searching + checkpoints
+        # Tasks lists shown before searching + checkpoints + system care (processes, memory)
+        assert form.get_by_role('switch').count() == 3 + 4 + 2
         assert form.locator('input[name=taskIds]:checked').count() == 16  # hidden lists still followed
         footer = form.locator('.chat-supervision-dialog-footer')
         assert form.locator('[type=submit]').evaluate('el => getComputedStyle(el).backgroundColor') == 'rgb(47, 163, 122)'

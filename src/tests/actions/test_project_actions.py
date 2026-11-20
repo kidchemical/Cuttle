@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -469,6 +470,5 @@ def test_resolve_action_run_prefers_run_posix(tmp_path: Path):
 def test_project_actions_source_has_no_lab_checkout_paths():
     src = Path(__file__).resolve().parents[2] / "api" / "project_actions.py"
     text = src.read_text(encoding="utf-8")
-    assert "Escape-Purgatory" not in text
-    assert "E:\\Game Dev" not in text
-    assert "E:/Game Dev" not in text
+    # Match absolute Windows paths of any drive or checkout name.
+    assert not re.search(r"(?i)\b[a-z]:[\\/]", text)

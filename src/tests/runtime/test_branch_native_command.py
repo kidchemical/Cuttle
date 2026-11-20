@@ -24,7 +24,8 @@ requires_git = pytest.mark.skipif(shutil.which("git") is None, reason="git not i
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True
+        ["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True,
+        encoding="utf-8",
     )
 
 

@@ -1,6 +1,6 @@
 # GPT-Live integration: audit and implementation plan
 
-Date: 2026-10-12. Chat: CH-001273. Branch: `dev`.
+Date: 2026-10-12. Branch: `dev`.
 
 Status: implemented in the working tree on 2026-10-12; activation requires the usual Flask restart and refreshed UI. Android's new native transport requires the rebuilt APK. Automated provider and browser checks are isolated; real model access, microphone behavior and physical-device audio remain smoke-test checks. The audit below records the pre-implementation findings and the design decisions they motivated.
 

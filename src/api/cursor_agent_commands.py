@@ -97,6 +97,7 @@ def _fetch_cursor_agent_models() -> List[Dict[str, str]]:
             text=True,
             timeout=45,
             env=_cursor_agent_subprocess_env(),
+            encoding="utf-8", errors="replace",
         )
     except Exception:
         return []
@@ -214,6 +215,7 @@ def _run_agent_about() -> str:
             text=True,
             timeout=45,
             env=_cursor_agent_subprocess_env(),
+            encoding="utf-8", errors="replace",
         )
     except Exception as e:
         return f"❌ **Cursor Agent about failed:** {e}"

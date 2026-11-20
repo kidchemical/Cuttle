@@ -55,10 +55,10 @@ def test_permissions_and_verified_provenance(project_agents, clean_import_state)
     directory = _write_agent(root, "declared")
     digest = hashlib.sha256((directory / "adapter.py").read_bytes()).hexdigest()
     manifest = directory / "manifest.yaml"
-    manifest.write_text(manifest.read_text() + (
+    manifest.write_text(manifest.read_text(encoding="utf-8") + (
         "permissions:\n  filesystem: workspace\n  network: outbound\n  subprocess: true\n"
         "provenance:\n  source_url: https://example.test/adapter\n  revision: abc123\n"
-        f"  sha256:\n    adapter.py: {digest}\n"))
+        f"  sha256:\n    adapter.py: {digest}\n"), encoding="utf-8")
     agent = get_agent("declared", project_path=str(proj))[0]
     assert agent.permissions["filesystem"] == "workspace"
     assert agent.provenance["verified"]
@@ -66,7 +66,7 @@ def test_permissions_and_verified_provenance(project_agents, clean_import_state)
     # Cached imports do not bypass digest verification, even if mtimes match.
     path = directory / "adapter.py"
     stat = path.stat()
-    path.write_text(path.read_text().replace("True", "False"))
+    path.write_text(path.read_text(encoding="utf-8").replace("True", "False"), encoding="utf-8")
     os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
     assert get_agent("declared", project_path=str(proj)) is None
 
@@ -115,7 +115,7 @@ def test_unapproved_project_code_never_executes(
         root,
         "sneaky",
         adapter_src=(
-            f"open({str(touched)!r}, 'w').write('executed')\n"
+            f"open({str(touched)!r}, 'w', encoding='utf-8').write('executed')\n"
             "class Adapter:\n"
             "    def available(self):\n"
             "        return True\n"
@@ -152,7 +152,7 @@ def test_external_adapter_module_executes_once(
         root,
         "counted",
         adapter_src=(
-            f"open({str(counter)!r}, 'a').write('x')\n"
+            f"open({str(counter)!r}, 'a', encoding='utf-8').write('x')\n"
             "class Adapter:\n"
             "    def available(self):\n"
             "        return True\n"
@@ -207,7 +207,7 @@ def test_hijack_slash_rejected_before_import(
         "hijack",
         manifest_extra='slash: "/"\n',
         adapter_src=(
-            f"open({str(touched)!r}, 'w').write('executed')\n"
+            f"open({str(touched)!r}, 'w', encoding='utf-8').write('executed')\n"
             "class Adapter:\n"
             "    def available(self):\n"
             "        return True\n"
@@ -229,7 +229,7 @@ def test_noncanonical_folder_id_rejected_before_import(
         root,
         "Evil Agent",
         adapter_src=(
-            f"open({str(touched)!r}, 'w').write('executed')\n"
+            f"open({str(touched)!r}, 'w', encoding='utf-8').write('executed')\n"
             "class Adapter:\n"
             "    def available(self):\n"
             "        return True\n"
@@ -434,7 +434,7 @@ def test_concurrent_same_adapter_executes_once(project_agents, clean_import_stat
         root,
         "racy",
         adapter_src=(
-            f"open({str(counter)!r}, 'a').write('x')\n"
+            f"open({str(counter)!r}, 'a', encoding='utf-8').write('x')\n"
             "class Adapter:\n"
             "    def available(self):\n"
             "        return True\n"
@@ -499,7 +499,7 @@ def test_failed_load_cleans_import_state_and_stays_quiet(
         root,
         "boom",
         adapter_src=(
-            f"open({str(counter)!r}, 'a').write('x')\n"
+            f"open({str(counter)!r}, 'a', encoding='utf-8').write('x')\n"
             "raise RuntimeError('boom')\n"
         ),
     )
@@ -522,7 +522,7 @@ def test_unused_sibling_never_executes(project_agents, clean_import_state, tmp_p
     sentinel = tmp_path / "unused_ran.txt"
     d = _write_agent(root, "restrained")
     (d / "unused.py").write_text(
-        f"open({str(sentinel)!r}, 'w').write('ran')\nraise RuntimeError('unused')\n",
+        f"open({str(sentinel)!r}, 'w', encoding='utf-8').write('ran')\nraise RuntimeError('unused')\n",
         encoding="utf-8",
     )
     path_before = list(_sys.path)
@@ -730,12 +730,12 @@ def test_declarations_reject_unverified_sources_before_import(tmp_path, kind):
     from api.agent_harness.declarations import permissions, provenance
     root = tmp_path / 'adapter'
     root.mkdir()
-    (root / 'adapter.py').write_text('print("unused")')
+    (root / 'adapter.py').write_text('print("unused")', encoding="utf-8")
     hashes = {'adapter.py': hashlib.sha256((root / 'adapter.py').read_bytes()).hexdigest()}
     raw = {'sha256': hashes}
     if kind == 'missing-helper':
         (root / 'nested').mkdir()
-        (root / 'nested' / 'helper.py').write_text('X=1')
+        (root / 'nested' / 'helper.py').write_text('X=1', encoding="utf-8")
     elif kind == 'escape':
         hashes['../escape.py'] = '0' * 64
     elif kind == 'bad-url':
@@ -756,17 +756,17 @@ def test_nested_source_digest_beats_timestamp_valid_bytecode(project_agents, cle
     sub = directory / 'sub'
     sub.mkdir()
     helper = sub / 'helper.py'
-    helper.write_text('VALUE = 111\n')
+    helper.write_text('VALUE = 111\n', encoding="utf-8")
     py_compile.compile(str(helper), doraise=True)
     stamp = helper.stat().st_mtime_ns
     def manifest():
         hashes = {p.relative_to(directory).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                   for p in directory.rglob('*.py')}
         import yaml
-        (directory / 'manifest.yaml').write_text(yaml.safe_dump({'label':'Fresh', 'provenance':{'sha256':hashes}}))
+        (directory / 'manifest.yaml').write_text(yaml.safe_dump({'label':'Fresh', 'provenance':{'sha256':hashes}}), encoding="utf-8")
     manifest()
     assert get_agent('fresh-source', project_path=str(proj))[1].available() == 111
-    helper.write_text('VALUE = 222\n')
+    helper.write_text('VALUE = 222\n', encoding="utf-8")
     os.utime(helper, ns=(stamp, stamp))
     manifest()
     assert get_agent('fresh-source', project_path=str(proj))[1].available() == 222

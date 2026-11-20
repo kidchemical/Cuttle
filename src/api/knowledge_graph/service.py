@@ -237,7 +237,7 @@ def _project_docs(root: str, *, limit: int = 400, max_bytes: int = 512_000) -> L
     base = Path(root)
     try:
         out = subprocess.run(["git", "-C", str(base), "ls-files", "-z", "--", "*.md"],
-                             capture_output=True, text=True, timeout=15)
+                             capture_output=True, text=True, timeout=15, encoding="utf-8", errors="replace")
         rels = [r for r in out.stdout.split("\0") if r] if out.returncode == 0 else []
     except (OSError, subprocess.SubprocessError):
         rels = []

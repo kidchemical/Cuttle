@@ -17,7 +17,7 @@ Match this doc when the user (or a good batch candidate) involves:
 - Shell recipes on a worker (`git_pull`, `git_status`, …)
 - Mesh compute, capability ads, claim/lease jobs
 
-**Not** this doc: same-machine supervised Cursor → `SUPERVISED_COORDINATOR.md`.
+**Not** this doc: same-machine supervision → `docs/guides/SUPERVISED_COORDINATOR.md` in the Cuttle install.
 
 ## Product rule
 

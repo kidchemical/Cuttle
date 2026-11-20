@@ -12,7 +12,7 @@ from api.chat_ops import git_hook, service, store, triggers, worker
 
 def _git(path, *args, env=None, check=True):
     return subprocess.run(["git", "-C", str(path), *args], check=check, capture_output=True, text=True,
-                          env=env)
+                          env=env, encoding="utf-8")
 
 
 def _env(agent, checkout=None, supervised="subagent"):
@@ -83,9 +83,9 @@ def test_hook_lets_a_user_driven_top_level_chat_update_protected_branches(repo):
 
 def test_install_upgrades_an_older_cuttle_hook_in_place(repo):
     hook = git_hook.hooks_dir(repo) / git_hook.HOOK_NAME
-    hook.write_text("#!/bin/sh\n# cuttle-protect-branch-hook v1\nexit 1\n")
+    hook.write_text("#!/bin/sh\n# cuttle-protect-branch-hook v1\nexit 1\n", encoding="utf-8")
     git_hook.install(repo, ["dev/core"])
-    assert git_hook.MARKER in hook.read_text() and "v1" not in hook.read_text()
+    assert git_hook.MARKER in hook.read_text(encoding="utf-8") and "v1" not in hook.read_text(encoding="utf-8")
 
 
 def test_supervised_reason_marks_subagents_and_supervised_targets_only(chats, monkeypatch):
@@ -110,7 +110,7 @@ def test_supervised_reason_marks_subagents_and_supervised_targets_only(chats, mo
 
 def test_hook_never_overwrites_a_foreign_hook_and_uninstall_only_removes_ours(repo):
     hook = git_hook.hooks_dir(repo) / git_hook.HOOK_NAME
-    hook.write_text("#!/bin/sh\nexit 0\n")
+    hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     with pytest.raises(ValueError, match="not Cuttle's"):
         git_hook.install(repo, ["dev/core"])
     assert git_hook.uninstall(repo)["removed"] is False and hook.exists()

@@ -2,6 +2,7 @@ id: cursor
 label: Cursor Agent
 slash: /cursor
 icon: "◉"
+color: "#4c8dff"  # Settings/Studio identity dot; #rrggbb
 requires_cloud: true
 auth_command: cursor-agent login
 sticky: true

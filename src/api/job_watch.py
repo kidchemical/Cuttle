@@ -607,7 +607,7 @@ def _systemctl(args: List[str]) -> tuple:
     if not exe:
         return None, ""
     try:
-        out = subprocess.run([exe, "--user", *args], capture_output=True, text=True, timeout=20)
+        out = subprocess.run([exe, "--user", *args], capture_output=True, text=True, timeout=20, encoding="utf-8", errors="replace")
     except (OSError, subprocess.SubprocessError):
         return None, ""
     return out.returncode, (out.stdout or "").strip()
@@ -896,7 +896,7 @@ class _PollLock:
             self.acquired = True
             return self
         try:
-            self._fh = open(unit_watch_dir() / ".poll.lock", "a+")
+            self._fh = open(unit_watch_dir() / ".poll.lock", "a+", encoding="utf-8")
             fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.acquired = True
         except OSError:

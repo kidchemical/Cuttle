@@ -137,7 +137,7 @@ def _descendants(pid: int) -> list[int]:
             continue
         for tid in tids:
             try:
-                with open(f"/proc/{cur}/task/{tid}/children") as fh:
+                with open(f"/proc/{cur}/task/{tid}/children", encoding="utf-8") as fh:
                     kids = [int(x) for x in fh.read().split()]
             except (OSError, ValueError):
                 continue
@@ -151,7 +151,7 @@ def _descendants(pid: int) -> list[int]:
 
 def _comm(pid: int) -> str:
     try:
-        with open(f"/proc/{pid}/comm") as fh:
+        with open(f"/proc/{pid}/comm", encoding="utf-8") as fh:
             return fh.read().strip()
     except OSError:
         return "cli"
@@ -198,7 +198,7 @@ def _load_limits() -> dict | None:
 
 def _run(argv: list[str]) -> tuple[bool, str]:
     try:
-        cp = subprocess.run(argv, capture_output=True, text=True, timeout=5, env=_env())
+        cp = subprocess.run(argv, capture_output=True, text=True, timeout=5, env=_env(), encoding="utf-8", errors="replace")
     except (OSError, subprocess.SubprocessError) as exc:
         return False, str(exc)
     return cp.returncode == 0, (cp.stderr or cp.stdout or "").strip()
@@ -210,7 +210,7 @@ def _already_scoped(pid: int, unit: str) -> bool:
     A sub-agent CLI spawned from inside another agent's scope still gets its own.
     """
     try:
-        with open(f"/proc/{pid}/cgroup") as fh:
+        with open(f"/proc/{pid}/cgroup", encoding="utf-8") as fh:
             return any(line.rstrip().endswith(f"/{unit}") for line in fh)
     except OSError:
         return True

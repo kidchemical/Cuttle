@@ -130,6 +130,36 @@ def _read_doc_body(name: str, project_path: Optional[str]) -> str:
     return ""
 
 
+def _doc_path(name: str, project_path: Optional[str]) -> str:
+    """Where the winning runbook lives (personal twin first), or '' when it
+    has no single file (feature bundles)."""
+    if name.startswith("feature/") or Path(name).name != name:
+        return ""
+    from api.cuttle_brain.context_compiler import _cuttle_dirs, _cuttle_global_config
+    from api.cuttle_brain.personal_overlay import resolve_cuttle_file
+
+    roots: List[Path] = list(_cuttle_dirs(project_path))
+    global_cuttle = _cuttle_global_config()
+    if global_cuttle and global_cuttle not in roots:
+        roots.append(global_cuttle)
+    for root in roots:
+        found = resolve_cuttle_file(root, "docs", name)
+        if found is not None:
+            return str(found)
+    return ""
+
+
+def _skill_path(ref: str, project_path: Optional[str] = None) -> str:
+    try:
+        from api.markdown_skills import list_markdown_skills
+    except Exception:
+        return ""
+    for skill in list_markdown_skills(project_path):
+        if str(skill.get("ref") or "") == ref:
+            return str(skill.get("path") or "")
+    return ""
+
+
 def _read_skill_body(ref: str, project_path: Optional[str] = None) -> str:
     try:
         from api.markdown_skills import get_markdown_skill
@@ -298,6 +328,9 @@ def rank_context(
         "id": judged["choice"],
         "kind": winner["kind"],
         "name": winner["name"],
+        "summary": winner["summary"],
+        "path": (_doc_path(winner["name"], project_path) if winner["kind"] == "doc"
+                 else _skill_path(winner["name"], project_path)),
         "body": body,
         "excerpt": excerpted,
     }
@@ -306,9 +339,35 @@ def rank_context(
     return {"items": [item], "meta": meta}
 
 
-def format_ranked_block(items: List[Dict[str, Any]]) -> str:
+def _pointer_line(item: Dict[str, Any]) -> str:
+    name = str(item.get("name") or "")
+    summary = " ".join(str(item.get("summary") or "").split())
+    # Doc summaries lead with "Cuttle runbook `name` — "; the line already names it.
+    lead = f"Cuttle runbook `{name}`"
+    if summary.startswith(lead):
+        summary = summary[len(lead):].lstrip(" —")
+    line = f"- {item.get('kind', 'item')} `{name}`"
+    if summary:
+        line += f" — {summary}"
+    if item.get("path"):
+        line += f" → `{item['path']}`"
+    return line
+
+
+def format_ranked_block(items: List[Dict[str, Any]], *, mode: Optional[str] = None) -> str:
+    """The ranked layer. ``pointer`` (default, ``thresholds.RANK_INJECT_MODE``)
+    names the pick; ``excerpt`` pastes its body."""
     if not items:
         return ""
+    if (mode or T.RANK_INJECT_MODE) != "excerpt":
+        return "\n".join(
+            [
+                "## Suggested for this turn",
+                "Cuttle picked this as likely relevant to the request. Open it before acting "
+                "on what it covers; skip it if it does not apply. Always-on rules still win.",
+                *[_pointer_line(it) for it in items],
+            ]
+        )
     parts = [
         "## Suggested runbooks / skills (ranked for this turn)",
         "",

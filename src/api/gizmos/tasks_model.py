@@ -62,7 +62,87 @@ def _new_id(prefix: str = "w") -> str:
     return f"{prefix}-{uuid.uuid4().hex[:12]}"
 
 
-def _ensure_item_ids(items: Any, prefix: str = "t") -> List[Dict[str, Any]]:
+# Who an item belongs to. Colour and HTML are never stored; ``label`` is text.
+OWNER_KINDS = ("chat", "agent", "user", "group")
+OWNER_ID_MAX = 128
+OWNER_LABEL_MAX = 60
+OWNER_AGENT_MAX = 40
+ORIGIN_TURN_MAX = 160
+# Short display label for compact views (the Studio checklist); ``text`` stays the full item.
+LABEL_WORDS_MAX = 3
+LABEL_CHARS_MAX = 32
+
+
+def normalize_label(raw: Any, *, strict: bool = False) -> str:
+    """Item ``label``: one line, at most 3 words / 32 characters; empty when absent.
+
+    ``strict`` rejects an over-long label (new writes); otherwise it is cut to fit.
+    """
+    if raw is None:
+        return ""
+    if not isinstance(raw, str):
+        if strict:
+            raise ValueError("label must be a string")
+        raw = str(raw)
+    words = raw.split()
+    if strict and (len(words) > LABEL_WORDS_MAX or len(" ".join(words)) > LABEL_CHARS_MAX):
+        raise ValueError(f"label must be at most {LABEL_WORDS_MAX} words and {LABEL_CHARS_MAX} characters")
+    return " ".join(words[:LABEL_WORDS_MAX])[:LABEL_CHARS_MAX].rstrip()
+
+
+def normalize_owner(raw: Any, *, strict: bool = False) -> Optional[Dict[str, Any]]:
+    """Canonical ``owner`` dict, or None when absent.
+
+    ``strict`` (writes) raises ``ValueError`` on any bad shape. Lenient (reads
+    of stored rows) drops a malformed owner instead of failing the whole list.
+    Optional keys are omitted when empty.
+    """
+    if raw is None:
+        return None
+
+    def bad(message: str) -> None:
+        if strict:
+            raise ValueError(message)
+        return None
+
+    if not isinstance(raw, dict):
+        return bad("owner must be an object")
+    kind = str(raw.get("kind") or "").strip().lower()
+    if kind not in OWNER_KINDS:
+        return bad("owner.kind must be chat, agent, user or group")
+    oid = str(raw.get("id") or "").strip()
+    label = str(raw.get("label") or "").strip()
+    agent = str(raw.get("agent") or "").strip().lower()
+    if len(oid) > OWNER_ID_MAX:
+        if strict:
+            raise ValueError(f"owner.id must be at most {OWNER_ID_MAX} characters")
+        oid = oid[:OWNER_ID_MAX]
+    if len(label) > OWNER_LABEL_MAX:
+        if strict:
+            raise ValueError(f"owner.label must be at most {OWNER_LABEL_MAX} characters")
+        label = label[:OWNER_LABEL_MAX].rstrip()
+    if len(agent) > OWNER_AGENT_MAX:
+        if strict:
+            raise ValueError(f"owner.agent must be at most {OWNER_AGENT_MAX} characters")
+        agent = agent[:OWNER_AGENT_MAX]
+    if strict and not label:
+        raise ValueError("owner.label is required")
+    if kind == "chat" and not oid:
+        return bad("a chat owner needs the chat handle as id")
+    owner: Dict[str, Any] = {"kind": kind, "label": label}
+    if oid:
+        owner["id"] = oid
+    if agent:
+        owner["agent"] = agent
+    return owner
+
+
+def _norm_origin_turn(raw: Any) -> str:
+    """Turn id (= query id) that created a Tasks list; empty when none."""
+    return str(raw or "").strip()[:ORIGIN_TURN_MAX]
+
+
+def _ensure_item_ids(items: Any, prefix: str = "t", *, strict: bool = False) -> List[Dict[str, Any]]:
     if not isinstance(items, list):
         return []
     out: List[Dict[str, Any]] = []
@@ -80,19 +160,36 @@ def _ensure_item_ids(items: Any, prefix: str = "t") -> List[Dict[str, Any]]:
         if not isinstance(raw, dict):
             continue
         iid = str(raw.get("id") or "").strip() or f"{prefix}{i+1}"
-        children = _ensure_item_ids(raw.get("children") or [], prefix=f"{iid}.")
-        out.append(
-            {
-                "id": iid,
-                "text": str(raw.get("text") or raw.get("content") or "").strip(),
-                "done": bool(raw.get("done")),
-                "children": children,
-            }
-        )
+        children = _ensure_item_ids(raw.get("children") or [], prefix=f"{iid}.", strict=strict)
+        done = bool(raw.get("done"))
+        raw_progress = raw.get("in_progress")
+        if strict and raw_progress is not None and not isinstance(raw_progress, bool):
+            raise ValueError("in_progress must be a boolean")
+        in_progress = raw_progress is True
+        if in_progress and done:
+            if strict:
+                raise ValueError(f"task {iid} is done and cannot be in progress")
+            in_progress = False  # invariant repair for stored rows
+        node: Dict[str, Any] = {
+            "id": iid,
+            "text": str(raw.get("text") or raw.get("content") or "").strip(),
+            "done": done,
+            "children": children,
+        }
+        label = normalize_label(raw.get("label"), strict=strict)
+        if label:
+            node["label"] = label
+        owner = normalize_owner(raw.get("owner"), strict=strict)
+        if owner is not None:
+            node["owner"] = owner
+        if in_progress:
+            node["in_progress"] = True
+        out.append(node)
     return out
 
 
-def normalize_tasks_payload(raw: Any) -> Dict[str, Any]:
+def normalize_tasks_payload(raw: Any, *, strict: bool = False) -> Dict[str, Any]:
+    """Canonical payload. ``strict`` is for new writes (see ``normalize_owner``)."""
     if isinstance(raw, str):
         try:
             raw = json.loads(raw)
@@ -103,7 +200,11 @@ def normalize_tasks_payload(raw: Any) -> Dict[str, Any]:
     items = raw.get("items")
     if items is None and isinstance(raw.get("tasks"), list):
         items = raw.get("tasks")
-    return {"items": _ensure_item_ids(items or [])}
+    out: Dict[str, Any] = {"items": _ensure_item_ids(items or [], strict=strict)}
+    origin = _norm_origin_turn(raw.get("origin_turn_id"))
+    if origin:
+        out["origin_turn_id"] = origin
+    return out
 
 
 def count_tasks(items: List[Dict[str, Any]]) -> Tuple[int, int]:
@@ -177,15 +278,21 @@ def _remove_item(items: List[Dict[str, Any]], item_id: str) -> bool:
 def apply_tasks_patch(
     payload: Dict[str, Any], patch: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """Apply incremental patch ops to a tasks payload."""
+    """Apply incremental patch ops to a tasks payload.
+
+    Raises ``ValueError`` for a bad op shape or a write that would make an item
+    both done and in progress. ``set_done`` clears ``in_progress``.
+    """
     data = normalize_tasks_payload(payload)
     items = data["items"]
+    origin = data.get("origin_turn_id", "")
     patch = patch if isinstance(patch, dict) else {}
 
     for iid in patch.get("set_done") or []:
         node = _find_item(items, str(iid))
         if node is not None:
             node["done"] = True
+            node.pop("in_progress", None)
 
     for iid in patch.get("set_undone") or []:
         node = _find_item(items, str(iid))
@@ -199,6 +306,19 @@ def apply_tasks_patch(
             if node is not None:
                 node["text"] = str(text or "").strip()
 
+    set_label = patch.get("set_label")
+    if set_label is not None and not isinstance(set_label, dict):
+        raise ValueError("set_label must be an object")
+    for iid, label in (set_label or {}).items():
+        node = _find_item(items, str(iid))
+        if node is None:
+            continue
+        label_n = normalize_label(label, strict=True)
+        if label_n:
+            node["label"] = label_n
+        else:
+            node.pop("label", None)
+
     for iid in patch.get("remove") or []:
         _remove_item(items, str(iid))
 
@@ -207,7 +327,7 @@ def apply_tasks_patch(
             continue
         parent = str(entry.get("parent") or "").strip()
         item = entry.get("item") if isinstance(entry.get("item"), dict) else entry
-        new_nodes = _ensure_item_ids([item])
+        new_nodes = _ensure_item_ids([item], strict=True)
         if not new_nodes:
             continue
         new_node = new_nodes[0]
@@ -224,11 +344,40 @@ def apply_tasks_patch(
             else:
                 kids.append(new_node)
 
+    set_owner = patch.get("set_owner")
+    if set_owner is not None and not isinstance(set_owner, dict):
+        raise ValueError("set_owner must be an object")
+    for iid, owner in (set_owner or {}).items():
+        node = _find_item(items, str(iid))
+        if node is None:
+            continue
+        owner_n = normalize_owner(owner, strict=True)
+        if owner_n is None:
+            node.pop("owner", None)
+        else:
+            node["owner"] = owner_n
+
+    for iid in patch.get("set_in_progress") or []:
+        node = _find_item(items, str(iid))
+        if node is None:
+            continue
+        if node.get("done"):
+            raise ValueError(f"task {iid} is done and cannot be in progress")
+        node["in_progress"] = True
+
+    for iid in patch.get("clear_in_progress") or []:
+        node = _find_item(items, str(iid))
+        if node is not None:
+            node.pop("in_progress", None)
+
     replace_items = patch.get("items")
     if isinstance(replace_items, list):
-        items = _ensure_item_ids(replace_items)
+        items = _ensure_item_ids(replace_items, strict=True)
 
-    return {"items": items}
+    out: Dict[str, Any] = {"items": items}
+    if origin:
+        out["origin_turn_id"] = origin
+    return out
 
 
 def tasks_chip(
@@ -275,10 +424,12 @@ def format_tasks_digest(widgets: List[Dict[str, Any]]) -> str:
         payload = normalize_tasks_payload(payload)
         done, total = count_tasks(payload.get("items") or [])
         lines.append(f"- **{title}** (`{wid}`, scope={scope}) {done}/{total} done")
-        if desc:
-            lines.append(f"  - intent: {_clip(desc, 240)}")
+        # Only this chat's own list carries its intent and next items; a
+        # project-wide list is a title here and `tasks get <id>` away.
         if scope != "session":
             continue
+        if desc:
+            lines.append(f"  - intent: {_clip(desc, 240)}")
         open_items: List[Dict[str, Any]] = []
 
         def walk(nodes: List[Dict[str, Any]]) -> None:

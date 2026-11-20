@@ -175,7 +175,7 @@ When dsh grows native resume or a stable non-preview CLI, upgrade the adapter in
 
 | Need | Where |
 |---|---|
-| Phases, security, OpenClaw, what not to build | `docs/ROADMAP.md` (public); `<home>/personal/docs/roadmap-2026.md` (this install) |
+| Phases, security, OpenClaw, what not to build | `docs/ROADMAP.md` |
 | Router work items, CuttleRouter-as-agent, authority order | `.cuttle/docs/agent-router-todo.md` |
 | Router economics, backends-as-black-boxes, eval notes | `docs/ROUTER_RESEARCH_NOTES.md` |
 | How routing works in chat | `docs/guides/AGENT_ROUTER.md` |

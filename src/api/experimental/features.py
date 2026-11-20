@@ -111,9 +111,17 @@ register_flag(FlagSpec(
 
 register_flag(FlagSpec(
     id="chat_quote_clips", label="Quote clips",
-    description="Select text in a chat message to get a small toolbar above it (Agree, Disagree, Explain, Investigate, Do this, Reply). A button adds the selected text with that reply to the composer as a removable clip; add several, then send them with your message.",
+    description="Select text in a chat message to get a small toolbar above it (Agree, Disagree, Explain, Investigate, Do this, Reply). A button adds the selected text with that reply to the composer as a removable clip (click a clip to edit its reply); add several, then send them with your message.",
     # Default on: low-risk UI; a clip is removable and is sent as ordinary message text.
     default=True, category="chat", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
+    id="chat_studio_display", label="Studio chat display",
+    description="Adds a Studio option to Settings → Appearance → Display: a second chat look with a new type scale, layered cards, agent colour dots and the Studio layout pieces as they ship. Classic stays the default look. Turning this off returns every chat to Classic.",
+    # Default off: a second look is opt-in. The per-browser Display choice is
+    # only offered while this flag is on.
+    default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,
 ))
 
 register_flag(FlagSpec(

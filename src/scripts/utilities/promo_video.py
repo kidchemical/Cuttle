@@ -396,7 +396,7 @@ def record_ui(browser, auth_state, base, chats) -> tuple[Path, Path]:
             *X264, "-an", str(mp4),
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         clips.append(mp4)
-    burst_list.write_text("".join(f"file '{p}'\n" for p in clips))
+    burst_list.write_text("".join(f"file '{p}'\n" for p in clips), encoding="utf-8")
     bursts = RAW / "bursts.mp4"
     run([
         str(FFMPEG), "-y", "-f", "concat", "-safe", "0", "-i", str(burst_list),
@@ -512,7 +512,7 @@ def assemble(ui: Path, bursts: Path | None = None) -> Path:
 
     pieces = [intro, ui_titled, burst_f, outro]
     concat_list = RAW / "concat.txt"
-    concat_list.write_text("".join(f"file '{p}'\n" for p in pieces))
+    concat_list.write_text("".join(f"file '{p}'\n" for p in pieces), encoding="utf-8")
     silent = RAW / "silent60.mp4"
     run([
         str(FFMPEG), "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),

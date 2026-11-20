@@ -66,15 +66,15 @@ def test_generation_jumps_clear_of_legacy_ids_then_increases(tmp_path):
     assert next_generation(path, first) == first + 1
     # Cold boot: the daemon's in-memory counter is back to 0, the file is not.
     assert next_generation(path, 0) == first + 2
-    assert path.read_text() == str(first + 2)
+    assert path.read_text(encoding="utf-8") == str(first + 2)
 
 
 def test_generation_respects_seen_values_and_survives_write_failure(tmp_path):
     path = tmp_path / "gen"
-    path.write_text("5")
+    path.write_text("5", encoding="utf-8")
     assert next_generation(path, 0, seen=[9]) == 10
     blocked = tmp_path / "file-not-dir"
-    blocked.write_text("x")
+    blocked.write_text("x", encoding="utf-8")
     assert next_generation(blocked / "gen", 3) == LEGACY_FLOOR + 1
 
 
@@ -85,7 +85,7 @@ def test_daemon_hands_out_persisted_generations(tmp_path, monkeypatch):
     spec.loader.exec_module(mod)
     monkeypatch.setattr("core.runtime_paths.flask_generation_path", lambda *a, **k: tmp_path / "gen")
     monkeypatch.setattr(mod, "FLASK_RESTART_STATUS_PATH", tmp_path / "status.json")
-    (tmp_path / "status.json").write_text(json.dumps({"generation": 2}))
+    (tmp_path / "status.json").write_text(json.dumps({"generation": 2}), encoding="utf-8")
     a = mod._next_flask_generation(0)
     b = mod._next_flask_generation(0)  # simulated cold boot
     assert a == LEGACY_FLOOR + 1 and b == a + 1

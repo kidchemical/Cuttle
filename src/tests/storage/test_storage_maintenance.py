@@ -83,8 +83,8 @@ def test_query_log_prune_keeps_new_files(home):
     root.mkdir(parents=True, exist_ok=True)
     old = root / 'query_data_old.json'
     new = root / 'query_data_new.json'
-    old.write_text('{}')
-    new.write_text('{}')
+    old.write_text('{}', encoding="utf-8")
+    new.write_text('{}', encoding="utf-8")
     aged = time.time() - 100 * 86400
     os.utime(old, (aged, aged))
     assert operate('query_logs', 'prune') == {'deleted': 1}
@@ -96,7 +96,7 @@ def test_query_log_reset_needs_confirm_and_clears(home):
     from api.query_events import logs_dir
     root = logs_dir()
     root.mkdir(parents=True, exist_ok=True)
-    (root / 'query_data_x.json').write_text('{}')
+    (root / 'query_data_x.json').write_text('{}', encoding="utf-8")
     assert operate('query_logs', 'reset', confirm='query_logs') == {'deleted': 1}
     assert list(root.iterdir()) == []
 
@@ -125,7 +125,7 @@ def test_outputs_prune_uses_retention_as_ttl(home, manager):
     root = shared_media_root()
     root.mkdir(parents=True, exist_ok=True)
     stale = root / 'stale.png'
-    stale.write_text('x')
+    stale.write_text('x', encoding="utf-8")
     aged = time.time() - 10 * 86400
     os.utime(stale, (aged, aged))
     set_policy('outputs', {'retention_days': 7}, manager)

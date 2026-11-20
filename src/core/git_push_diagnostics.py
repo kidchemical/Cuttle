@@ -33,7 +33,7 @@ def scan_commits(commits, patterns, blocked_path):
                 hits.append(finding('path-policy', reason, commit, path))
             if Path(path).suffix.lower() in ('.db', '.sqlite', '.sqlite3', '.db3') or path.endswith(('-wal', '-shm')):
                 hits.extend(scan_database(commit, path, compiled))
-        diff = subprocess.run(['git', 'show', '--format=', '--root', '--diff-merges=first-parent', '-U0', commit, '--'], capture_output=True, text=True, check=True).stdout
+        diff = subprocess.run(['git', 'show', '--format=', '--root', '--diff-merges=first-parent', '-U0', commit, '--'], capture_output=True, text=True, check=True, encoding="utf-8", errors="replace").stdout
         path, line = '', 0
         for text in diff.splitlines():
             if text.startswith('+++ b/'):
@@ -110,7 +110,7 @@ def scan_gitleaks(binary, base, head):
     with tempfile.TemporaryDirectory(prefix='prepush-', dir=scratch) as directory:
         report = Path(directory) / 'report.json'
         try:
-            proc = subprocess.run([binary, 'detect', '--no-banner', '--redact', '--report-format', 'json', '--report-path', str(report), '--log-opts', f'{base}..{head}' if base else head], capture_output=True, text=True, timeout=300)
+            proc = subprocess.run([binary, 'detect', '--no-banner', '--redact', '--report-format', 'json', '--report-path', str(report), '--log-opts', f'{base}..{head}' if base else head], capture_output=True, text=True, timeout=300, encoding="utf-8", errors="replace")
             if proc.returncode not in (0, 1):
                 return [], ['gitleaks could not complete; built-in checks still ran']
             records = json.loads(report.read_text(encoding="utf-8")) if report.exists() else []
@@ -156,7 +156,7 @@ def apply_scanner_exceptions(findings, policy_path):
             key = entry['commit'] + ':' + entry['file']
             try:
                 if key not in cache:
-                    blob = subprocess.check_output(['git', 'rev-parse', key], text=True).strip()
+                    blob = subprocess.check_output(['git', 'rev-parse', key], text=True, encoding="utf-8", errors="replace").strip()
                     lines = subprocess.check_output(['git', 'show', key]).splitlines()
                     cache[key] = blob, lines
                 blob, lines = cache[key]
@@ -196,7 +196,7 @@ def approve_scanner_exception(cwd, hit, reason):
         subprocess.run(['git', 'merge-base', '--is-ancestor', commit, 'HEAD'], cwd=repo,
                        capture_output=True, check=True, timeout=10)
         spec = commit + ':' + file
-        blob = subprocess.check_output(['git', 'rev-parse', spec], cwd=repo, timeout=10, text=True).strip()
+        blob = subprocess.check_output(['git', 'rev-parse', spec], cwd=repo, timeout=10, text=True, encoding="utf-8", errors="replace").strip()
         source = subprocess.check_output(['git', 'show', spec], cwd=repo, timeout=10).splitlines()
         if end > len(source):
             raise ValueError('The finding line range is outside the committed file')
@@ -240,7 +240,8 @@ def push_failure(stdout, stderr):
         hits = [f for report in reports for f in report['findings']]
         hooks = sorted({str(f.get('hook', 'pre-push')) for f in hits})
         rules = sorted({str(f.get('rule', 'flagged content')) for f in hits})
-        summary = 'Pre-push secret hook blocked the push: ' + ', '.join(rules[:2])
+        gate = 'tests' if hooks == ['tests'] else 'secret hook'
+        summary = f'Pre-push {gate} blocked the push: ' + ', '.join(rules[:2])
         if len(rules) > 2:
             summary += ' (and more)'
         summary += ' [' + ', '.join(hooks) + ']'

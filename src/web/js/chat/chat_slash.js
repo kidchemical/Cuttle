@@ -232,14 +232,14 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
             {
                 prefix: '/use-api ',
                 label: 'Use API credit',
-                hint: 'Bill this message to Anthropic API credit first (subscription if no key / budget spent)',
+                hint: 'Bill API credit first: alone pins this chat, with text bills one message',
                 category: 'claude-cmd',
                 keywords: 'claude billing api credit key use-api pay',
             },
             {
                 prefix: '/use-subscription ',
                 label: 'Use subscription',
-                hint: 'Bill this message to the Claude subscription first',
+                hint: 'Bill the subscription first: alone pins this chat, with text bills one message',
                 category: 'claude-cmd',
                 keywords: 'claude billing subscription plan use-subscription',
             },

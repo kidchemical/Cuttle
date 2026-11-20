@@ -1,5 +1,7 @@
 # Tasks gizmos
 
+Chat handles in the examples are fictional. Substitute handles from the current installation.
+
 Tasks are established chat functionality, available independently of experimental features.
 
 ## Tasks gizmos (composer dock)
@@ -18,14 +20,29 @@ for a long-running OS job, also use a status-backed watch card as described in
 `action-forms.md`. Do not fabricate percentages for work without a measurable
 progress source.
 
+**Mark the item you are on.** When you start an item, patch it with
+`--working <item>`; when it is finished, `--set-done <item>` (which also clears
+the working mark). One call can do both: finish one item and start the next.
+The chat shows the working item as in progress, so the user sees where you are.
+Use `--not-working <item>` if you set it aside unfinished.
+
+**Give every item a short `label`.** `text` is the full step (the Tasks dock
+shows it); `label` is what the checklist in your chat bubble shows, on one line
+on a phone: 1–3 words, at most 32 characters, e.g. `"Lua API"` for "Lua API:
+breakable world object, forced scroll, bound scrolls". Longer labels are
+rejected. Set it on create/add, or later with `--label <item>=<label>`
+(op `set_label {item: label}`; an empty label clears it).
+
 ```bash
-PYTHONPATH=src .venv/bin/python -m api.gizmos tasks list --session CH-000465
-PYTHONPATH=src .venv/bin/python -m api.gizmos tasks create --session CH-000465 --id auth-refactor --title "Auth refactor" --description "Ship the auth fix" --items '[{"id":"api","text":"Fix API"},{"id":"test","text":"Verify"}]'
-PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --set-done api
-PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --ops '{"add":[{"item":{"id":"docs","text":"Update docs"}}],"description":"Validation remains"}'
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks list --session CH-900004
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks create --session CH-900004 --id auth-refactor --title "Auth refactor" --description "Ship the auth fix" --items '[{"id":"api","text":"Fix the token refresh in the API client","label":"Fix API"},{"id":"test","text":"Run the auth tests and a manual login","label":"Verify"}]'
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --working api
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --set-done api --working test
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --ops '{"add":[{"item":{"id":"docs","text":"Update the auth docs","label":"Docs"}}],"description":"Validation remains"}'
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --label api="Token refresh"
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks get auth-refactor
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks history auth-refactor
-PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --link CH-000470,CH-000471 --unlink CH-000468
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --link CH-900006,CH-900007 --unlink CH-900005
 ```
 
 Flags go after the verb. JSON output; exit `0` success, `2` invalid/not found.
@@ -38,7 +55,7 @@ to the same project. `--edit-mode shared` lets users toggle items; default
 `agent` reserves task edits for agents. Items may have nested `children`.
 Completing every item auto-archives; undoing an item or adding open work reopens
 the list. `--status archived` manually archives. Patch supports `set_done`,
-`set_undone`, `set_text`, `add`, `remove`, `items`, `description`, `title`,
+`set_undone`, `set_text`, `set_label`, `add`, `remove`, `items`, `description`, `title`,
 `scope`, and `edit_mode`; scope changes require `--session`.
 
 **Linked chats.** Besides its home chat (or project), a list can be linked to
@@ -61,7 +78,7 @@ including archives, while the agent is working.
 
 Authenticated REST (each caller can access only their own tasks/chats):
 
-- `GET /api/gizmos/tasks?session_id=465` → `{success, gizmos, revision}` (home, project and linked lists)
+- `GET /api/gizmos/tasks?session_id=900004` → `{success, gizmos, revision}` (home, project and linked lists)
 - `GET /api/gizmos/tasks?all=1` → `{success, lists, chats, revision}`: every list (active + archived) with `home_chat`/`linked_chats`, for the Tasks App
 - `POST /api/gizmos/tasks` `{id?, session_id, title?, items, description?, scope?, edit_mode?, linked_sessions?}`
 - `GET|PATCH|DELETE /api/gizmos/tasks/<id>` → `{success, gizmo}`; PATCH accepts task ops, `session_id`, and
@@ -69,6 +86,28 @@ Authenticated REST (each caller can access only their own tasks/chats):
 - `GET /api/gizmos/tasks/<id>/related` → orchestration-family chats (sub-agent parent/children, supervisors)
 - `PATCH /api/gizmos/tasks/<id>/items/<item_id>` `{done: true, session_id}` (shared lists)
 - `GET /api/gizmos/tasks/<id>/history?limit=100` → `{success, events}`
+
+### Owners and work in progress
+
+An item can name who holds it and whether it is being worked on. `owner` is
+`{"kind":"chat"|"agent"|"user"|"group","id":"CH-…","label":"…","agent":"codex"}`:
+`id` is the chat handle for kind `chat` (must be one of your chats), `label` is
+plain text up to 60 characters, `agent` is a harness id. `in_progress` is a flag;
+a done item is never in progress. Colours and markup are not stored.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --owner api=CH-900006 --working api
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --owner test=user --owner docs=agent:claude
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --not-working api --owner api=none
+```
+
+Patch ops: `set_owner {item: owner|null}`, `set_in_progress [ids]`,
+`clear_in_progress [ids]`; `set_done` clears `in_progress`. The item route
+`PATCH /api/gizmos/tasks/<id>/items/<item>` accepts `owner` and `in_progress`
+(`done` stays required unless one of them is sent). A sub-agent spawned with
+`"task":"<gizmo>:<item>"` sets that item's owner and in-progress flag (see
+`subagents.md`). `origin_turn_id` records the chat turn that created the list;
+it is read-only.
 
 ## Interaction attribution
 

@@ -115,7 +115,7 @@ def test_send_steers_a_live_turn(chats):
     out = service.send(_ch(target), "keep going", actor=_ch(sup), db=db, request=host)
     assert out["delivery"] == "steered"
     [op] = store.listing(sup)
-    assert op["state"] == "delivered" and op["result"] == {"steered": True}
+    assert op["state"] == "delivered" and op["result"] == {"steered": True, "confirmed": False}
     assert ("POST", "/api/chat-steer", target, {"message": "keep going", "chat_op_id": op["id"]}) in host.calls
     assert op["id"] not in [o["id"] for o in store.due()]
 
@@ -402,7 +402,7 @@ def test_user_row_stores_only_well_formed_op_ids(chats):
 
 
 def _snap(state, *, branch="dev/multiplayer", reply_id=1, done=0):
-    return {"handle": "CH-000002", "state": state, "branch": branch, "execution_path": "/galaxy/wt",
+    return {"handle": "CH-000002", "state": state, "branch": branch, "execution_path": "/example/worktrees/demo",
             "warnings": [], "live": {"status": "working"}, "latest_reply": {"id": reply_id, "content": "…"},
             "tasks": [{"id": "plan", "title": "Tasks", "done": done, "total": 3}]}
 
@@ -680,7 +680,20 @@ def test_history_is_pruned(chats):
     sched = _schedule(chats)
     for _ in range(store.HISTORY_KEEP + 5):
         store.record_check(sched["id"], "skipped", {"reason": "busy"})
-    assert len(store.checks(sched["id"], limit=500)) == store.HISTORY_KEEP
+    history = store.checks(sched["id"], limit=500)
+    assert len(history) == store.SKIPPED_KEEP
+    assert all(row["outcome"] == "skipped" for row in history)
+
+
+def test_skipped_history_does_not_displace_real_checks(chats):
+    sched = _schedule(chats)
+    for _ in range(5):
+        store.record_check(sched["id"], "stalled")
+    for _ in range(60):
+        store.record_check(sched["id"], "skipped")
+    history = store.checks(sched["id"], limit=500)
+    assert sum(row["outcome"] == "stalled" for row in history) == 5
+    assert sum(row["outcome"] == "skipped" for row in history) == store.SKIPPED_KEEP
 
 
 def test_pause_stops_checks_and_resume_checks_now(chats):
@@ -958,7 +971,7 @@ def test_checkin_text_is_markdown_without_raw_json():
     cfg = {"agent": "cursor", "instructions": "Keep going.", "model_tiers": {"worker": ["cursor auto"]}}
     text = worker.checkin_text(cfg, snap, ["target is on forbidden branch 'main'"])
     assert text.startswith("/cursor **Supervision check-in for CH-000002**: idle with open Tasks items.")
-    assert "Branch `dev/multiplayer` · checkout `/galaxy/wt`" in text
+    assert "Branch `dev/multiplayer` · checkout `/example/worktrees/demo`" in text
     assert "- target is on forbidden branch 'main'" in text and "- Tasks: 1/3 done" in text
     assert "> Line one\n>\n> Line two" in text and "- worker: cursor auto" in text
     assert "{" not in text and "\\n" not in text
@@ -1297,3 +1310,31 @@ def test_undelivered_send_wakes_the_supervisor_once_even_mid_turn(chats, monkeyp
     again = _tick(chats, sched, {**_snap("busy"), "undelivered": [stuck]}, monkeypatch)
     assert [c["id"] for c in again] == [checkins[0]["id"]]  # told once
     assert store.checks(sched["id"])[1]["outcome"] == "undelivered"
+
+
+def test_timeline_cli_handle_and_output(monkeypatch, capsys):
+    from api.chat_cli.cli import main
+    from api.chat_ops import timeline
+    cli_db = object()
+    monkeypatch.setattr('api.chat_cli.cli._open_db', lambda _: cli_db)
+    monkeypatch.setattr(service, 'context', lambda *a, **kw: None)
+    calls = []
+    def project(sid, **kwargs):
+        calls.append((sid, kwargs))
+        return {'items': [{'at': 42, 'kind': 'stalled', 'headline': 'Chat stalled'}]}
+    monkeypatch.setattr(timeline, 'project', project)
+    assert main(['timeline', 'CH-002620', '--limit', '3', '--before', '99', '--include-quiet']) == 0
+    assert capsys.readouterr().out == '42  stalled  Chat stalled\n'
+    # Names resolve against the DB the CLI opened, not the process default.
+    assert calls == [(2620, {'limit': 3, 'before': '99', 'include_quiet': True, 'db': cli_db})]
+    assert main(['timeline', 'CH-002620', '--json']) == 0
+    assert json.loads(capsys.readouterr().out)['items'][0]['kind'] == 'stalled'
+
+
+def test_timeline_route_requires_session_owner(client, chats, monkeypatch):
+    _flag(monkeypatch, True)
+    db, _, sup, _, foreign = chats
+    _schedule(chats)
+    assert client.get(f'/api/chat-ops/sessions/{sup}/timeline').status_code == 200
+    assert client.get(f'/api/chat-ops/sessions/{foreign}/timeline').status_code == 404
+    assert client.get('/api/chat-ops/sessions/99999999/timeline').status_code == 404

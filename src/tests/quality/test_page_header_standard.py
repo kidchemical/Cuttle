@@ -33,6 +33,7 @@ PAGES = [
     'dashboards_page.html',
     'agent_feed.html',
     'git_graph_page.html',
+    'media_page.html',
 ]
 
 # Full-height tool surfaces that use the frame tokens without `.cuttle-page`

@@ -35,7 +35,7 @@ def test_expiry_restart_and_account_isolation(tmp_path, monkeypatch):
     assert "Cached usage" in report and "token expired" in report
     other = claude_usage_cache.snapshot(path, {**credentials, "refreshToken": "other"}, fail)
     assert not other["success"] and "windows" not in other
-    stored = next((tmp_path / "cache" / "claude_usage").glob("*.json")).read_text()
+    stored = next((tmp_path / "cache" / "claude_usage").glob("*.json")).read_text(encoding="utf-8")
     assert "secret-access" not in stored and "secret-refresh" not in stored
     clock[0] = 4000
     fresh = claude_usage_cache.snapshot(path, credentials, lambda: {**good, "windows": []})
@@ -48,13 +48,13 @@ def test_expired_credentials_use_persistent_plan(tmp_path, monkeypatch):
     path = tmp_path / "claude" / ".credentials.json"
     path.parent.mkdir()
     oauth = {"accessToken": "access", "refreshToken": "refresh", "expiresAt": 1}
-    path.write_text(json.dumps({"claudeAiOauth": oauth}))
+    path.write_text(json.dumps({"claudeAiOauth": oauth}), encoding="utf-8")
     claude_usage_cache.snapshot(path, oauth, lambda: {"success": True, "windows": [
         {"label": "5-hour", "used_percent": 100, "reset_at": 1}]})
     cache = next((tmp_path / "cache" / "claude_usage").glob("*.json"))
-    saved = json.loads(cache.read_text())
+    saved = json.loads(cache.read_text(encoding="utf-8"))
     saved["updated_at"] = 1
-    cache.write_text(json.dumps(saved))
+    cache.write_text(json.dumps(saved), encoding="utf-8")
     result = agent_usage.fetch_claude_plan_limits()
     assert result["stale"] and "expired" in result["error"]
     assert "Scheduled reset passed" in agent_usage.format_claude_usage_markdown(

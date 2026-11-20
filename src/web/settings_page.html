@@ -213,6 +213,17 @@
 
                     </div>
                 </div>
+                <div class="setting-item" id="chatDisplayRow" hidden>
+                    <div class="setting-label">
+                        <strong>Display</strong><button type="button" class="cuttle-info" data-tooltip="Classic is the current chat look. Studio is a second chat look (experimental; turn on Studio chat display under Experimental). Both show the same chats and settings." aria-label="About Display">i</button>
+                    </div>
+                    <div class="setting-control">
+                        <select id="chatDisplaySelect" class="setting-input" style="min-width: 200px;" aria-label="Chat display">
+                            <option value="classic">Classic</option>
+                            <option value="studio">Studio</option>
+                        </select>
+                    </div>
+                </div>
                 <div class="setting-item">
                     <div class="setting-label">
                         <strong>Message Bubbles</strong><button type="button" class="cuttle-info" data-tooltip="Show chat messages in bubbles. Turn off for plain text on the page background." aria-label="About Message Bubbles">i</button>
@@ -988,6 +999,7 @@
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
     <script src="/js/settings/settings_releases.js?v=20261018updateCenter"></script>
     <script src="/js/settings/settings_storage.js?v=20261103cards"></script>
+    <script src="/js/shared/chat_display.js"></script>
     <script src="/js/settings/settings_chat_preferences.js?v=20261016separateProcessor"></script>
     <script src="/js/settings/settings_auto_compact.js?v=20261108autocompact"></script>
     <script src="/js/settings/settings_worktrees.js?v=20261111wtdefault"></script>
@@ -1192,6 +1204,13 @@
             document, fetch: window.fetch.bind(window),
             notify: (message, kind) => (window.showToast || alert)(message, kind)
         });
+        // Display row (Classic | Studio): hidden until chat_studio_display resolves on.
+        if (window.CuttleChatDisplay) {
+            window.CuttleChatDisplay.syncFlag();
+            chatPreferences.bindChatDisplay(document.getElementById('chatDisplayRow'),
+                document.getElementById('chatDisplaySelect'), window.CuttleChatDisplay,
+                () => notifyUiAnimChange());
+        }
         // Catalog and picker behavior live in the settings slice.
         let _completionPicker;
         function completionPicker() {
@@ -2236,6 +2255,7 @@
                     || '<div class="provider-status">No experimental features registered.</div>';
                 if (window.cuttleCompletionSettings) window.cuttleCompletionSettings.refresh();
                 chatPreferences.refreshProcessorAvailability();
+                if (window.CuttleChatDisplay) window.CuttleChatDisplay.syncFlag();
                 window.CuttleSettingsAutoCompact.refresh();
                 if (window.CuttleSettingsWorktrees) window.CuttleSettingsWorktrees.refresh();
                 if (d.kill_switch) {

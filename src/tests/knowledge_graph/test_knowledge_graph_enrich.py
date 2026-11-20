@@ -153,7 +153,7 @@ def test_secondary_docs_contribute_only_lines_that_name_the_subsystem(repo):
     (repo / "README.md").write_text("# Demo\n\n## Features\n\nLots of generic text.\n"
                                     "The router picks a harness.\nMore generic text.\n\n"
                                     "## Layout\n\n| `src/api/router/` | routing |\n\n"
-                                    "## Router internals\n\nKept whole: the heading names it.\n")
+                                    "## Router internals\n\nKept whole: the heading names it.\n", encoding="utf-8")
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
     inp = _input(repo)
     assert "The router picks a harness." in inp.prompt and "generic text" not in inp.prompt

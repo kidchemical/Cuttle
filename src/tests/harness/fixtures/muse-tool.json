@@ -1,0 +1,26 @@
+{
+  "sent": "Please acknowledge this steer and include the word marigold in your response.",
+  "events": [
+    {
+      "method": "item/completed",
+      "params": {
+        "item": {
+          "kind": "userMessage",
+          "steered": true,
+          "text": "Please acknowledge this steer and include the word marigold in your response.",
+          "itemId": "632fdbba-61bf-54bf-af80-fa04b7caa654"
+        }
+      }
+    },
+    {
+      "method": "item/completed",
+      "params": {
+        "item": {
+          "kind": "agentMessage",
+          "text": "Command finished with output `READY`.\n\nAcknowledged \u2014 steering received, marigold included.",
+          "itemId": "23ef201a-946b-47b2-a6eb-5afd5123a035"
+        }
+      }
+    }
+  ]
+}

@@ -16,7 +16,7 @@ Each source has its own score definition: DeepSWE pass@1, SWE-bench Verified res
 **My Cuttle Performance** (`?d=cuttle-performance`) uses the same 3D widget, one point per agent / model / reasoning effort, built from *your* turns in `<home>/db/router_outcomes.db`:
 
 - **Router** turns are recorded by `agent_router.dispatch` (one row per attempt).
-- **Pinned** turns (starred agent, chip, `/cursor`, `/codex`, …) are recorded by `_run_pinned_harness_turn` in `web_chat_api.py` (`source=pinned`). Native controls (`/cost`, `/muse model …`, session clear) carry `meta_command` and are skipped.
+- **Pinned** turns (starred agent, chip, `/cursor`, `/codex`, …) are recorded by `run_pinned_harness_turn` in `api.agent_harness.runners` (`source=pinned`). Native controls (`/cost`, `/muse model …`, session clear) carry `meta_command` and are skipped.
 - Turns from before pinned logging existed come from `backfill-performance` (idempotent, keyed by message id and `query_id`).
 - **Accept score** = 👍/👎 on the reply (chat footer → `POST /api/turn-feedback`) → Jev label → finished without error. With no feedback it barely separates configs, because most runs finish.
 - Axes: accept score, finished %, median turn time, cost / turn (Cursor reports none), output / total tokens per turn, turns (log). Filters: provider, reasoning, agent, plus a Turns picker (all / pinned / router) and a window (7 / 30 / 90 days / all time).

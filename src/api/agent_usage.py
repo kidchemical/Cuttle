@@ -126,6 +126,7 @@ def _run_cli(argv: List[str], *, timeout: float = 60.0) -> Tuple[int, str]:
             text=True,
             timeout=timeout,
             shell=False,
+            encoding="utf-8", errors="replace",
         )
     except FileNotFoundError:
         return 127, ""

@@ -17,14 +17,14 @@ def test_literal_paths_and_rename(tmp_path):
     git(tmp_path, 'init')
     git(tmp_path, 'config', 'user.email', 'test@example.test')
     git(tmp_path, 'config', 'user.name', 'Test')
-    (tmp_path / 'first.txt').write_text('before')
-    (tmp_path / 'old.txt').write_text('rename me')
+    (tmp_path / 'first.txt').write_text('before', encoding="utf-8")
+    (tmp_path / 'old.txt').write_text('rename me', encoding="utf-8")
     git(tmp_path, 'add', '.')
     git(tmp_path, 'commit', '-m', 'initial')
-    (tmp_path / 'first.txt').write_text('after')
+    (tmp_path / 'first.txt').write_text('after', encoding="utf-8")
     git(tmp_path, 'mv', 'old.txt', ' new -> ü.txt ')
     for name in [' spaces.txt ', 'quote".txt', 'ü.txt', 'arrow -> path.txt']:
-        (tmp_path / name).write_text(name)
+        (tmp_path / name).write_text(name, encoding="utf-8")
     snap = snapshot_worktree(str(tmp_path))
     assert snap['ok']
     assert set(snap['paths']) == {'first.txt', ' new -> ü.txt ', ' spaces.txt ', 'quote".txt', 'ü.txt', 'arrow -> path.txt'}

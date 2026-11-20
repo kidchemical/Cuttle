@@ -21,19 +21,42 @@ MAX_RESPONSE_CHARS = 120000
 _LEAD_THINK = re.compile(r'(?:\s*<think>[\s\S]*?</think>)+\s*', re.I)
 
 
+# Markdown code (fenced blocks, unclosed fences to the end, inline spans): a
+# ``<cuttle_…>`` tag quoted there is prose, not a card.
+_CODE = re.compile(
+    r'^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^[ \t]*\1[ \t]*$|\Z)'
+    r'|(`+)(?!`)[^\n]+?(?<!`)\2(?!`)', re.M)
+
+
+def _mask_code(text):
+    """Blank out code regions, keeping offsets, so tag scans skip quoted markup."""
+    return _CODE.sub(lambda m: re.sub(r'[^\n]', ' ', m.group(0)), text)
+
+
 def _split_controls(text):
     """Return (prose, [control blocks]).
 
     Paired cards are lifted out so the model never sees executable UI. Markup
     that is not cleanly paired (a stray or truncated ``<cuttle_…`` tag) is kept
-    with everything after it, byte-for-byte, as the trailing block.
+    with everything after it, byte-for-byte, as the trailing block. Tags inside
+    markdown code are quoted prose and stay in place.
     """
-    blocks = [m.group(0) for m in _CONTROL_BLOCK.finditer(text)]
-    prose = _CONTROL_BLOCK.sub('', text)
-    if _CONTROL.search(prose):
-        cut = _CONTROL.search(text).start()
-        return re.sub(r'\n{3,}', '\n\n', text[:cut]).strip(), [text[cut:].strip()]
-    return re.sub(r'\n{3,}', '\n\n', prose).strip(), blocks
+    scan = _mask_code(text)
+    spans = [m.span() for m in _CONTROL_BLOCK.finditer(scan)]
+    stray = next((m.start() for m in _CONTROL.finditer(scan)
+                  if not any(a <= m.start() < b for a, b in spans)), None)
+    if stray is not None:
+        spans = [(a, b) for a, b in spans if b <= stray]
+    blocks = [text[a:b] for a, b in spans]
+    end = len(text) if stray is None else stray
+    prose, pos = [], 0
+    for a, b in spans:
+        prose.append(text[pos:a])
+        pos = b
+    prose.append(text[pos:end])
+    if stray is not None:
+        blocks.append(text[stray:].strip())
+    return re.sub(r'\n{3,}', '\n\n', ''.join(prose)).strip(), blocks
 
 
 def process_result(result, *, cancelled=lambda: False, status=None):

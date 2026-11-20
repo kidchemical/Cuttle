@@ -1000,7 +1000,7 @@ def test_resolve_harness_cwd_keeps_project_not_process_cwd(tmp_path, monkeypatch
 
     other = tmp_path / "flask-cwd"
     other.mkdir()
-    project = tmp_path / "escape-purgatory"
+    project = tmp_path / "demo-game"
     project.mkdir()
     monkeypatch.chdir(other)
 

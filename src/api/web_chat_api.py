@@ -114,8 +114,9 @@ except ImportError as e:
 
 app = Flask(__name__)
 # gzip text responses; registered first so it runs after every other hook.
-from api import http_compression  # noqa: E402
+from api import error_pages, http_compression  # noqa: E402
 http_compression.install(app)
+error_pages.install(app)  # styled 4xx/5xx for page loads only
 # Restrict CORS to known-safe origins (+ LAN IP when lan_access_enabled).
 try:
     from api.lan_access import build_cors_origins
@@ -347,6 +348,10 @@ try:
     app.register_blueprint(secret_vault_pages_bp)
 except Exception as _secret_vault_err:
     print(f"[SECRET VAULT] Failed to register routes: {_secret_vault_err}")
+try:  # Media App (owner: api.media_library)
+    from api.media_library.routes import media_library_bp; app.register_blueprint(media_library_bp)
+except Exception as _media_library_err:
+    print(f"[MEDIA] Failed to register routes: {_media_library_err}")
 
 try:
     from api.chat_vfx.routes import chat_vfx_bp

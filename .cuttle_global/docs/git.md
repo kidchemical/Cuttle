@@ -65,7 +65,9 @@ The report opens centered over the app with a blurred backdrop, including
 when opened from a split chat pane.
 
 The checks are `path-policy`, `secret-patterns`, `gitleaks` (when installed), and
-`sqlite-secrets`. Every introduced commit version is scanned, including a secret
+`sqlite-secrets`. A project hook may add more after them (the Cuttle repo runs a
+test gate, `tests`; its report names the failing tests and cannot be allowed
+from the popup). Every introduced commit version is scanned, including a secret
 removed by a later commit. Gitleaks errors are reported as coverage warnings;
 built-in checks still run.
 

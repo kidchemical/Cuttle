@@ -67,7 +67,7 @@ def append(kind: str, *, at: Optional[float] = None, detail: Optional[Dict[str, 
 
 
 def events(*, kinds: Iterable[str] = (), since: float = 0.0, user_id: Optional[int] = None,
-           limit: int = 200000) -> List[Dict[str, Any]]:
+           session_id: Optional[int] = None, limit: int = 200000) -> List[Dict[str, Any]]:
     clauses, params = ["at >= ?"], [float(since)]
     kinds = list(kinds)
     if kinds:
@@ -76,6 +76,9 @@ def events(*, kinds: Iterable[str] = (), since: float = 0.0, user_id: Optional[i
     if user_id is not None:
         clauses.append("(user_id = ? OR user_id IS NULL)")
         params.append(int(user_id))
+    if session_id is not None:
+        clauses.append("session_id = ?")
+        params.append(int(session_id))
     with closing(_connect()) as conn:
         rows = conn.execute("SELECT * FROM events WHERE " + " AND ".join(clauses) + " ORDER BY at, id LIMIT ?",
                             (*params, int(limit))).fetchall()

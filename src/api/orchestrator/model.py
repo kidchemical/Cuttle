@@ -463,7 +463,9 @@ def render_brief(
         "left, skipping out-of-usage ones in the order below (the spawn's `tier_picks` says who ran and "
         "who was skipped). Use `\"profile\":\"<id>\"` instead only to pick one agent on purpose (a "
         "parallel lane on a different agent); the profile pins harness, model and effort, so never restate "
-        "them. A temporary agent has no saved profile: its cell shows the exact `profile` object to send.",
+        "them. A temporary agent has no saved profile: its cell shows the exact `profile` object to send. "
+        "When a child works on an item of a Tasks list, add `\"task\":\"<gizmo>:<item>\"` to its JSON so "
+        "the item shows that child as its owner while it works.",
         "",
         "### Org chart (in escalation order)",
         "",

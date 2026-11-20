@@ -101,7 +101,7 @@ const request = async (url, opts) => {
 @node_only
 def test_secret_fields_and_model_under_node():
     env = {**os.environ, "FORMS": str(FORMS), "FIELDS": str(FIELDS), "MODEL": str(MODEL)}
-    proc = subprocess.run(["node", "-e", HARNESS], capture_output=True, text=True, env=env, timeout=30)
+    proc = subprocess.run(["node", "-e", HARNESS], capture_output=True, text=True, env=env, timeout=30, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["bareSafe"]

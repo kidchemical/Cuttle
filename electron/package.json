@@ -1,6 +1,6 @@
 {
     "name":  "cuttle-desktop",
-    "version":  "0.10.0",
+    "version":  "0.11.0",
     "description":  "Cuttle - AI Agent Framework Desktop Application",
     "main":  "main.js",
     "desktopName":  "cuttle-desktop.desktop",
@@ -34,8 +34,8 @@
                          "electron-squirrel-startup":  "^1.0.0"
                      },
     "devDependencies":  {
-                            "electron":  "^44.5.1",
-                            "electron-builder":  "^26.15.3"
+                            "electron":  "^45.3.4",
+                            "electron-builder":  "^26.18.0"
                         },
     "build":  {
                   "appId":  "com.cuttle.desktop",
