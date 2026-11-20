@@ -52,8 +52,8 @@ def params(client, embedded):
     result = {'repo': str(client), 'restart_electron': False, 'restart_daemon': False}
     if embedded:
         result.update(script_text=(SCRIPTS / 'client-self-update.ps1').read_text(encoding='utf-8-sig'),
-                      script_text_posix=(SCRIPTS / 'client-self-update.sh').read_text(),
-                      checkout_helper_text=(SCRIPTS / 'client-update-checkout.py').read_text())
+                      script_text_posix=(SCRIPTS / 'client-self-update.sh').read_text(encoding="utf-8"),
+                      checkout_helper_text=(SCRIPTS / 'client-update-checkout.py').read_text(encoding="utf-8"))
     return result
 
 
@@ -84,19 +84,19 @@ def test_executor_fast_forward_preserves_personal_and_delivers_helper(worker, ch
         seed = tmp_path / 'seed'
         git(seed, 'fetch', str(remote), 'main')
         git(seed, 'merge', '--ff-only', 'FETCH_HEAD')
-        (seed / 'file.txt').write_text('next update\n')
+        (seed / 'file.txt').write_text('next update\n', encoding="utf-8")
         git(seed, 'commit', '-am', 'next')
         git(remote, 'fetch', str(seed), 'main:main')
     personal = client / 'personal/local.md'
     personal.parent.mkdir()
-    personal.write_text('keep me')
+    personal.write_text('keep me', encoding="utf-8")
     before_scripts = {p.name: p.read_bytes() for p in (client / '.cuttle_global/scripts').glob('*')} if not embedded else {}
     result = module.execute_job({'type': 'cuttle_self_update', 'params': params(client, embedded)})
     assert result['scheduled']
     assert len(calls) == 1
     assert git(client, 'rev-parse', 'HEAD') == git(remote, 'rev-parse', 'main')
     assert git(client, 'status', '--porcelain') == ''
-    assert personal.read_text() == 'keep me'
+    assert personal.read_text(encoding="utf-8") == 'keep me'
     for name, content in before_scripts.items():
         assert (client / '.cuttle_global/scripts' / name).read_bytes() == content
     if module.os.name == 'nt':
@@ -144,7 +144,7 @@ def test_executor_refusal_preserves_work_and_never_schedules(worker, checkout, t
         install_scripts(client)
     file = client / 'file.txt'
     if state in ('modified', 'staged', 'diverged', 'local_commit'):
-        file.write_text('my work\n')
+        file.write_text('my work\n', encoding="utf-8")
     if state == 'staged':
         git(client, 'add', '.')
     if state == 'local_commit':
@@ -154,15 +154,15 @@ def test_executor_refusal_preserves_work_and_never_schedules(worker, checkout, t
     if state in ('local_commit', 'diverged'):
         git(client, 'commit', '-am', 'my work')
     if state == 'untracked':
-        (client / 'new.txt').write_text('keep untracked')
+        (client / 'new.txt').write_text('keep untracked', encoding="utf-8")
     if state.startswith('ignored_'):
         personal = client / 'personal/local.md'
         personal.parent.mkdir()
-        personal.write_text('keep ignored')
+        personal.write_text('keep ignored', encoding="utf-8")
         seed = tmp_path / 'seed'
         incoming = seed / ('personal' if state == 'ignored_directory_collision' else 'personal/local.md')
         incoming.parent.mkdir(parents=True, exist_ok=True)
-        incoming.write_text('incoming')
+        incoming.write_text('incoming', encoding="utf-8")
         git(seed, 'add', '-f', str(incoming.relative_to(seed)))
         git(seed, 'commit', '-m', 'collision')
         git(remote, 'fetch', str(seed), 'main:main')

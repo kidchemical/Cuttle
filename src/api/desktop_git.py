@@ -53,6 +53,7 @@ def _git(*args: str) -> str:
             capture_output=True,
             text=True,
             timeout=30,
+            encoding="utf-8", errors="replace",
         )
         if completed.returncode == 0:
             return (completed.stdout or "").strip()
@@ -116,6 +117,7 @@ def ensure_bundle() -> Optional[Path]:
             capture_output=True,
             text=True,
             timeout=600,
+            encoding="utf-8", errors="replace",
         )
         if completed.returncode != 0:
             return None

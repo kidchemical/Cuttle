@@ -148,7 +148,7 @@ def _start(tmp_path, monkeypatch, mode, chat_id, *, background=True):
 def _gone(pid):
     """Process exited (``/proc`` probe; signalling a dead pid trips the test kill guard)."""
     try:
-        return Path(f"/proc/{pid}/stat").read_text().split(")")[-1].split()[0] in ("Z", "X")
+        return Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").split(")")[-1].split()[0] in ("Z", "X")
     except OSError:
         return True
 
@@ -575,7 +575,7 @@ def test_wait_cap_hands_running_work_off_and_the_chat_hears_when_it_ends(tmp_pat
 
     assert len(launched) == 1 and launched[0][1] == 6111
     record_path = launched[0][0]
-    task = bh.json.loads(record_path.read_text())["tasks"][0]
+    task = bh.json.loads(record_path.read_text(encoding="utf-8"))["tasks"][0]
     assert task["task_id"] == "b7" and task["output_file"] == str(tmp_path / "b7.output")
     assert bh.running(task), "the reap must spare the handed-off task"
     assert bh.check(record_path) is False  # still running: nothing posted yet

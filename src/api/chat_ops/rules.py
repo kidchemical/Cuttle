@@ -24,7 +24,7 @@ def branch_tips(path, branches):
     for branch in branches:
         try:
             out = subprocess.run(['git', '-C', path, 'rev-parse', '--verify', '-q', f'refs/heads/{branch}^{{commit}}'],
-                                 capture_output=True, text=True, timeout=10)
+                                 capture_output=True, text=True, timeout=10, encoding="utf-8", errors="replace")
         except (OSError, subprocess.SubprocessError):
             continue
         if out.returncode == 0 and out.stdout.strip():
@@ -58,7 +58,7 @@ def is_git_write(command):
 
 def _git(path, *args):
     try:
-        out = subprocess.run(['git', '-C', path, *args], capture_output=True, text=True, timeout=15)
+        out = subprocess.run(['git', '-C', path, *args], capture_output=True, text=True, timeout=15, encoding="utf-8", errors="replace")
     except (OSError, subprocess.SubprocessError):
         return None
     return out.stdout if out.returncode == 0 else None

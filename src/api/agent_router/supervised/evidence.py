@@ -99,6 +99,7 @@ def _run_git(workspace: str, *args: str, timeout: float = 15.0) -> tuple[int, st
             text=True,
             timeout=timeout,
             check=False,
+            encoding="utf-8", errors="replace",
         )
         out = (proc.stdout or "") if proc.returncode == 0 else ((proc.stdout or "") + (proc.stderr or ""))
         return int(proc.returncode), out

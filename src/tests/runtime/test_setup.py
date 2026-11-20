@@ -16,7 +16,7 @@ from scripts import setup_cuttle as setup
 def install(monkeypatch, tmp_path):
     root = tmp_path / "checkout with spaces"
     (root / "electron").mkdir(parents=True)
-    (root / "electron" / "package.json").write_text(json.dumps({"engines": {"node": ">=22.12.0"}}))
+    (root / "electron" / "package.json").write_text(json.dumps({"engines": {"node": ">=22.12.0"}}), encoding="utf-8")
     calls = []
     monkeypatch.setattr(setup.shutil, "which", lambda name: name)
     monkeypatch.setattr(setup.sys, "version_info", (3, 12, 0))
@@ -65,9 +65,9 @@ def test_install_only_and_repeat_preserve_existing_environment(install):
     setup.setup(root, browser=False, no_launch=True, launch_only=False)
     calls.clear()
     sentinel = root / ".venv" / "keep-me"
-    sentinel.write_text("existing")
+    sentinel.write_text("existing", encoding="utf-8")
     setup.setup(root, browser=False, no_launch=True, launch_only=False)
-    assert sentinel.read_text() == "existing"
+    assert sentinel.read_text(encoding="utf-8") == "existing"
     assert not any("venv" in argv for argv, _ in calls)
     assert calls[-1][0][-1].endswith("install.js")
 
@@ -191,6 +191,7 @@ exit $LASTEXITCODE
     result = subprocess.run(
         [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(wrapper), str(entry)],
         capture_output=True, text=True, timeout=30,
+        encoding="utf-8",
     )
     assert result.returncode == exit_code, result.stdout + result.stderr
     assert "setup helper invoked" in result.stdout
@@ -200,7 +201,7 @@ exit $LASTEXITCODE
 def linux_install(monkeypatch, tmp_path):
     root = tmp_path / "checkout with spaces"
     (root / "electron").mkdir(parents=True)
-    (root / "electron" / "package.json").write_text(json.dumps({"engines": {"node": ">=22.12.0"}}))
+    (root / "electron" / "package.json").write_text(json.dumps({"engines": {"node": ">=22.12.0"}}), encoding="utf-8")
     calls = []
     monkeypatch.setattr(setup.shutil, "which", lambda name: name)
     monkeypatch.setattr(setup.sys, "version_info", (3, 12, 0))
@@ -308,13 +309,15 @@ def test_shell_entry_passes_options_and_exit_code(tmp_path, exit_code):
     shutil.copyfile(setup.ROOT / "setup_linux.sh", root / "setup_linux.sh")
     # Fake setup helper: no install runs.
     (root / "src" / "scripts" / "setup_cuttle.py").write_text(
-        f"import sys\nprint('setup helper invoked', sys.argv[1:])\nraise SystemExit({exit_code})\n"
+        f"import sys\nprint('setup helper invoked', sys.argv[1:])\nraise SystemExit({exit_code})\n",
+        encoding="utf-8",
     )
     (root / ".venv" / "bin").mkdir(parents=True)
     (root / ".venv" / "bin" / "python").symlink_to(sys.executable)
     result = subprocess.run(
         [bash, str(root / "setup_linux.sh"), "--browser", "--no-launch"],
         capture_output=True, text=True, timeout=30,
+        encoding="utf-8",
     )
     assert result.returncode == exit_code, result.stdout + result.stderr
     assert "setup helper invoked ['--browser', '--no-launch']" in result.stdout

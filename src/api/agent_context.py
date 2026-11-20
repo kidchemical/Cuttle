@@ -975,6 +975,7 @@ def _compact_opencode(cwd: str, resume_id: str) -> Dict[str, Any]:
             text=True,
             timeout=240,
             env=env,
+            encoding="utf-8", errors="replace",
         )
     except subprocess.TimeoutExpired:
         return {

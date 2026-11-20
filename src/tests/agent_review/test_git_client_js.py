@@ -37,7 +37,7 @@ def result():
     if shutil.which("node") is None:
         pytest.skip("node unavailable")
     proc = subprocess.run(["node", "-e", HARNESS], capture_output=True, text=True, timeout=30,
-                          env={**os.environ, "CLIENT": str(CLIENT)})
+                          env={**os.environ, "CLIENT": str(CLIENT)}, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
 
@@ -108,7 +108,7 @@ def test_review_stream_is_shared_across_frames():
     if shutil.which("node") is None:
         pytest.skip("node unavailable")
     proc = subprocess.run(["node", "-e", FRAMES], capture_output=True, text=True, timeout=30,
-                          env={**os.environ, "CLIENT": str(CLIENT)})
+                          env={**os.environ, "CLIENT": str(CLIENT)}, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout)
     assert out["open"] == 1  # four panes, one connection

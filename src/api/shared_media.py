@@ -246,6 +246,7 @@ def probe_duration_seconds(video_path: Path) -> Optional[float]:
             text=True,
             timeout=30,
             check=False,
+            encoding="utf-8", errors="replace",
         )
         if proc.returncode != 0:
             return None
@@ -304,6 +305,7 @@ def extract_midframe_poster(
             text=True,
             timeout=60,
             check=False,
+            encoding="utf-8", errors="replace",
         )
     except Exception as e:
         return {"success": False, "error": str(e)}

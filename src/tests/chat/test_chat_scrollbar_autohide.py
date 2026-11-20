@@ -44,7 +44,7 @@ def test_scrollbar_shows_while_scrolling_and_hides_when_idle():
     if not node:
         pytest.skip("node not installed")
     out = subprocess.run([node, "-e", HARNESS], capture_output=True, text=True, timeout=30,
-                         env={**os.environ, "AUTOHIDE_JS": str(JS)})
+                         env={**os.environ, "AUTOHIDE_JS": str(JS)}, encoding="utf-8")
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout) == {
         "base": True, "idle": False, "scrolling": True, "afterIdle": False,

@@ -693,6 +693,7 @@ def kill_pid_tree(pid, keep=()) -> bool:
                 capture_output=True,
                 text=True,
                 timeout=15,
+                encoding="utf-8", errors="replace",
             )
             killed = True
         else:
@@ -723,6 +724,7 @@ def kill_pid_tree(pid, keep=()) -> bool:
                         capture_output=True,
                         text=True,
                         timeout=10,
+                        encoding="utf-8", errors="replace",
                     )
                 else:
                     os.kill(child_i, 9)

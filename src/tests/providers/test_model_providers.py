@@ -110,7 +110,7 @@ def test_corrupt_cache_falls_back():
     from core.runtime_paths import runtime_cache_path
     cache.write('bad.json', {'fetched_at': 'invalid', 'models': []})
     assert cache.read('bad.json') == {}
-    runtime_cache_path('bad.json').write_text('{broken')
+    runtime_cache_path('bad.json').write_text('{broken', encoding="utf-8")
     assert cache.read('bad.json') == {}
 
 
@@ -118,12 +118,12 @@ def test_manifest_validation_and_bundled_registry(tmp_path):
     assert [m.id for m in catalog.manifests()] == ['openai', 'anthropic', 'local', 'elevenlabs', 'google', 'typesafe']
     folder = tmp_path / 'custom'; folder.mkdir()
     manifest = {'schema_version': 1, 'id': 'custom', 'operations': ['text_generation']}
-    path = folder / 'manifest.yaml'; path.write_text(yaml.safe_dump(manifest))
+    path = folder / 'manifest.yaml'; path.write_text(yaml.safe_dump(manifest), encoding="utf-8")
     assert catalog.load_manifest(folder).id == 'custom'
     for patch in ({'id': '../bad'}, {'schema_version': 2}, {'defaults': {'temperature': 'false'}},
                   {'models': [{'id': 'a'}, {'id': 'a'}]}, {'needs_credential': 'false'},
                   {'model_rules': [{'match': ['*'], 'capabilities': {'operations': ['image_generation']}}]}):
-        path.write_text(yaml.safe_dump({**manifest, **patch}))
+        path.write_text(yaml.safe_dump({**manifest, **patch}), encoding="utf-8")
         with pytest.raises(ValueError): catalog.load_manifest(folder)
     with pytest.raises(ValueError): catalog.get_adapter('../bad')
 

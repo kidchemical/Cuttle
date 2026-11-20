@@ -445,10 +445,10 @@ def test_push_exception_route_scopes_repo_and_saves_verified_source(tmp_path, mo
     assert ctx['guest'].post('/api/git/push-exceptions', json=payload, environ_base=LAN).status_code == 403
     response = ctx['client'].post('/api/git/push-exceptions', json=dict(payload, repo_root=str(tmp_path)), environ_base=LAN)
     assert response.status_code == 400
-    assert json.loads(policy.read_text())['exceptions'] == []
+    assert json.loads(policy.read_text(encoding="utf-8"))['exceptions'] == []
     response = ctx['client'].post('/api/git/push-exceptions', json=payload, environ_base=LAN)
     assert response.status_code == 200, response.json
-    entry = json.loads(policy.read_text())['exceptions'][0]
+    entry = json.loads(policy.read_text(encoding="utf-8"))['exceptions'][0]
     assert entry['commit'] == hit['commit'] and entry['checks'] == {'gitleaks': 'generic-api-key'}
     response = ctx['client'].post('/api/git/push-exceptions', json=dict(payload, finding=dict(hit, hook='sqlite-secrets')), environ_base=LAN)
     assert response.status_code == 400
@@ -458,7 +458,7 @@ def test_working_branch_tracks_existing_origin_without_resetting_local_commits(t
     import subprocess
     from api.git_service import use_working_branch, GitError
     def git(*args):
-        return subprocess.run(['git', '-C', str(tmp_path), *args], check=True, capture_output=True, text=True).stdout.strip()
+        return subprocess.run(['git', '-C', str(tmp_path), *args], check=True, capture_output=True, text=True, encoding="utf-8").stdout.strip()
     git('init', '-b', 'main')
     git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'Base')
     base = git('rev-parse', 'HEAD')
@@ -472,10 +472,10 @@ def test_working_branch_tracks_existing_origin_without_resetting_local_commits(t
     assert git('rev-parse', 'main') == local
     assert git('rev-parse', '--abbrev-ref', 'dev@{upstream}') == 'origin/dev'
     # Tracked changes also block switching.
-    (tmp_path / 'tracked').write_text('Initial')
+    (tmp_path / 'tracked').write_text('Initial', encoding="utf-8")
     git('add', 'tracked')
     git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'Tracked')
-    (tmp_path / 'tracked').write_text('Pending')
+    (tmp_path / 'tracked').write_text('Pending', encoding="utf-8")
     with pytest.raises(GitError, match='Commit or stash'):
         use_working_branch(str(tmp_path), 'main')
     assert git('branch', '--show-current') == 'dev'

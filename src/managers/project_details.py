@@ -46,7 +46,7 @@ def repository_summary(project):
     env = dict(os.environ, GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0')
     def git(*args):
         result = subprocess.run(['git', '-C', project['resolved_path'], *args],
-                                capture_output=True, text=True, timeout=4, env=env)
+                                capture_output=True, text=True, timeout=4, env=env, encoding="utf-8", errors="replace")
         return result.stdout.strip() if result.returncode == 0 else None
     try:
         root = git('rev-parse', '--show-toplevel')

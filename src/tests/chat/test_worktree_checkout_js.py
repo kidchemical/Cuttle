@@ -13,7 +13,8 @@ import pytest
 def test_worktree_checkout_client_model():
     script = Path(__file__).with_name("worktree_checkout.cjs")
     result = subprocess.run(
-        ["node", str(script)], capture_output=True, text=True, timeout=30
+        ["node", str(script)], capture_output=True, text=True, timeout=30,
+        encoding="utf-8",
     )
     assert result.returncode == 0, result.stderr
     assert "worktree checkout scenarios passed" in result.stdout

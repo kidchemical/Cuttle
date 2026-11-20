@@ -174,7 +174,7 @@ def materialize(root: Path) -> Path:
     for rel, text in FILES.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+        path.write_text(text, encoding="utf-8")
     return root.resolve()
 
 
@@ -229,7 +229,7 @@ def install_routes(ctx, root: Path) -> None:
         return ok(route)
 
     def review_item(rel: str) -> dict:
-        base, cur = BASELINE[rel], (root / rel).read_text()
+        base, cur = BASELINE[rel], (root / rel).read_text(encoding="utf-8")
         hunk_list = H.compute(base, cur)
         return {
             "path": rel, "rel_path": rel, "repo_root": str(root), "change": "modified", "hunks": len(hunk_list),

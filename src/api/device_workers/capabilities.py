@@ -55,6 +55,7 @@ def _ac_power() -> Optional[bool]:
             text=True,
             timeout=8,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            encoding="utf-8", errors="replace",
         )
         text = (completed.stdout or "").strip().splitlines()
         if not text:
@@ -97,6 +98,7 @@ def _gpu_pct() -> Optional[float]:
             text=True,
             timeout=5,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            encoding="utf-8", errors="replace",
         )
         if completed.returncode != 0:
             return None
@@ -203,6 +205,7 @@ def cuttle_git_rev(*, force: bool = False) -> str:
             text=True,
             timeout=4,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            encoding="utf-8", errors="replace",
         )
         if completed.returncode == 0:
             rev = (completed.stdout or "").strip()
@@ -226,6 +229,7 @@ def _git_stdout(*args: str) -> str:
             text=True,
             timeout=4,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            encoding="utf-8", errors="replace",
         )
         if completed.returncode == 0:
             return (completed.stdout or "").strip()

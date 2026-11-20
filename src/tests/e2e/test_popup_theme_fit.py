@@ -59,7 +59,7 @@ def test_popup_surfaces_and_dropdowns_use_active_palette(browser, static_server,
         page.keyboard.press('Escape')
         page.evaluate('chips.close()')
         # Actual account and release-note markup share the same modal palette.
-        html = (Path(__file__).resolve().parents[2] / 'web/app_shell.html').read_text()
+        html = (Path(__file__).resolve().parents[2] / 'web/app_shell.html').read_text(encoding="utf-8")
         account = re.search(r'<div class="auth-modal-overlay" id="logoutConfirmModal".*?\n</div>', html, re.S).group(0)
         page.locator('body').evaluate('(el, html) => el.insertAdjacentHTML("beforeend", html)', account + _shell_modal_markup())
         page.evaluate('theme => CuttleUiBoot.applyTheme(theme)', theme)

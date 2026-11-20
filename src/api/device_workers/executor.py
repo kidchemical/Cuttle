@@ -511,6 +511,7 @@ def _git_update_checkout(
                 text=True,
                 timeout=30,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                encoding="utf-8", errors="replace",
             ).stdout.strip()
         except (OSError, subprocess.SubprocessError):
             return ""
@@ -525,6 +526,7 @@ def _git_update_checkout(
             argv,
             capture_output=True, text=True, timeout=300, cwd=str(repo),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            encoding="utf-8", errors="replace",
         )
         output = (result.stdout or "") + (result.stderr or "")
         if log_path:

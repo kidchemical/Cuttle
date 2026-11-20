@@ -186,7 +186,7 @@ def repair(*, auth_path, outcomes_path, logs_path, backup_dir=None, apply=False,
         with sqlite3.connect(source) as src, sqlite3.connect(backup_dir / source.name) as dst:
             src.backup(dst)
     journal = [{k: v for k, v in p.items() if k != "files"} for p in plans]
-    (backup_dir / "audit.json").write_text(json.dumps(dict(summary=summary, records=journal), indent=2))
+    (backup_dir / "audit.json").write_text(json.dumps(dict(summary=summary, records=journal), indent=2), encoding="utf-8")
     for p in plans:
         for path, original, changed in p["files"]:
             (backup_dir / path.name).write_bytes(original)
@@ -209,18 +209,18 @@ def repair(*, auth_path, outcomes_path, logs_path, backup_dir=None, apply=False,
             if path.read_bytes() != original:
                 raise RuntimeError(f"Log changed during repair: {path}; backup retained")
             tmp = path.with_suffix(".repair.tmp")
-            tmp.write_text(json.dumps(changed, indent=2))
+            tmp.write_text(json.dumps(changed, indent=2), encoding="utf-8")
             tmp.replace(path)
             written.add(path)
     summary["backup_dir"] = str(backup_dir)
-    (backup_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+    (backup_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary
 
 
 def resume_logs(*, backup_dir, logs_path):
     """Finish sidecars after an interrupted repair using the saved audit."""
     backup_dir, logs_path = Path(backup_dir), Path(logs_path)
-    audit = json.loads((backup_dir / "audit.json").read_text())
+    audit = json.loads((backup_dir / "audit.json").read_text(encoding="utf-8"))
     repaired = set()
     already = set()
     for p in audit["records"]:
@@ -241,17 +241,17 @@ def resume_logs(*, backup_dir, logs_path):
             if current != original:
                 raise RuntimeError(f"Log changed outside repair: {path}")
             tmp = path.with_suffix(".repair.tmp")
-            tmp.write_text(json.dumps(changed, indent=2))
+            tmp.write_text(json.dumps(changed, indent=2), encoding="utf-8")
             tmp.replace(path)
             repaired.add(path)
     summary = dict(audit["summary"], backup_dir=str(backup_dir), unique_log_files=len(repaired | already),
                    resumed_logs=len(repaired), already_repaired_logs=len(already))
-    (backup_dir / "summary.json").write_text(json.dumps(summary, indent=2))
+    (backup_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary
 
 
 def verify_repair(*, backup_dir, auth_path, outcomes_path, logs_path):
-    audit = json.loads((Path(backup_dir) / "audit.json").read_text())
+    audit = json.loads((Path(backup_dir) / "audit.json").read_text(encoding="utf-8"))
     errors = []
     unique = {}
     with sqlite3.connect(auth_path) as auth, sqlite3.connect(outcomes_path) as outcomes:

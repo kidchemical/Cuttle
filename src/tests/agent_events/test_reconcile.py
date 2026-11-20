@@ -134,7 +134,7 @@ def test_changes_markup_and_patch_split_in_node():
               f"const t={json.dumps(SNAPSHOT_TEXT)};"
               "const html=C.renderHtml(m);"
               "process.stdout.write(JSON.stringify({html, split:Object.keys(C.splitPatch(t)), verdict:C.verdictText(m)}));")
-    out = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30, check=True).stdout)
+    out = json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30, check=True, encoding="utf-8").stdout)
     assert out["split"] == ["src/a.py", "src/b.py"]
     assert "not reported" in out["verdict"]
     assert out["html"].count('class="query-changes-file"') == 2

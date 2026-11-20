@@ -49,6 +49,7 @@ def result():
         ["node", "-e", HARNESS],
         env={**os.environ, "MODEL": str(MODEL)},
         capture_output=True, text=True, timeout=60,
+        encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)

@@ -37,6 +37,7 @@ def _highlight(cases):
         text=True,
         timeout=60,
         check=True,
+        encoding="utf-8",
     )
     return json.loads(proc.stdout)
 

@@ -160,7 +160,7 @@ def changed_paths(path: str, base: str) -> Tuple[str, List[str]]:
     """(HEAD, files changed since ``base`` plus uncommitted) in a checkout."""
     def git(*args: str) -> Optional[str]:
         try:
-            out = subprocess.run(['git', '-C', path, *args], capture_output=True, text=True, timeout=15)
+            out = subprocess.run(['git', '-C', path, *args], capture_output=True, text=True, timeout=15, encoding="utf-8", errors="replace")
         except (OSError, subprocess.SubprocessError):
             return None
         return out.stdout if out.returncode == 0 else None

@@ -38,7 +38,7 @@ def file_sha(path: Path) -> str:
 @lru_cache(maxsize=4096)
 def _python_tree(path: str, mtime: float) -> Optional[ast.Module]:
     try:
-        return ast.parse(read_text(Path(path)))
+        return ast.parse(read_text(Path(path), encoding="utf-8"))
     except (SyntaxError, ValueError):
         return None
 
@@ -55,7 +55,7 @@ def module_docstring(path: Path) -> str:
     if path.suffix in (".py", ".pyi"):
         tree = _tree(path)
         return (ast.get_docstring(tree) or "").strip() if tree else ""
-    head = read_text(path)[:4000]
+    head = read_text(path, encoding="utf-8")[:4000]
     match = _JS_BLOCK.match(head)
     if match:
         lines = [re.sub(r"^\s*\*\s?", "", ln) for ln in match.group(1).splitlines()]
@@ -104,7 +104,7 @@ def symbol_source(path: Path, start_line: int, *, max_lines: int = 70) -> Tuple[
     Python uses the AST for the exact end; other languages take a fixed window.
     The text is numbered (``123| code``) so citations can point at real lines.
     """
-    lines = read_text(path).splitlines()
+    lines = read_text(path, encoding="utf-8").splitlines()
     if not lines or not (1 <= start_line <= len(lines)):
         return start_line, start_line, ""
     end = min(len(lines), start_line + max_lines - 1)
@@ -143,7 +143,7 @@ def doc_sections(text: str) -> List[Tuple[str, int, str]]:
 
 
 def line_count(path: Path) -> int:
-    return len(read_text(path).splitlines())
+    return len(read_text(path, encoding="utf-8").splitlines())
 
 
 def _symbols(path: Path) -> List[Tuple[str, int, int]]:
@@ -181,4 +181,4 @@ def find_symbol(path: Path, qualname: str) -> Optional[Tuple[int, int]]:
 
 
 def lines_of(path: Path) -> List[str]:
-    return read_text(path).splitlines()
+    return read_text(path, encoding="utf-8").splitlines()

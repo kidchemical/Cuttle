@@ -992,7 +992,7 @@ def test_real_auth_db_patches_a_batch_without_losing_other_metadata():
 # ── recorded vendor streams (the runners' own parsing) ──────────────────────
 
 def _fixture(name):
-    return json.loads((Path(__file__).parent / 'fixtures' / name).read_text())
+    return json.loads((Path(__file__).parent / 'fixtures' / name).read_text(encoding="utf-8"))
 
 
 def test_recorded_codex_rapid_steers():

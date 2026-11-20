@@ -130,7 +130,7 @@ console.log(JSON.stringify({
 }));
 """.replace("%STARTS%", str(int(STARTS)))
     out = subprocess.run(["node", "-e", driver], capture_output=True, text=True, timeout=30,
-                         env={"WEB": str(WEB), "PATH": "/usr/bin:/bin:/usr/local/bin", "TZ": "America/Los_Angeles"})
+                         env={"WEB": str(WEB), "PATH": "/usr/bin:/bin:/usr/local/bin", "TZ": "America/Los_Angeles"}, encoding="utf-8")
     assert out.returncode == 0, out.stderr
     got = json.loads(out.stdout)
     assert got["title"] == "Background job scheduled" and got["state"] == "scheduled"

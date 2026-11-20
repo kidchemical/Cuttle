@@ -79,6 +79,7 @@ def claude_cli_health() -> bool:
             [claude_executable() or "claude", "--version"],
             env=agent_cli_env(), capture_output=True, text=True, timeout=3,
             creationflags=flags,
+            encoding="utf-8", errors="replace",
         )
         return result.returncode == 0
     except Exception:
@@ -86,6 +87,7 @@ def claude_cli_health() -> bool:
             result = subprocess.run(
                 ["wsl", "which", "claude"], env=agent_cli_env(),
                 capture_output=True, text=True, timeout=5, creationflags=flags,
+                encoding="utf-8", errors="replace",
             )
             return result.returncode == 0
         except Exception:

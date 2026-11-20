@@ -172,6 +172,7 @@ def result():
         ["node", "-e", HARNESS],
         env={**os.environ, "MODEL": str(MODEL)},
         capture_output=True, text=True, timeout=60,
+        encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -267,7 +268,7 @@ t.win.fire('message', { origin: 'https://evil.test', data: { type: 'cuttle-ui-an
 console.log(JSON.stringify({ cls: t.doc.classes.has('cuttle-studio') }));
 """
     proc = subprocess.run(["node", "-e", script], env={**os.environ, "MODEL": str(MODEL)},
-                          capture_output=True, text=True, timeout=60)
+                          capture_output=True, text=True, timeout=60, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout) == {"cls": True}
 
@@ -299,7 +300,7 @@ off();
 console.log(JSON.stringify(out));
 """
     proc = subprocess.run(["node", "-e", script], env={**os.environ, "MODEL": str(MODEL)},
-                          capture_output=True, text=True, timeout=60)
+                          capture_output=True, text=True, timeout=60, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout) == {"sameMode": 0, "flagOff": 1, "prefOnlyStaysClassic": 0}
 

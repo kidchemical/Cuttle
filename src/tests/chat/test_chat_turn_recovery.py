@@ -140,7 +140,7 @@ const claimed = R.classifyServerMessage(msg, {stopped:true}, fns);
 fns.hasStoppedQuery = ()=>false;
 const appended = R.classifyServerMessage(msg, {stopped:true}, fns);
 console.log(JSON.stringify({claimed, appended, reply:R.isAgentReply(msg), transcript:R.agentTranscript([msg])}));
-''', str(module)], capture_output=True, text=True, check=True)
+''', str(module)], capture_output=True, text=True, check=True, encoding="utf-8")
     data = json.loads(result.stdout)
     assert data['claimed']['decision'] == 'claim-interrupted'
     assert data['appended']['decision'] == 'append'

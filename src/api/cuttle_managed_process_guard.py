@@ -90,6 +90,7 @@ def list_managed_python_pids(
             text=True,
             timeout=12,
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            encoding="utf-8", errors="replace",
         )
         for line in (r.stdout or "").splitlines():
             line = line.strip()

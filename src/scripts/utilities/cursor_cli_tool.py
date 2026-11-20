@@ -1320,6 +1320,7 @@ def _cursor_agent_oneline_prompt(
                 text=True,
                 timeout=resolved_timeout,
                 env=_cursor_agent_subprocess_env(),
+                encoding="utf-8", errors="replace",
             )
             if _cancelled():
                 return "[CANCELLED] Cursor Agent run was cancelled."
@@ -1590,6 +1591,7 @@ def handle_cursor_cli_command(command: str) -> str:
                     text=True,
                     timeout=30,
                     env=_cursor_agent_subprocess_env(),
+                    encoding="utf-8", errors="replace",
                 )
                 out = (r.stdout or r.stderr or "").strip()
                 shown = Path(agent_argv[-1]).name if len(agent_argv) > 1 else Path(agent_argv[0]).name

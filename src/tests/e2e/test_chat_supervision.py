@@ -97,7 +97,7 @@ def _model():
     if not node:
         pytest.skip("node not installed")
     out = subprocess.run([node, "-e", HARNESS], capture_output=True, text=True, timeout=30,
-                         env={**os.environ, "MODEL": str(MODEL)})
+                         env={**os.environ, "MODEL": str(MODEL)}, encoding="utf-8")
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout)
 
@@ -481,7 +481,7 @@ def _node_model(expr, **env):
               "const input = JSON.parse(process.env.INPUT);\n"
               f"console.log(JSON.stringify({expr}));")
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30,
-                         env={**os.environ, "MODEL": str(MODEL), "INPUT": json.dumps(env)})
+                         env={**os.environ, "MODEL": str(MODEL), "INPUT": json.dumps(env)}, encoding="utf-8")
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout)
 
@@ -572,6 +572,6 @@ def test_cuttle_notice_has_no_launcher_back_to_its_own_chat():
               "console.log(JSON.stringify({ notice: L.parentRefs({ ...base, chat_op_kind: 'notice' }).length,"
               " send: L.parentRefs({ ...base, chat_op_kind: 'send', parent_label: 'Sent by CH-002369' }).length }));")
     out = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=30,
-                         env={**os.environ, "JS": str(js)})
+                         env={**os.environ, "JS": str(js)}, encoding="utf-8")
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout) == {"notice": 0, "send": 1}

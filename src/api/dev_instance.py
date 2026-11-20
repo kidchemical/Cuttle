@@ -344,7 +344,7 @@ def discard_snapshot(seed: dict) -> bool:
 def _owner_alive(root: Path) -> bool:
     """True when the manifest names a child process that still exists."""
     try:
-        pid = int(json.loads((root / "manifest.json").read_text("utf-8")).get("pid") or 0)
+        pid = int(json.loads((root / "manifest.json").read_text("utf-8", encoding="utf-8")).get("pid") or 0)
     except (OSError, ValueError, TypeError, AttributeError):
         return False
     if pid <= 0:
@@ -451,7 +451,7 @@ class ShadowChild:
 
     def read_manifest(self) -> dict | None:
         try:
-            return json.loads(Path(self.seed["manifest"]).read_text("utf-8"))
+            return json.loads(Path(self.seed["manifest"]).read_text("utf-8", encoding="utf-8"))
         except (OSError, ValueError):
             return None
 

@@ -52,6 +52,7 @@ def _tag_ref(cwd: Path, tag: str) -> str:
     probe = subprocess.run(
         ["git", "rev-parse", "-q", "--verify", ref],
         cwd=str(cwd), capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
     )
     return ref if probe.returncode == 0 else ""
 
@@ -108,7 +109,7 @@ def main() -> int:
     if "--force" in cmd or " -f" in joined or joined.endswith(" -f"):
         print("Refusing force-push.")
         return 1
-    result = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, env=env)
+    result = subprocess.run(cmd, cwd=str(cwd), capture_output=True, text=True, env=env, encoding="utf-8", errors="replace")
     out = sanitize_git_output((result.stdout or "") + (result.stderr or ""))
     print(out.strip() or ("Pushed " + remote + " " + (ref or "HEAD")))
     return 0 if result.returncode == 0 else 1

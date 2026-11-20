@@ -169,7 +169,7 @@ def _run(tmp_path: Path, script: str) -> subprocess.CompletedProcess:
         "FLEET": str(FLEET),
         "PATH": "/usr/bin:/bin",
     }
-    return subprocess.run([node, "-e", script], env=env, capture_output=True, text=True, timeout=60)
+    return subprocess.run([node, "-e", script], env=env, capture_output=True, text=True, timeout=60, encoding="utf-8")
 
 
 @node_only
@@ -204,7 +204,7 @@ const out = [
 console.log(JSON.stringify(out));
 """
     env = {"PEEK": str(PEEK), "PATH": "/usr/bin:/bin"}
-    result = subprocess.run([shutil.which("node"), "-e", driver], env=env, capture_output=True, text=True, timeout=60)
+    result = subprocess.run([shutil.which("node"), "-e", driver], env=env, capture_output=True, text=True, timeout=60, encoding="utf-8")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == '["push","push","side","push","center","side"]'
 

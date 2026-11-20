@@ -42,7 +42,7 @@ def _record(tmp_path, procs, *, created_ts=None, output="", sid=7101):
         "created_ts": created_ts or time.time(),
         "tasks": [{"task_id": "b9", "label": "render", "output_file": output, "procs": procs,
                    "handback": "", "notified": False}],
-    }))
+    }), encoding="utf-8")
     return path
 
 
@@ -60,7 +60,7 @@ def test_output_paths_read_the_run_in_background_tool_result():
 
 def test_finished_task_posts_one_notice_with_its_output_tail(tmp_path):
     out = tmp_path / "b9.output"
-    out.write_text("frame 1\nframe 2\n\x1b[32mall done\x1b[0m\n")
+    out.write_text("frame 1\nframe 2\n\x1b[32mall done\x1b[0m\n", encoding="utf-8")
     path = _record(tmp_path, [_dead_proc()], output=str(out), sid=7101)
     assert bh.check(path) is True and not path.exists()
     ops = _notices(7101)
@@ -94,7 +94,7 @@ def test_start_skips_subagent_runs_and_finished_work(tmp_path, monkeypatch):
     live = {"task_id": "l1", "label": "live", "output_file": "", "procs": [_self_proc()], "handback": ""}
     path = bh.start("CH-007104", [sub, live], waited_sec=3000)
     assert launched == [(path, 7104)]
-    rec = json.loads(path.read_text())
+    rec = json.loads(path.read_text(encoding="utf-8"))
     assert [t["task_id"] for t in rec["tasks"]] == ["l1"] and rec["chat_session_id"] == 7104
     path.unlink()
 
@@ -110,7 +110,7 @@ def test_collect_finds_the_process_writing_the_task_file_and_flags_subagents(tmp
         "print(c.pid, flush=True)\n"
         "time.sleep(30)\n"
     )
-    parent = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, text=True)
+    parent = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, text=True, encoding="utf-8")
     try:
         child_pid = int(parent.stdout.readline())
         (entry,) = bh.collect(parent.pid, [{"task_id": "t", "description": "x"}], {"t": str(out)}, None,
@@ -126,7 +126,7 @@ def test_collect_finds_the_process_writing_the_task_file_and_flags_subagents(tmp
 def _alive(pid):
     """``/proc`` probe: signalling a reparented pid trips the test kill guard."""
     try:
-        return Path(f"/proc/{pid}/stat").read_text().split(")")[-1].split()[0] not in ("Z", "X")
+        return Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").split(")")[-1].split()[0] not in ("Z", "X")
     except OSError:
         return False
 
@@ -157,7 +157,7 @@ def test_kill_process_tree_spares_kept_pids():
         "print(c.pid, d.pid, flush=True)\n"
         "time.sleep(60)\n"
     )
-    parent = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, text=True)
+    parent = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, text=True, encoding="utf-8")
     kept, other = (int(x) for x in parent.stdout.readline().split())
     kill_process_tree(parent, keep=[kept])
     assert parent.poll() is not None

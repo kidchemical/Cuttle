@@ -335,6 +335,7 @@ def commit_env(cwd: str, base_env: Dict[str, str], settings=None) -> Optional[Di
     remote = subprocess.run(
         ["git", "remote", "get-url", "origin"], cwd=cwd, env=base_env,
         capture_output=True, text=True, timeout=5,
+        encoding="utf-8", errors="replace",
     )
     if remote.returncode:
         return None

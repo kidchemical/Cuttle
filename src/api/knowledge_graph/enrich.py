@@ -483,7 +483,7 @@ def assess_citations(markdown: str, root: Path, inp: EnrichInput) -> List[Dict[s
 def _doc_heading_exists(path: Path, heading: str) -> bool:
     if not path.is_file():
         return False
-    return _norm(heading) in {_norm(h) for h, _l, _b in sources.doc_sections(sources.read_text(path))}
+    return _norm(heading) in {_norm(h) for h, _l, _b in sources.doc_sections(sources.read_text(path, encoding="utf-8"))}
 
 
 # ---------------------------------------------------------------------------

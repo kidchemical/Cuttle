@@ -26,7 +26,7 @@ def saved(tmp_path, monkeypatch):
         db.execute('INSERT INTO router_outcomes VALUES (1, ?, ?, ?, ?)', ('test123', '1023', 'claude', usage['cost']))
     log = {'total_cost': usage['cost'] + 1, 'tool_calls': [dict(tool_name='Claude Code', model='opus', tokens=usage, cost=usage['cost'], start_time=1, end_time=2)],
            'llm_calls': [dict(model='opus', cost=usage['cost'], start_time=1, end_time=2)]}
-    (logs / 'query_data_test123.json').write_text(json.dumps(log))
+    (logs / 'query_data_test123.json').write_text(json.dumps(log), encoding="utf-8")
     return dict(auth_path=auth, outcomes_path=outcomes, logs_path=logs), meta
 
 
@@ -34,7 +34,7 @@ def test_repair_backup_consistency_and_idempotency(saved, tmp_path):
     paths, meta = saved
     dry = cr.repair(**paths)
     assert dry['messages'] == dry['outcomes'] == dry['log_files'] == 1
-    assert json.loads((paths['logs_path'] / 'query_data_test123.json').read_text())['total_cost'] == pytest.approx(84.985179)
+    assert json.loads((paths['logs_path'] / 'query_data_test123.json').read_text(encoding="utf-8"))['total_cost'] == pytest.approx(84.985179)
     backup = tmp_path / 'backup'
     result = cr.repair(**paths, apply=True, backup_dir=backup)
     assert result['messages'] == 1
@@ -46,7 +46,7 @@ def test_repair_backup_consistency_and_idempotency(saved, tmp_path):
     assert repaired['usage']['pricing_model'] == 'claude-opus-5-5'
     with sqlite3.connect(paths['outcomes_path']) as db:
         assert db.execute('SELECT cost FROM router_outcomes').fetchone()[0] == repaired['usage']['cost']
-    log = json.loads((paths['logs_path'] / 'query_data_test123.json').read_text())
+    log = json.loads((paths['logs_path'] / 'query_data_test123.json').read_text(encoding="utf-8"))
     assert log['total_cost'] == pytest.approx(5.539049)
     assert log['tool_calls'][0]['cost'] == log['llm_calls'][0]['cost'] == repaired['usage']['cost']
     with sqlite3.connect(backup / 'auth.db') as db:
@@ -63,9 +63,9 @@ def test_ambiguous_alias_is_not_guessed(saved):
 def test_unmatched_logs_skip_entire_turn(saved):
     paths, _ = saved
     p = paths['logs_path'] / 'query_data_test123.json'
-    log = json.loads(p.read_text())
+    log = json.loads(p.read_text(encoding="utf-8"))
     log['tool_calls'][0]['tokens']['cache_read_tokens'] = 1
-    p.write_text(json.dumps(log))
+    p.write_text(json.dumps(log), encoding="utf-8")
     assert cr.repair(**paths)['messages'] == 0
 
 
@@ -113,7 +113,7 @@ def test_per_turn_repair_reprices_running_totals(saved, tmp_path):
     assert usage['cost_basis'] == cr.PER_TURN_BASIS
     with sqlite3.connect(paths['outcomes_path']) as db:
         assert db.execute('SELECT cost FROM router_outcomes').fetchone()[0] == pytest.approx(4.539049)
-    log = json.loads((paths['logs_path'] / 'query_data_test123.json').read_text())
+    log = json.loads((paths['logs_path'] / 'query_data_test123.json').read_text(encoding="utf-8"))
     assert log['total_cost'] == pytest.approx(5.539049)
     assert cr.repair(**paths, estimator=cr.estimate_per_turn)['messages'] == 0
 

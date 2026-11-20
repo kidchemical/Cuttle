@@ -89,17 +89,17 @@ def test_write_replaces_generated_notes_and_never_touches_manual_ones(tmp_path):
     notes = wiki.render(_graph(), project="Demo")
     manual = tmp_path / "Subsystems" / "My thoughts.md"
     manual.parent.mkdir(parents=True)
-    manual.write_text("# mine\n")
+    manual.write_text("# mine\n", encoding="utf-8")
     shadow = tmp_path / "Subsystems" / "api › router.md"
-    shadow.write_text("# hand-written router note\n")
+    shadow.write_text("# hand-written router note\n", encoding="utf-8")
 
     stats = wiki.write(tmp_path, notes)
     assert stats["kept_manual"] == 1
-    assert shadow.read_text() == "# hand-written router note\n"
+    assert shadow.read_text(encoding="utf-8") == "# hand-written router note\n"
 
     stale = tmp_path / "Subsystems" / "old subsystem.md"
-    stale.write_text("---\n" + wiki.MARKER + "\n---\n# old\n")
+    stale.write_text("---\n" + wiki.MARKER + "\n---\n# old\n", encoding="utf-8")
     again = wiki.write(tmp_path, notes)
     assert again["removed"] == 1 and not stale.exists()
     assert again["unchanged"] == len(notes) - 1
-    assert manual.read_text() == "# mine\n"
+    assert manual.read_text(encoding="utf-8") == "# mine\n"

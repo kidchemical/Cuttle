@@ -534,7 +534,7 @@ def test_structured_restore_and_copy_text():
 def test_copy_and_speech_keep_original_then_processed_text_without_wire_markup():
     response = '<cuttle_original_response>' + json.dumps('Original with **Markdown**') + '</cuttle_original_response>\n\nSummary'
     script = 'const m=require(process.argv[1]); process.stdout.write(JSON.stringify([m.postprocessedBody(process.argv[2]),m.postprocessedBody("Plain"),m.postprocessedBody("<cuttle_original_response>bad</cuttle_original_response>Tail")]));'
-    proc = subprocess.run(['node', '-e', script, str(MOD_JS), response], text=True, capture_output=True, check=True)
+    proc = subprocess.run(['node', '-e', script, str(MOD_JS), response], text=True, capture_output=True, check=True, encoding="utf-8")
     assert json.loads(proc.stdout) == ['Original with **Markdown**\n\nSummary', 'Plain', '<cuttle_original_response>bad</cuttle_original_response>Tail']
 
 

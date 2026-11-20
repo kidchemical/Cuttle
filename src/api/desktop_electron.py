@@ -124,6 +124,7 @@ def ensure_update_asar(current_hash: str) -> Optional[Path]:
             timeout=120,
             capture_output=True,
             text=True,
+            encoding="utf-8", errors="replace",
         )
         if proc.returncode != 0:
             err = (proc.stderr or proc.stdout or "").strip()

@@ -64,7 +64,7 @@ def _scenario(body: str) -> dict:
     script = _PRELUDE + textwrap.indent(textwrap.dedent(body), "    ") + _EPILOGUE
     env = {**os.environ, "PYTHONPATH": str(SRC)}
     res = subprocess.run([sys.executable, "-c", script], cwd=str(SRC), env=env,
-                         capture_output=True, text=True, timeout=60)
+                         capture_output=True, text=True, timeout=60, encoding="utf-8")
     assert res.returncode == 0, res.stderr
     return json.loads(res.stdout.strip().splitlines()[-1])
 

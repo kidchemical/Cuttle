@@ -283,7 +283,7 @@ def checkout_state(row, db, *, binding=None):
         return '', None
     try:
         return path, subprocess.run(['git', '-C', path, 'symbolic-ref', '--short', 'HEAD'],
-                                    capture_output=True, text=True, timeout=5, check=True).stdout.strip()
+                                    capture_output=True, text=True, timeout=5, check=True, encoding="utf-8", errors="replace").stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return path, None
 
@@ -806,7 +806,7 @@ def supervise_defaults(session, user_id, *, db=None):
     if path:
         try:
             branch = subprocess.run(['git', '-C', path, 'symbolic-ref', '--short', 'HEAD'], capture_output=True,
-                                    text=True, timeout=5, check=True).stdout.strip()
+                                    text=True, timeout=5, check=True, encoding="utf-8", errors="replace").stdout.strip()
         except (OSError, subprocess.SubprocessError):
             pass
     return {'handle': f'CH-{sid:06d}', 'branch': branch, 'execution_path': path, 'branches': _branch_names(path),

@@ -76,7 +76,7 @@ def test_saved_exception_roundtrip_is_exact_and_does_not_store_source(tmp_path, 
     from core.git_push_diagnostics import approve_scanner_exception, apply_scanner_exceptions
     def git(*args):
         return subprocess.check_output(['git', '-c', 'user.name=Test', '-c', 'user.email=test@example.com',
-                                        '-c', 'commit.gpgsign=false', *args], cwd=tmp_path, text=True).strip()
+                                        '-c', 'commit.gpgsign=false', *args], cwd=tmp_path, text=True, encoding="utf-8").strip()
     git('init', '-q')
     (tmp_path / 'shortcuts.js').write_text('first line\nkeyboard shortcut value\nthird line\n', encoding='utf-8')
     git('add', '.')
@@ -89,8 +89,8 @@ def test_saved_exception_roundtrip_is_exact_and_does_not_store_source(tmp_path, 
     monkeypatch.chdir(tmp_path)
     approve_scanner_exception(tmp_path, hit, 'Keyboard shortcut false positive')
     approve_scanner_exception(tmp_path, hit, 'Keyboard shortcut false positive')
-    assert len(json.loads(policy.read_text())['exceptions']) == 1
-    assert 'keyboard shortcut value' not in policy.read_text()
+    assert len(json.loads(policy.read_text(encoding="utf-8"))['exceptions']) == 1
+    assert 'keyboard shortcut value' not in policy.read_text(encoding="utf-8")
     assert apply_scanner_exceptions([hit], policy) == ([], [hit])
     for altered in [dict(hit, end_line=4), dict(hit, line=1), dict(hit, rule='another-rule')]:
         assert apply_scanner_exceptions([altered], policy) == ([altered], [])

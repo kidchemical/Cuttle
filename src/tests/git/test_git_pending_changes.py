@@ -205,7 +205,7 @@ def test_collect_skips_numstat_for_filtered_lfs_paths(tmp_path: Path, monkeypatc
     repo.mkdir()
 
     def git(*args):
-        r = subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, check=False)
+        r = subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, check=False, encoding="utf-8")
         assert r.returncode == 0, r.stderr
         return r
 

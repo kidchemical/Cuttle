@@ -383,7 +383,7 @@ console.log(JSON.stringify({sideEffect:A.actionFormHasSideEffect(spec),
  html:A.renderActionFormCardHtml({spec, formId:'f', esc})}));
 '''
     result = subprocess.run(['node', '-e', script], env={**os.environ, 'MOD_JS': str(MOD_JS)},
-                            capture_output=True, text=True, check=True)
+                            capture_output=True, text=True, check=True, encoding="utf-8")
     data = json.loads(result.stdout)
     assert data['sideEffect'] is True
     assert 'data-action-form-button="start"' in data['html']

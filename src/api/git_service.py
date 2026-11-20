@@ -80,6 +80,7 @@ def _run(args: List[str], cwd: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             ["git", *args], cwd=cwd, capture_output=True, text=True,
             timeout=None, check=False,
+            encoding="utf-8", errors="replace",
         )
     except OSError as e:
         return subprocess.CompletedProcess(
@@ -455,6 +456,7 @@ def _push_once(cwd: str, remote: str, branch: str) -> subprocess.CompletedProces
         return subprocess.run(
             ['git', *argv], cwd=cwd, capture_output=True, text=True,
             timeout=None, check=False, env=env if env is not None else _os.environ.copy(),
+            encoding="utf-8", errors="replace",
         )
     except OSError as e:
         return subprocess.CompletedProcess(
@@ -482,7 +484,7 @@ def stage_and_commit(cwd: str, message: str, files: Any = '.') -> str:
         else:
             _sp.run(['git', 'add', '.'], check=True, cwd=cwd)
         result = _sp.run(['git', 'commit', '-m', message], check=True, cwd=cwd,
-                         capture_output=True, text=True,
+                         capture_output=True, text=True, encoding="utf-8", errors="replace",
                          **({"env": app_env} if app_env is not None else {}))
     except _sp.CalledProcessError as e:
         raise GitError(f'Git command failed: {str(e)}',

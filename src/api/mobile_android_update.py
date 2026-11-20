@@ -326,6 +326,7 @@ def _run_rebuild(target_hash: str) -> None:
         install = subprocess.run(
             [npm, "ci"], cwd=str(MOBILE_DIR), env=env, check=False,
             capture_output=True, text=True, timeout=300,
+            encoding="utf-8", errors="replace",
         )
         if install.returncode != 0:
             raise RuntimeError("Android dependency installation failed: "
@@ -334,6 +335,7 @@ def _run_rebuild(target_hash: str) -> None:
             [npm, "run", "sync:android"],
             cwd=str(MOBILE_DIR), env=env, check=False, capture_output=True,
             text=True, timeout=300,
+            encoding="utf-8", errors="replace",
         )
         if sync.returncode != 0:
             raise RuntimeError("Android asset sync failed; install mobile build dependencies with npm ci. "
@@ -346,6 +348,7 @@ def _run_rebuild(target_hash: str) -> None:
             capture_output=True,
             text=True,
             timeout=60 * 25,
+            encoding="utf-8", errors="replace",
         )
         exit_code = int(proc.returncode)
         if exit_code != 0:

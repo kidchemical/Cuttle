@@ -31,7 +31,7 @@ def seconds_until_due(root,now=None):
     restarting the process does not repeat a run that is less than a day old."""
     now=time.time() if now is None else now
     try:
-        last=float(_stamp(root).read_text().strip())
+        last=float(_stamp(root).read_text(encoding="utf-8").strip())
     except (OSError,ValueError):
         last=0.0
     if last>now:
@@ -41,7 +41,7 @@ def seconds_until_due(root,now=None):
 
 def mark_done(root,now=None):
     try:
-        _stamp(root).write_text(str(time.time() if now is None else now))
+        _stamp(root).write_text(str(time.time() if now is None else now), encoding="utf-8")
     except OSError:
         log.warning('Could not record the agent-events maintenance time',exc_info=True)
 

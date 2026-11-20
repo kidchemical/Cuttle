@@ -16,6 +16,7 @@ from tests.auth.test_http_authz import _auth_client, LAN
 def _git(cwd: Path, *args: str) -> str:
     return subprocess.run(
         ["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True,
+        encoding="utf-8",
     ).stdout.strip()
 
 

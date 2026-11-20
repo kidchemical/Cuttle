@@ -27,7 +27,7 @@ node_only = pytest.mark.skipif(shutil.which("node") is None, reason="node not av
 
 
 def _node(script: str) -> None:
-    proc = subprocess.run(["node", "-e", script, str(OWNER)], capture_output=True, text=True, timeout=30)
+    proc = subprocess.run(["node", "-e", script, str(OWNER)], capture_output=True, text=True, timeout=30, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
 
 

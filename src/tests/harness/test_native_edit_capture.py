@@ -43,14 +43,14 @@ def test_muse_tool_patch_files_yield_structured_hunks(tmp_path):
 
     patch = tmp_path / "call_1-tool_patch.json"
     hunks = [{"oldStart": 4, "oldLines": 1, "newStart": 4, "newLines": 2, "lines": ["-a", "+b", "+c"]}]
-    patch.write_text(json.dumps({"files": [{"path": "/repo/src/t.py", "hunks": hunks}]}))
+    patch.write_text(json.dumps({"files": [{"path": "/repo/src/t.py", "hunks": hunks}]}), encoding="utf-8")
     assert _muse_patch_edits(_muse_item(patch)) == [{"path": "/repo/src/t.py", "patch": hunks}]
     assert _muse_patch_edits(_muse_item(patch, "expired")) == []
     other = tmp_path / "notes.json"
-    other.write_text(patch.read_text())
+    other.write_text(patch.read_text(encoding="utf-8"), encoding="utf-8")
     assert _muse_patch_edits(_muse_item(other)) == []  # only the CLI's own tool_patch files
     broken = tmp_path / "call_2-tool_patch.json"
-    broken.write_text("{not json")
+    broken.write_text("{not json", encoding="utf-8")
     assert _muse_patch_edits(_muse_item(broken)) == []
 
 

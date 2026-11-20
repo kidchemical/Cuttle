@@ -137,19 +137,19 @@ def test_refusal_happens_before_process_discovery_even_with_skip_pull(checkout, 
     # inert spies; an accidental call never reaches the real OS command.
     for command in ('pgrep', 'ps', 'kill', 'npm', 'electron'):
         stub = bin_dir / command
-        stub.write_text('#!/bin/sh\n: > "$LIFECYCLE_MARKER"\nexit 0\n')
+        stub.write_text('#!/bin/sh\n: > "$LIFECYCLE_MARKER"\nexit 0\n', encoding="utf-8")
         stub.chmod(0o755)
-    (bin_dir / 'sleep').write_text('#!/bin/sh\nexit 0\n')
+    (bin_dir / 'sleep').write_text('#!/bin/sh\nexit 0\n', encoding="utf-8")
     (bin_dir / 'sleep').chmod(0o755)
     env = dict(os.environ, PATH=f'{bin_dir}{os.pathsep}{os.environ["PATH"]}',
                XDG_STATE_HOME=str(tmp_path / 'state'), LIFECYCLE_MARKER=str(marker))
     argv = ['bash', str(SCRIPT), '--repo', str(client), '--no-electron', '--no-daemon']
     if skip_pull:
         argv.append('--skip-pull')
-    result = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=20)
+    result = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=20, encoding="utf-8")
     assert result.returncode != 0
     assert not marker.exists()
-    assert (client / 'file.txt').read_text() == 'late user edit\n'
+    assert (client / 'file.txt').read_text(encoding="utf-8") == 'late user edit\n'
 
 
 @pytest.mark.parametrize('flags,expected', [
@@ -187,9 +187,9 @@ npm() { :; }
     env = dict(os.environ, BASH_ENV=str(startup), TEST_REPO=str(client),
                TEST_STOPPED=str(marker), XDG_STATE_HOME=str(tmp_path / 'state'))
     result = subprocess.run(['bash', str(SCRIPT), '--repo', str(client), *flags],
-                            env=env, capture_output=True, text=True, timeout=20)
+                            env=env, capture_output=True, text=True, timeout=20, encoding="utf-8")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert (marker.read_text().splitlines() if marker.exists() else []) == expected
+    assert (marker.read_text(encoding="utf-8").splitlines() if marker.exists() else []) == expected
 
 
 def _bundle_main(remote, dest):

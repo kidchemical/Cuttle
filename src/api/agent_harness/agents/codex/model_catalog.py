@@ -112,6 +112,7 @@ def _run_codex_debug_models(*, refresh: bool) -> Tuple[List[Dict[str, Any]], Opt
             capture_output=True,
             text=True,
             timeout=90,
+            encoding="utf-8", errors="replace",
         )
     except Exception as exc:
         return [], str(exc)[:200]

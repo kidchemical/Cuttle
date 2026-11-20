@@ -279,7 +279,7 @@ def _git_head(path):
         return ''
     try:
         out = subprocess.run(['git', '-C', path, 'rev-parse', 'HEAD'], capture_output=True,
-                             text=True, timeout=10)
+                             text=True, timeout=10, encoding="utf-8", errors="replace")
     except (OSError, subprocess.SubprocessError):
         return ''
     return out.stdout.strip() if out.returncode == 0 else ''

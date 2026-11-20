@@ -22,7 +22,7 @@ def isolated_home(monkeypatch, tmp_path):
 
 
 def _git(path, *args):
-    subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True, text=True, encoding="utf-8")
 
 
 @pytest.fixture
@@ -72,7 +72,7 @@ def _commit_on(repo, branch, message="oops", *, file=None):
     _git(repo, "checkout", "-q", branch)
     if file:
         (repo / file).parent.mkdir(parents=True, exist_ok=True)
-        (repo / file).write_text(message)
+        (repo / file).write_text(message, encoding="utf-8")
         _git(repo, "add", file)
     _git(repo, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", message)
     _git(repo, "checkout", "-q", "dev/feature")

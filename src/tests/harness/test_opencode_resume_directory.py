@@ -291,7 +291,7 @@ def test_copy_preserves_transcript_and_verifies_before_saving(monkeypatch, tmp_p
     async def command(exe, cwd, sid, *args):
         if args[0] == "import":
             paths.append(Path(args[1]))
-            imported.append(json.loads(paths[-1].read_text()))
+            imported.append(json.loads(paths[-1].read_text(encoding="utf-8")))
             return b"Imported session"
         if args[1] == "ses_original":
             return json.dumps(source).encode()

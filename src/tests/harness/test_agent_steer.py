@@ -791,7 +791,7 @@ def test_claude_reader_only_attributes_output_that_started_after_the_echo(tmp_pa
         "go", cwd=str(tmp_path), chat_session_id="5454", timeout=30, steerable=True))
     thread.join(5)
     assert res["success"] is True and results and results[0]["steered"] is True
-    assert "--include-partial-messages" in json.loads(argv_path.read_text())
+    assert "--include-partial-messages" in json.loads(argv_path.read_text(encoding="utf-8"))
 
     final = snaps[-1]
     assert final["state"] == "delivered"

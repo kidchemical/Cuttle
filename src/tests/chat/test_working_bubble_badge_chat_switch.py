@@ -38,7 +38,7 @@ const plain = A.turnSlashFromMessages(history.concat({role: 'user', content: 'ro
 process.stdout.write(JSON.stringify({before, reopened, fallback, plain,
   empty: A.turnSlashFromMessages([]) === undefined}));
 '''
-    proc = subprocess.run(['node', '-e', script, str(MODULE), agent], capture_output=True, text=True, check=True)
+    proc = subprocess.run(['node', '-e', script, str(MODULE), agent], capture_output=True, text=True, check=True, encoding="utf-8")
     result = json.loads(proc.stdout)
     assert result['before'] == result['reopened']
     assert result['before']['chips'][0]['category'] == agent
@@ -59,5 +59,5 @@ process.stdout.write(JSON.stringify([
  A.shouldAdoptComposerSelection({stickyChips:[], stickyCleared:true, revision:7}, {revision:6}),
 ]));
 '''
-    result = subprocess.run(['node', '-e', script, str(MODULE)], capture_output=True, text=True, check=True)
+    result = subprocess.run(['node', '-e', script, str(MODULE)], capture_output=True, text=True, check=True, encoding="utf-8")
     assert json.loads(result.stdout) == [False, False, True, True]
