@@ -242,12 +242,23 @@
             const opts = (list && list.length)
                 ? list
                 : [{ value: '', label: 'No options loaded', disabled: true }];
-            return opts.map((o) =>
-                '<option value="' + esc(String(o.value)) + '"' +
-                (String(o.value) === String(selected == null ? '' : selected) ? ' selected' : '') +
-                (o.disabled ? ' disabled' : '') +
-                '>' + esc(o.label) + '</option>'
-            ).join('');
+            // Options carrying `group` render inside one muted <optgroup> per
+            // run of equal labels (e.g. server-only branches).
+            let html = '';
+            let group = '';
+            opts.forEach((o) => {
+                const next = String(o.group || '');
+                if (next !== group) {
+                    if (group) html += '</optgroup>';
+                    if (next) html += '<optgroup class="is-muted" label="' + esc(next) + '">';
+                    group = next;
+                }
+                html += '<option value="' + esc(String(o.value)) + '"' +
+                    (String(o.value) === String(selected == null ? '' : selected) ? ' selected' : '') +
+                    (o.disabled ? ' disabled' : '') +
+                    '>' + esc(o.label) + '</option>';
+            });
+            return group ? html + '</optgroup>' : html;
         }
 
         // Field markup: a label + a native <select>. The shared
@@ -376,6 +387,29 @@
             return el;
         }
 
+        // Local branches first; branches that exist only on the server (a
+        // remote-tracking ref with no local branch) follow in a muted group.
+        // Picking one checks it out as a new local tracking branch.
+        function branchOptions(branches) {
+            const local = [];
+            const remote = [];
+            const seen = {};
+            (branches || []).forEach((b) => {
+                if (b && !b.remote) seen[String(b.name || '').trim()] = true;
+            });
+            (branches || []).forEach((b) => {
+                const name = String((b && b.name) || '').trim();
+                if (!name) return;
+                if (!b.remote) {
+                    local.push({ value: name, label: name + (b.current ? '  ✓' : '') });
+                } else if (!seen[name]) {
+                    seen[name] = true;
+                    remote.push({ value: name, label: name, group: 'On the server only' });
+                }
+            });
+            return local.concat(remote);
+        }
+
         async function loadBranches(sel, projectId, repoRoot) {
             if (!sel) return;
             sel.disabled = true;
@@ -391,15 +425,7 @@
                 const data = await resp.json().catch(() => null);
                 const branches = (data && data.success && Array.isArray(data.data)) ? data.data : [];
                 const current = (data && data.current) || '';
-                const seen = {};
-                const opts = [];
-                branches.forEach((b) => {
-                    const name = String((b && b.name) || '').trim();
-                    if (!name || seen[name]) return;
-                    seen[name] = true;
-                    opts.push({ value: name, label: name + (b.current ? '  ✓' : '') });
-                });
-                fillSelect(sel, opts, current);
+                fillSelect(sel, branchOptions(branches), current);
             } catch (_) {
                 sel.innerHTML = '<option value="">Could not load branches</option>';
                 sel.disabled = true;

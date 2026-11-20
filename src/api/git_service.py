@@ -174,6 +174,8 @@ def list_branches(cwd: str) -> Dict[str, Any]:
             branch_name = line
             is_remote = False
             if line.startswith('remotes/'):
+                if ' -> ' in line:  # remotes/origin/HEAD -> origin/main: a pointer, not a branch
+                    continue
                 branch_name = line.split('/', 2)[-1]
                 is_remote = True
 

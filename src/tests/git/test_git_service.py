@@ -333,6 +333,11 @@ def test_service_branches_commits_files(tmp_path):
     out = gs.list_branches(str(repo))
     assert {b["name"] for b in out["branches"]} >= {"main", "feature"}
     assert out["current"] == "main"
+    clone = tmp_path / "clone"
+    _git("clone", "-q", str(repo), str(clone), cwd=tmp_path)
+    names = [(b["name"], b["remote"]) for b in gs.list_branches(str(clone))["branches"]]
+    assert ("feature", True) in names
+    assert not any("->" in n for n, _ in names)  # origin/HEAD pointer skipped
     out = gs.list_commits(str(repo), 1, 20)
     assert out["pagination"]["total"] == 1
     assert out["commits"][0]["message"] == "seed"

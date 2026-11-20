@@ -256,6 +256,43 @@ def test_project_modal_combobox_search_filters_branches(surface):
     assert not errors, errors
 
 
+def test_project_modal_groups_server_only_branches(surface):
+    page, api, errors = surface("chat_page.html")
+
+    def handler(route):
+        body = {
+            "success": True,
+            "data": [
+                {"name": "main", "current": True, "remote": False},
+                {"name": "main", "current": False, "remote": True},
+                {"name": "dependabot/pip/x", "current": False, "remote": True},
+            ],
+            "current": "main",
+        }
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+    page.route("**/api/git/branches*", handler)
+    page.locator(PROJECT_CHIP).first.click()
+    page.locator(MODAL).wait_for(state="visible")
+    page.wait_for_function(
+        "() => { const s = document.querySelector('#chipConfigBranch');"
+        " return s && !s.disabled && s.querySelector('optgroup'); }",
+        timeout=4000,
+    )
+    page.locator('.cuttle-combo[data-for="chipConfigBranch"] .cuttle-combo-trigger').click()
+    popup = page.locator('.cuttle-combo-popup')
+    popup.locator(".cuttle-combo-group").wait_for(state="visible")
+    assert popup.locator(".cuttle-combo-group").all_text_contents() == ["On the server only"]
+    # The remote copy of a local branch is not listed twice.
+    assert popup.locator(".cuttle-combo-option").all_inner_texts() == ["main ✓", "dependabot/pip/x"]
+    muted = popup.locator(".cuttle-combo-option.is-muted")
+    assert muted.all_inner_texts() == ["dependabot/pip/x"]
+    muted.click()
+    page.wait_for_timeout(150)
+    posts = [r for r in api.requests if r[0] == "/api/git/branch"]
+    assert posts and json.loads(posts[-1][2])["branch"] == "dependabot/pip/x"
+    assert not errors, errors
+
+
 def test_model_combobox_lazy_loads_with_infinite_scroll(surface):
     page, _api, errors = surface("chat_page.html")
     _route_opencode_models(page, 150)
