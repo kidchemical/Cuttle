@@ -18,10 +18,17 @@ for a long-running OS job, also use a status-backed watch card as described in
 `action-forms.md`. Do not fabricate percentages for work without a measurable
 progress source.
 
+**Mark the item you are on.** When you start an item, patch it with
+`--working <item>`; when it is finished, `--set-done <item>` (which also clears
+the working mark). One call can do both: finish one item and start the next.
+The chat shows the working item as in progress, so the user sees where you are.
+Use `--not-working <item>` if you set it aside unfinished.
+
 ```bash
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks list --session CH-000465
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks create --session CH-000465 --id auth-refactor --title "Auth refactor" --description "Ship the auth fix" --items '[{"id":"api","text":"Fix API"},{"id":"test","text":"Verify"}]'
-PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --set-done api
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --working api
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --set-done api --working test
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --ops '{"add":[{"item":{"id":"docs","text":"Update docs"}}],"description":"Validation remains"}'
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks get auth-refactor
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks history auth-refactor
