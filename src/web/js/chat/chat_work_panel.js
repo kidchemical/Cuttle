@@ -172,6 +172,7 @@
             : '';
         return tasksLib().taskRowHtml(item, {
             studio: true,
+            short: true,
             shared: false,
             ownerHtml: ownerHtml,
             childrenHtml: nested,

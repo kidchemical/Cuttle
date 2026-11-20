@@ -68,6 +68,26 @@ OWNER_ID_MAX = 128
 OWNER_LABEL_MAX = 60
 OWNER_AGENT_MAX = 40
 ORIGIN_TURN_MAX = 160
+# Short display label for compact views (the Studio checklist); ``text`` stays the full item.
+LABEL_WORDS_MAX = 3
+LABEL_CHARS_MAX = 32
+
+
+def normalize_label(raw: Any, *, strict: bool = False) -> str:
+    """Item ``label``: one line, at most 3 words / 32 characters; empty when absent.
+
+    ``strict`` rejects an over-long label (new writes); otherwise it is cut to fit.
+    """
+    if raw is None:
+        return ""
+    if not isinstance(raw, str):
+        if strict:
+            raise ValueError("label must be a string")
+        raw = str(raw)
+    words = raw.split()
+    if strict and (len(words) > LABEL_WORDS_MAX or len(" ".join(words)) > LABEL_CHARS_MAX):
+        raise ValueError(f"label must be at most {LABEL_WORDS_MAX} words and {LABEL_CHARS_MAX} characters")
+    return " ".join(words[:LABEL_WORDS_MAX])[:LABEL_CHARS_MAX].rstrip()
 
 
 def normalize_owner(raw: Any, *, strict: bool = False) -> Optional[Dict[str, Any]]:
@@ -156,6 +176,9 @@ def _ensure_item_ids(items: Any, prefix: str = "t", *, strict: bool = False) -> 
             "done": done,
             "children": children,
         }
+        label = normalize_label(raw.get("label"), strict=strict)
+        if label:
+            node["label"] = label
         owner = normalize_owner(raw.get("owner"), strict=strict)
         if owner is not None:
             node["owner"] = owner
@@ -282,6 +305,19 @@ def apply_tasks_patch(
             node = _find_item(items, str(iid))
             if node is not None:
                 node["text"] = str(text or "").strip()
+
+    set_label = patch.get("set_label")
+    if set_label is not None and not isinstance(set_label, dict):
+        raise ValueError("set_label must be an object")
+    for iid, label in (set_label or {}).items():
+        node = _find_item(items, str(iid))
+        if node is None:
+            continue
+        label_n = normalize_label(label, strict=True)
+        if label_n:
+            node["label"] = label_n
+        else:
+            node.pop("label", None)
 
     for iid in patch.get("remove") or []:
         _remove_item(items, str(iid))

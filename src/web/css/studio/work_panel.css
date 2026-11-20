@@ -10,6 +10,7 @@
 /* ---- panel root: reveal on insert, two columns when wide enough ---------- */
 :root.cuttle-studio .work-panel {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: 1fr;
     margin: var(--studio-space-3) 0 var(--studio-space-1);
     container-type: inline-size;
@@ -85,6 +86,7 @@
     margin: 0;
     padding: 0;
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--studio-space-3);
 }
 
@@ -115,7 +117,9 @@
 
 :root.cuttle-studio .work-panel .chat-widget-task-line .chat-widget-task-text {
     min-width: 0;
-    overflow-wrap: anywhere;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* Owner: dot + plain name, muted, on the text's line, pushed to the right edge. */

@@ -33,6 +33,8 @@ def add_parser(sub):
             p.add_argument('--owner', action='append', metavar='ITEM=OWNER',
                            help='who owns an item: ITEM=CH-… (a chat of yours), ITEM=user, '
                                 'ITEM=agent:<id>, or ITEM=none to clear; repeatable')
+            p.add_argument('--label', action='append', metavar='ITEM=LABEL',
+                           help='short display label (1-3 words) for an item; ITEM= clears; repeatable')
             p.add_argument('--working', action='append', metavar='ITEM',
                            help='mark item(s) as being worked on, comma-separated; repeatable')
             p.add_argument('--not-working', action='append', metavar='ITEM',
@@ -118,6 +120,14 @@ def run(args):
             owners[item.strip()] = _owner_value(value.strip())
         if owners:
             ops['set_owner'] = {**(ops.get('set_owner') or {}), **owners}
+        labels = {}
+        for spec in args.label or []:
+            item, sep, value = str(spec).partition('=')
+            if not sep or not item.strip():
+                raise GizmoError('--label must be ITEM=LABEL')
+            labels[item.strip()] = value.strip()
+        if labels:
+            ops['set_label'] = {**(ops.get('set_label') or {}), **labels}
         working = _split(args.working)
         if working:
             ops['set_in_progress'] = list(ops.get('set_in_progress') or []) + working

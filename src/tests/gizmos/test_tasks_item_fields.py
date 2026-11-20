@@ -160,3 +160,23 @@ def test_every_op_preserves_owner_of_untouched_items():
         out = model.apply_tasks_patch(seeded, patch)
         b = [n for n in out['items'] if n['id'] == 'b'][0]
         assert b['owner'] == CHAT_OWNER, patch
+
+
+def test_label_round_trips_and_empty_clears_it():
+    out = model.apply_tasks_patch(_base(), {'set_label': {'a': '  Fix   API '}})
+    assert out['items'][0]['label'] == 'Fix API'
+    assert out['items'][0]['text'] == 'API'
+    assert 'label' not in out['items'][1]
+    assert 'label' not in model.apply_tasks_patch(out, {'set_label': {'a': ''}})['items'][0]
+
+
+def test_label_on_add_and_strict_limit():
+    out = model.apply_tasks_patch(_base(), {'add': [{'item': {'id': 'c', 'text': 'Long step', 'label': 'Docs'}}]})
+    assert out['items'][-1]['label'] == 'Docs'
+    with pytest.raises(ValueError):
+        model.apply_tasks_patch(_base(), {'set_label': {'a': 'one two three four'}})
+    with pytest.raises(ValueError):
+        model.apply_tasks_patch(_base(), {'add': [{'item': {'id': 'c', 'text': 'x', 'label': 'x' * 33}}]})
+    # Stored rows are cut to fit, never rejected on read.
+    stored = model.normalize_tasks_payload({'items': [{'id': 'a', 'text': 't', 'label': 'one two three four'}]})
+    assert stored['items'][0]['label'] == 'one two three'

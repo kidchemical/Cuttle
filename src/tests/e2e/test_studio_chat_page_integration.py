@@ -54,6 +54,10 @@ TASKS = {"success": True, "revision": 1, "gizmos": [{
         {"id": "t2", "text": "Write the changelog", "done": False, "in_progress": True,
          "owner": {"kind": "chat", "id": "CH-000041", "label": "Scout", "agent": "codex"}},
         {"id": "t3", "text": "Run the test suite", "done": False},
+        {"id": "t4", "text": "Lua API: breakable world object, forced scroll, bound scrolls, removal options",
+         "label": "Lua API", "done": False},
+        {"id": "t5", "text": "Journal entries, icons, CREATE rows and the official hashes for every new scroll",
+         "done": False},
     ]},
     "config": {"items": []},
 }]}
@@ -307,6 +311,30 @@ def test_studio_work_panel_takes_its_own_row_on_a_phone_width_pane(browser, stat
         assert box["header"]["bottom"] <= box["content"]["top"] <= box["header"]["bottom"] + 16, box
         assert box["content"]["bottom"] <= box["panel"]["top"] <= box["content"]["bottom"] + 24, box
         assert box["panel"]["bottom"] <= box["footer"]["top"], box
+        assert not errors, errors
+    finally:
+        page.context.close()
+
+
+def test_studio_checklist_rows_stay_one_line_on_a_phone(browser, static_server):  # noqa: F811
+    """The bubble checklist shows an item's short label (full text as the tooltip) and
+    never wraps a row; the Tasks dock keeps the full text."""
+    world = ChatWorld(flag=True)
+    page, errors = _open(browser, static_server, world, pref="studio", cache="1")
+    try:
+        page.set_viewport_size({"width": 412, "height": 880})
+        page.wait_for_timeout(300)
+        rows = page.evaluate("""() => [...document.querySelectorAll(
+            '#chatMessages .work-panel .chat-widget-task-text')].map((el) => ({
+                text: el.textContent, title: el.dataset.tooltip || '', h: el.getBoundingClientRect().height,
+                lh: parseFloat(getComputedStyle(el).lineHeight) }))""")
+        lua = next(r for r in rows if r["text"] == "Lua API")
+        assert lua["title"].startswith("Lua API: breakable world object"), lua
+        for r in rows:
+            assert r["h"] <= r["lh"] * 1.5, r
+        right = page.evaluate("document.querySelector('#chatMessages .work-list').getBoundingClientRect().right")
+        assert right <= 412, "a long unlabeled row must not push the card off screen"
+        _shot(page, "chat-studio-phone-labels.png")
         assert not errors, errors
     finally:
         page.context.close()

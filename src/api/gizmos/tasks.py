@@ -34,7 +34,7 @@ MAX_LINKS = 50
 # Ops that change which items are done (these reactivate an archived list).
 DONE_ITEM_OPS = ('items', 'add', 'remove', 'set_done', 'set_undone')
 # Every op that edits items; the UI may send these only on a shared list.
-ITEM_EDIT_OPS = DONE_ITEM_OPS + ('set_text', 'set_owner', 'set_in_progress', 'clear_in_progress')
+ITEM_EDIT_OPS = DONE_ITEM_OPS + ('set_text', 'set_label', 'set_owner', 'set_in_progress', 'clear_in_progress')
 
 
 def _chat_handle(session_id):
@@ -226,7 +226,7 @@ def patch(gizmo_id, ops, *, user_id=None, session_id=None, actor=None, db=None, 
                 'set_in_progress', 'clear_in_progress'):
         if key in ops and not isinstance(ops[key], list):
             raise GizmoError(f'{key} must be an array')
-    for key in ('set_text', 'set_owner'):
+    for key in ('set_text', 'set_label', 'set_owner'):
         if key in ops and not isinstance(ops[key], dict):
             raise GizmoError(f'{key} must be an object')
     if 'status' in ops and ops['status'] not in ('active', 'archived'):

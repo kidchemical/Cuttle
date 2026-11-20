@@ -116,6 +116,16 @@ assert.strictEqual(T.taskRowHtml(classicRow, { shared: false, studio: false }), 
 assert.strictEqual(T.taskRowHtml({ id: 'k2', text: 'Done', done: true }, { shared: true }),
   legacy({ id: 'k2', text: 'Done', done: true }, true));
 
+// --- short labels: the work panel shows `label`, the dock keeps `text` ----------------
+const labelled = { id: 'l1', text: 'Lua API: breakable <world> object', label: 'Lua API', done: false };
+const shortRow = T.taskRowHtml(labelled, { studio: true, short: true });
+assert.ok(shortRow.includes('>Lua API</div>'), shortRow);
+assert.ok(shortRow.includes('data-tooltip="Lua API: breakable &lt;world&gt; object"'), shortRow);
+const dockRow = T.taskRowHtml(labelled, { studio: true });
+assert.ok(dockRow.includes('>Lua API: breakable &lt;world&gt; object</div>') && !dockRow.includes('data-tooltip='), dockRow);
+assert.ok(T.taskRowHtml({ id: 'l2', text: 'No label' }, { studio: true, short: true }).includes('data-tooltip="No label">No label<'));
+assert.ok(P.html(P.model([list('g', { payload: { items: [labelled] } })], [], turn)).includes('>Lua API</div>'));
+
 // --- agent header ------------------------------------------------------------------
 const hdr = P.agentHeaderHtml('codex', { label: 'Codex - gpt-5 · high', working: true });
 assert.ok(hdr.includes('data-agent="codex"') && hdr.includes('>Codex<'), hdr);

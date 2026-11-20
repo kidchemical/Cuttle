@@ -24,12 +24,20 @@ the working mark). One call can do both: finish one item and start the next.
 The chat shows the working item as in progress, so the user sees where you are.
 Use `--not-working <item>` if you set it aside unfinished.
 
+**Give every item a short `label`.** `text` is the full step (the Tasks dock
+shows it); `label` is what the checklist in your chat bubble shows, on one line
+on a phone: 1–3 words, at most 32 characters, e.g. `"Lua API"` for "Lua API:
+breakable world object, forced scroll, bound scrolls". Longer labels are
+rejected. Set it on create/add, or later with `--label <item>=<label>`
+(op `set_label {item: label}`; an empty label clears it).
+
 ```bash
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks list --session CH-000465
-PYTHONPATH=src .venv/bin/python -m api.gizmos tasks create --session CH-000465 --id auth-refactor --title "Auth refactor" --description "Ship the auth fix" --items '[{"id":"api","text":"Fix API"},{"id":"test","text":"Verify"}]'
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks create --session CH-000465 --id auth-refactor --title "Auth refactor" --description "Ship the auth fix" --items '[{"id":"api","text":"Fix the token refresh in the API client","label":"Fix API"},{"id":"test","text":"Run the auth tests and a manual login","label":"Verify"}]'
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --working api
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --set-done api --working test
-PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --ops '{"add":[{"item":{"id":"docs","text":"Update docs"}}],"description":"Validation remains"}'
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --ops '{"add":[{"item":{"id":"docs","text":"Update the auth docs","label":"Docs"}}],"description":"Validation remains"}'
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --label api="Token refresh"
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks get auth-refactor
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks history auth-refactor
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --link CH-000470,CH-000471 --unlink CH-000468
@@ -45,7 +53,7 @@ to the same project. `--edit-mode shared` lets users toggle items; default
 `agent` reserves task edits for agents. Items may have nested `children`.
 Completing every item auto-archives; undoing an item or adding open work reopens
 the list. `--status archived` manually archives. Patch supports `set_done`,
-`set_undone`, `set_text`, `add`, `remove`, `items`, `description`, `title`,
+`set_undone`, `set_text`, `set_label`, `add`, `remove`, `items`, `description`, `title`,
 `scope`, and `edit_mode`; scope changes require `--session`.
 
 **Linked chats.** Besides its home chat (or project), a list can be linked to

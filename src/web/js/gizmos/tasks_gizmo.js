@@ -43,6 +43,8 @@
      * One Tasks item as a list row. `opts`: shared (editable checkbox), studio
      * (Studio hooks: glowing `is-in-progress` class and the owner under the text),
      * ownerHtml(owner) → html, childrenHtml (nested list, already rendered).
+     * `short` (the in-chat work panel) shows the item's short `label` when it
+     * has one, and the full text as the app tooltip; the dock keeps the full text.
      * With `studio` off the markup is the Classic row, byte for byte. Pure.
      */
     function taskRowHtml(item, opts) {
@@ -56,6 +58,9 @@
         var disabled = shared ? '' : ' disabled';
         var textHtml = '<div class="chat-widget-task-text">' + text + '</div>';
         var body = textHtml;
+        if (opts.short) {
+            textHtml = '<div class="chat-widget-task-text" data-tooltip="' + text + '">' + (item.label ? esc(item.label) : text) + '</div>';
+        }
         if (studio) {
             // Studio: the owner sits on the text's line, right-aligned (dot + name, muted).
             var owner = (item.owner && typeof item.owner === 'object')
