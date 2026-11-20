@@ -156,6 +156,12 @@ class Worktree:
         proc = _git("worktree", "add", "--detach", str(self.path), self.sha, cwd=self.repo, timeout=120)
         if proc.returncode != 0:
             raise RuntimeError("git worktree add failed: " + (proc.stderr or "").strip()[:300])
+        venv = self.repo / ".venv"
+        if venv.is_dir():  # CI's checkout has its venv inside it; some tests expect that
+            try:
+                (self.path / ".venv").symlink_to(venv, target_is_directory=True)
+            except OSError:
+                pass  # Windows without symlink rights: those few tests fail as on a bare clone
         return self.path
 
     def __exit__(self, *exc) -> None:
