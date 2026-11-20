@@ -868,7 +868,7 @@ while q.get(timeout=20) is not None:
 '''
 
 
-def _run_fake_claude_background(tmp_path, monkeypatch, mode, chat_id):
+def _run_fake_claude_background(tmp_path, monkeypatch, mode, chat_id, **kwargs):
     import scripts.utilities.claude_cli_tool as mod
 
     monkeypatch.setenv("FAKE_CLAUDE_MODE", mode)
@@ -879,6 +879,7 @@ def _run_fake_claude_background(tmp_path, monkeypatch, mode, chat_id):
     return asyncio.run(
         mod.ClaudeCliTool().execute_prompt(
             "go", cwd=str(tmp_path), chat_session_id=str(chat_id), timeout=120, steerable=True,
+            **kwargs,
         )
     )
 
@@ -905,13 +906,89 @@ def test_claude_background_wait_is_capped(tmp_path, monkeypatch):
 
 
 @pytestmark_posix
-def test_claude_background_wait_restarts_per_result(tmp_path, monkeypatch):
-    """The limit is per wait, not per turn: a chain of short waits stays open."""
-    monkeypatch.setenv("CLAUDE_BACKGROUND_WAIT_SEC", "1")
+def test_claude_background_wait_chain_inside_the_budget_stays_open(tmp_path, monkeypatch):
+    """Short waits back to back (0.7s + 0.7s) fit one 5s budget: the chain completes."""
+    monkeypatch.setenv("CLAUDE_BACKGROUND_WAIT_SEC", "5")
     res = _run_fake_claude_background(tmp_path, monkeypatch, "chain", 5757)
     assert res["success"] is True
     assert res["output"] == "started the watcher\n\nstep 2\n\nstep 3"
     assert "Stopped waiting" not in res["output"]
+
+
+@pytestmark_posix
+def test_claude_background_wait_is_one_budget_per_turn(tmp_path, monkeypatch):
+    """A follow-up reply does not refill the wait: 0.7s + 0.7s idle exceeds a 1s
+    budget, so the turn stops at the second wait (CH-002669 sat 78 minutes on
+    waiters that never exited because every follow-up restarted a 50-minute cap)."""
+    monkeypatch.setenv("CLAUDE_BACKGROUND_WAIT_SEC", "1")
+    res = _run_fake_claude_background(tmp_path, monkeypatch, "chain", 5759)
+    assert res["success"] is True
+    assert res["output"].startswith("started the watcher\n\nstep 2")
+    assert "step 3" not in res["output"]
+    assert "Stopped waiting for background work" in res["output"]
+    assert "- watch deploy" in res["output"]
+
+
+@pytestmark_posix
+def test_claude_background_wait_takes_the_callers_shorter_cap(tmp_path, monkeypatch):
+    """A sub-agent child turn passes its own cap; the 50-minute default does not apply."""
+    import time
+
+    started = time.monotonic()
+    from api.agent_harness.background_budget import WaitCap
+
+    res = _run_fake_claude_background(tmp_path, monkeypatch, "never", 5760,
+                                      background_wait_cap=WaitCap(1))
+    assert time.monotonic() - started < 15
+    assert res["output"].startswith("started the watcher")
+    assert "Stopped waiting for background work" in res["output"]
+
+
+@pytestmark_posix
+def test_claude_capped_wait_keeps_the_full_budget_while_its_owner_holds(tmp_path, monkeypatch):
+    """A child supervising its own sub-agents is not cut off at the short cap:
+    the 0.5s follow-up arrives after a 0.2s cap because the owner holds the turn."""
+    from api.agent_harness.background_budget import WaitCap
+
+    asked = []
+    res = _run_fake_claude_background(
+        tmp_path, monkeypatch, "finishes", 5761,
+        background_wait_cap=WaitCap(0.2, hold=lambda: asked.append(1) or True))
+    assert res["output"] == "started the watcher\n\nCI is green"
+    assert asked == [1]
+
+
+def test_wait_budget_counts_only_idle_waiting():
+    from api.agent_harness.background_budget import WaitBudget, WaitCap, capped, child_wait_seconds
+
+    now = [100.0]
+    budget = WaitBudget(10, clock=lambda: now[0])
+    assert budget.arm() == 10
+    now[0] += 4
+    budget.pause()          # follow-up working: not counted
+    now[0] += 60
+    assert budget.arm() == 6
+    now[0] += 5
+    assert budget.arm() == 1  # re-armed while waiting: elapsed wait is kept
+    now[0] += 30
+    assert budget.arm() == 0
+    assert not budget.extend(10) and budget.extend(60) and budget.arm() == 21
+    assert capped(3000, None) == 3000
+    assert capped(3000, WaitCap(300)) == 300 and capped(100, WaitCap(300)) == 100
+    assert child_wait_seconds() == 300
+    assert WaitCap(1).held() is False and WaitCap(1, hold=lambda: 1 / 0).held() is False
+
+
+def test_subagent_child_turn_caps_the_background_wait_and_never_detaches():
+    import inspect
+
+    from api.agent_harness.agents.claude.adapter import Adapter
+    from api.agent_harness.kernel import _adapter_execute_kwargs
+
+    kept = _adapter_execute_kwargs(Adapter, background_wait_cap=300, nope=1)
+    assert kept == {"background_wait_cap": 300}
+    src = inspect.getsource(Adapter.execute)
+    assert "background_wait_cap is None" in src  # a capped turn gets no BackgroundWait
 
 
 @pytestmark_posix

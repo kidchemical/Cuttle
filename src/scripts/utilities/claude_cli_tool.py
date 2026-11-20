@@ -101,11 +101,11 @@ def _default_timeout() -> float:
 
 
 def _background_wait_seconds() -> float:
-    """How long one root ``result`` may wait on pending background tasks (0 = never).
+    """How long one turn may sit idle waiting on pending background tasks (0 = never).
 
-    The window restarts at every root ``result``: a follow-up turn that ends
-    while other tasks are still running opens a fresh wait, so a long chain of
-    short waits stays steerable instead of tripping one turn-wide budget.
+    One budget for the whole turn (``api.agent_harness.background_budget``): only
+    idle waiting counts, and a follow-up reply does not refill it, so leftover
+    waiters that never exit cannot hold the turn open reply after reply.
 
     Kept under the 3600s idle budget: the wait is silent on stdout, so the
     idle deadline would otherwise end it first with a timeout instead of a note.
@@ -584,6 +584,7 @@ class ClaudeCliTool:
         steerable: bool = False,
         background: Any = None,
         extra_env: Optional[Dict[str, str]] = None,
+        background_wait_cap: Any = None,
         _ctl: Optional[_Detach] = None,
     ) -> Dict[str, Any]:
         if background is not None and steerable and _ctl is None:
@@ -592,7 +593,8 @@ class ClaudeCliTool:
                 prompt, cwd=cwd, resume=resume, status_queue=status_queue,
                 chat_session_id=chat_session_id, timeout=timeout,
                 permission_mode=permission_mode, cancel_event=cancel_event,
-                steerable=True, background=background, extra_env=extra_env, _ctl=ctl,
+                steerable=True, background=background, extra_env=extra_env,
+                background_wait_cap=background_wait_cap, _ctl=ctl,
             ))
         ctl = _ctl
         if not (prompt or "").strip():
@@ -707,6 +709,11 @@ class ClaudeCliTool:
         }
         proc = None
         bg_wait = min(_background_wait_seconds(), max(0.0, resolved_timeout - 60.0))
+        from api.agent_harness.background_budget import WaitBudget, capped
+
+        full_wait = bg_wait
+        bg_wait = capped(bg_wait, background_wait_cap)  # a sub-agent child's shorter cap
+        budget = WaitBudget(bg_wait)  # idle waiting for the whole turn, not per reply
 
         def _close_input() -> None:
             if st["wait_timer"] is not None:
@@ -818,7 +825,14 @@ class ClaudeCliTool:
             st["reap_timer"] = loop.call_later(_background_exit_grace_seconds(), _reap)
 
         def _give_up_waiting() -> None:
+            nonlocal bg_wait
             st["wait_timer"] = None
+            if (background_wait_cap is not None and st["open"] and st["bg"]
+                    and background_wait_cap.held() and budget.extend(full_wait)):
+                # The capped turn still owns live work (its own sub-agents).
+                bg_wait = full_wait
+                st["wait_timer"] = loop.call_later(budget.arm(), _give_up_waiting)
+                return
             st["waiting"] = False
             if st["open"] and st["bg"]:
                 st["abandoned"] = [_task_label([t]) for t in st["bg"]]
@@ -931,6 +945,7 @@ class ClaudeCliTool:
                         st["wait_timer"].cancel()
                         st["wait_timer"] = None
                     st["waiting"] = False
+                    budget.pause()
                     stream.activity.emit("background task finished — Claude Code is following up", force=True)
                     if detached:
                         ctl.wait.working("Background task finished — Claude Code is following up…", force=True)
@@ -946,7 +961,7 @@ class ClaudeCliTool:
                     if st["wait_timer"] is not None:
                         st["wait_timer"].cancel()
                     st["waiting"] = True
-                    st["wait_timer"] = loop.call_later(bg_wait, _give_up_waiting)
+                    st["wait_timer"] = loop.call_later(budget.arm(), _give_up_waiting)
                     stream.activity.emit(f"waiting on background task: {_task_label(st['bg'])}", force=True)
                 elif _unread():
                     # A steer that reached stdin just as this answer finished starts

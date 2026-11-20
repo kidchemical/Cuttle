@@ -373,10 +373,18 @@ def run_child_turn(
             chat_turn_row.close(db, child.session_id, status=status, turn=turn)
 
     model_id = resolve_child_model_id(spec.agent, spec.model, spec.effort)
-    exec_kw = None
+    # The parent's batch is blocked until this turn ends: cap how long it may sit
+    # idle on its own background tasks (adapters without that wait drop the
+    # option). A child supervising sub-agents of its own keeps the full budget.
+    from api.agent_harness.background_budget import WaitCap, child_wait_seconds
+
+    exec_kw: Dict[str, Any] = {"background_wait_cap": WaitCap(
+        child_wait_seconds(),
+        hold=lambda: bool(store.list_running_for_parent(db, int(child.session_id))),
+    )}
     effort = str(spec.effort or "").strip()
     if effort and str(spec.agent or "").strip().lower() != "cursor":
-        exec_kw = {"reasoning_effort": effort}
+        exec_kw["reasoning_effort"] = effort
 
     run = runner or (
         lambda **kw: default_runner(

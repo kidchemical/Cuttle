@@ -72,7 +72,11 @@ UNATTENDED_NOTES = {
         "and do not post to Discord (`discord.post`, feature-update cards), even when a global or "
         "project rule says a turn must end with one. Ask questions, and name anything that needs a "
         "person (a post, push, restart, login), in plain text in your reply; the parent reads it "
-        "and decides."
+        "and decides.\n"
+        "The parent's batch is blocked until this turn ends. A background command reports by "
+        "itself when it exits: do not add `sleep` / `pgrep` loops or monitors to wait for one, "
+        "and stop every background task you no longer need before your final reply. Cuttle ends "
+        "the turn after about 5 minutes idle on leftover background tasks."
     ),
     "supervised": (
         "## Unattended chat (supervised)\n"
