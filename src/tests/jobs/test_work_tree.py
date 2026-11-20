@@ -150,7 +150,7 @@ def test_live_status_extras_carries_background(sources):
 
     sources["waits"] = [{"job_id": "j", "label": "Waiting on: build", "chat_session_id": "7"}]
     extras = live_status_extras("7")
-    assert set(extras) == {"subagents", "background", "orchestration", "thinking"}
+    assert set(extras) == {"subagents", "background", "orchestration", "thinking", "steers"}
     assert extras["background"]["label"] == "Waiting on: build"
     assert live_status_extras("8")["background"] is None
 
