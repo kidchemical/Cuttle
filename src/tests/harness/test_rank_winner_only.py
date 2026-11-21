@@ -94,6 +94,21 @@ def test_no_extra_needed_injects_nothing(tmp_path):
     assert ranked["items"] == []
 
 
+def test_pointer_needs_less_evidence_than_an_excerpt(tmp_path):
+    # A confident pick the judge is lukewarm about still earns a pointer...
+    ranked = _rank(tmp_path, _judge(needs=0.4, conf=0.94))
+    assert ranked["meta"]["injected"] == ["doc:b.md"]
+
+
+def test_lukewarm_need_never_pastes_an_excerpt(tmp_path, monkeypatch):
+    from api.jev import thresholds as T
+
+    # ...but not a pasted body.
+    monkeypatch.setattr(T, "RANK_INJECT_MODE", "excerpt")
+    ranked = _rank(tmp_path, _judge(needs=0.4, conf=0.94))
+    assert ranked["items"] == []
+
+
 def test_low_confidence_injects_nothing(tmp_path):
     ranked = _rank(tmp_path, _judge(conf=0.2))
     assert ranked["items"] == []

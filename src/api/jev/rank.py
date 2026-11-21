@@ -293,7 +293,8 @@ def rank_context(
 
     needs, conf = judged["needs_extra"], judged["confidence"]
     meta = {"skipped": False, **judged}
-    if needs < T.NEEDS_EXTRA_CONTEXT_NOUL or conf < T.RANK_CONFIDENCE_FLOOR or not judged["choice"]:
+    needs_floor = T.NEEDS_EXTRA_CONTEXT_NOUL if T.RANK_INJECT_MODE == "excerpt" else T.NEEDS_POINTER_NOUL
+    if needs < needs_floor or conf < T.RANK_CONFIDENCE_FLOOR or not judged["choice"]:
         return {"items": [], "meta": meta}
 
     # Winner only. The choice distribution holds alternative hypotheses, not

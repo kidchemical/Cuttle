@@ -37,7 +37,9 @@ Inline only what an agent cannot know to look up: prohibitions and the pointer
 that names the owner. Everything else is listed, not copied — runbooks by name
 and one-line trigger, skills by a clipped summary and path, Tasks lists by
 title/progress (a chat's own list adds its next open items; `python -m
-api.gizmos tasks get <id>` has the rest). A runbook named in the core contract's
+api.gizmos tasks get <id>` has the rest). More than 12 project docs are a
+count plus the folder; the ranker still sees every name. A pointer needs less
+"extra context would help" evidence than an excerpt (`NEEDS_POINTER_NOUL`). A runbook named in the core contract's
 directory is not repeated in the inventory. Measure a fresh `hello` envelope
 before and after any change (`meta.layer_chars`).
 

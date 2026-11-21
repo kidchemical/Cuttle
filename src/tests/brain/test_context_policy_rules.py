@@ -179,6 +179,19 @@ def test_shipped_always_on_text_names_no_retired_process(tmp_path):
     assert "cuttle_daemon" in shipped and "web_chat_api" in shipped
 
 
+def test_long_project_doc_list_becomes_a_count(tmp_path):
+    few, many = _guest(tmp_path), _guest(tmp_path)
+    for proj, n in ((few, 3), (many, 20)):
+        docs = Path(proj) / ".cuttle" / "docs"
+        docs.mkdir()
+        for i in range(n):
+            (docs / f"note-{i:02d}.md").write_text("# Note\n", encoding="utf-8")
+    assert "- docs: note-00.md, note-01.md, note-02.md" in _env("hello", few)
+    env = _env("hello", many)
+    assert f"- docs: 20 runbooks and notes under `{Path(many).resolve() / '.cuttle' / 'docs'}`" in env
+    assert "note-07.md" not in env
+
+
 def test_global_rule_body_budget_with_counts(tmp_path, capsys):
     bodies = dict(_compiler.load_global_rules())
     total = sum(len(text) for text in bodies.values())

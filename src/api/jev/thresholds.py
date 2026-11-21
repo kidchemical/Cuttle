@@ -18,6 +18,9 @@ MAX_INJECT_ITEMS = 3
 # budgets below. An excerpt cost ~3,150 chars per turn and still had to be
 # opened in full, so pointer is the default.
 RANK_INJECT_MODE = "pointer"
+# A pointer costs ~300 chars and the agent can skip it, so it needs less
+# "extra context would help" evidence than a pasted excerpt does.
+NEEDS_POINTER_NOUL = 0.30
 MAX_INJECT_CHARS = 8000
 PER_ITEM_CHARS = 2800
 
