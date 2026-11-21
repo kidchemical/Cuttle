@@ -50,6 +50,9 @@ def pytest_configure(config):
     # PYTEST_CURRENT_TEST guard is unset during collection. Test-only;
     # production default (auto-rebuild on) is unchanged.
     os.environ["CUTTLE_MOBILE_AUTO_REBUILD"] = "0"
+    # Antigravity resume validation reads agy's own conversation store; tests
+    # must never see the developer's real ~/.gemini (a missing dir = unknown).
+    os.environ["CUTTLE_AGY_CONVERSATIONS_DIR"] = os.path.join(tempfile.gettempdir(), "cuttle-tests-no-agy-store")
     try:
         from api.agent_router.supervised.test_isolation import (
             activate_test_isolation,
@@ -260,7 +263,7 @@ def pytest_generate_tests(metafunc):
         )
 
 
-_VENDOR_AGENT_CLIS = {"agent", "cursor-agent", "codex", "muse", "hermes", "claude", "opencode"}
+_VENDOR_AGENT_CLIS = {"agent", "cursor-agent", "codex", "muse", "hermes", "claude", "opencode", "agy"}
 
 
 def _vendor_cli_in_argv(args, fake_roots=()) -> str:
