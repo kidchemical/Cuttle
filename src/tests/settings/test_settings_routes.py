@@ -10,6 +10,7 @@ from __future__ import annotations
 from tests.auth.test_http_authz import _auth_client, LAN
 
 READS = [
+    "/api/settings/storage/location",
     "/api/settings/chat-prompts",
     "/api/settings/response-postprocessing",
     "/api/settings/lan-access",
@@ -29,6 +30,7 @@ READS = [
 
 # (method, path, payload): writes must stay owner-only.
 WRITES = [
+    ("POST", "/api/settings/storage/location", {"cancel": True}),
     ("POST", "/api/settings/chat-prompts", {"global": "Keep it brief"}),
     ("POST", "/api/settings/response-postprocessing", {"enabled": False, "prompt": "Summarize", "mode": "append"}),
     ("POST", "/api/settings/lan-access", {"lan_access_enabled": False}),
@@ -64,7 +66,7 @@ def test_settings_read_auth_matrix(tmp_path, monkeypatch):
     from api import web_chat_api as wca
 
     anon = wca.app.test_client()
-    for path in ("/api/settings/lan-access", "/api/settings/channels"):
+    for path in ("/api/settings/lan-access", "/api/settings/channels", "/api/settings/storage/location"):
         assert anon.get(path, environ_base=LAN).status_code == 401, path
 
     ctx = _auth_client(tmp_path, monkeypatch)
@@ -418,3 +420,21 @@ def test_update_source_round_trip(tmp_path, monkeypatch):
         "/api/settings/update-source", json={"update_source": "bogus"}, environ_base=LAN
     )
     assert res.status_code == 400
+
+def test_storage_location_owner_can_schedule_and_cancel(tmp_path, monkeypatch):
+    ctx = _auth_client(tmp_path, monkeypatch)
+    client = ctx["client"]
+    client.set_cookie("session_token", ctx["token"])
+    home = tmp_path / "profile"
+    (home / "db").mkdir(parents=True)
+    (home / "db/cuttle_auth.db").touch()
+    monkeypatch.setenv("CUTTLE_HOME", str(home))
+    endpoint = "/api/settings/storage/location"
+    new = tmp_path / "off drive"
+    invalid = client.post(endpoint, json={"destination": "relative"}, environ_base=LAN)
+    assert invalid.status_code == 400
+    reply = client.post(endpoint, json={"destination": str(new)}, environ_base=LAN)
+    assert reply.status_code == 200, reply.get_json()
+    assert client.get(endpoint, environ_base=LAN).get_json()["location"]["pending"] == str(new)
+    assert not new.exists()
+    assert client.post(endpoint, json={"cancel": True}, environ_base=LAN).get_json()["location"]["pending"] is None

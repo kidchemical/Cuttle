@@ -139,6 +139,8 @@ def refuse_unmigrated(root: Path) -> None:
     (no chats, owner bootstrap reopened) while the real ones sit unmigrated.
     An explicit ``CUTTLE_HOME`` (tests, shadow instances) opts out.
     """
+    from core.home_relocation import check_reader
+    check_reader()
     if (os.environ.get("CUTTLE_HOME") or "").strip():
         return
     pending = pending_install_state(root)

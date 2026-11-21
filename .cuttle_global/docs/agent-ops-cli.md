@@ -19,7 +19,7 @@ agent toolkit.
 
 | Domain | Module | Doc |
 |---|---|---|
-| Agent activity / database policies | `python -m api.agent_events` / `python -m api.storage` | `agent-events.md` |
+| Agent activity / database policies / host storage location | `python -m api.agent_events` / `python -m api.storage` (including `location`) | `agent-events.md`, [Cuttle home](../../docs/architecture/cuttle-home.md) |
 | Agent review (Keep / Undo agent hunks) | `python -m api.agent_review` (list, show, keep, undo) | Cuttle `.cuttle/docs/experimental-features.md` |
 | Chat handles / transcripts | `python -m api.chat_cli` | `chat-history.md` |
 | Message / inspect / supervise an existing chat | `python -m api.chat_cli` (status, snapshot, send, stop, supervise, operations) | `chat-history.md` |

@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="css/compact_page.css?v=20261015glass">
     <link rel="stylesheet" href="css/settings_page.css?v=20261103sidebar">
     <link rel="stylesheet" href="css/searchable_select.css?v=20261011attachedMenus">
-<link rel="stylesheet" href="/css/storage_settings.css?v=20261103cards">
+<link rel="stylesheet" href="/css/storage_settings.css?v=20261121statLineHeight">
 <link rel="stylesheet" href="/css/page_controls.css?v=20261103pills">
 <script defer src="/js/shared/page_controls.js?v=20261011menuPosition2"></script>
 </head>
@@ -885,6 +885,26 @@
 
             <section class="settings-panel" id="panel-data" role="tabpanel" aria-labelledby="tab-data" tabindex="0" hidden>
             <div class="settings-group">
+                <h3 class="settings-title">Storage location <span class="settings-scope" data-scope="server">This server</span></h3>
+                <div class="setting-item setting-item--stack" id="storageLocation">
+                    <div class="setting-label">
+                        <strong>Current physical location</strong>
+                        <div id="storageLocationCurrent" class="setting-description">Loading…</div>
+                        <p class="setting-description">Enter the full path to a new folder on this server. Its parent folder must already exist.</p>
+                        <p class="setting-description">After scheduling, choose Exit from the Cuttle system tray and relaunch Cuttle. The daemon moves the data at cold start.</p>
+                        <p id="storageLocationPending" class="setting-description" hidden></p>
+                        <p id="storageLocationError" role="status" aria-live="polite"></p>
+                    </div>
+                    <form id="storageLocationForm" class="setting-control setting-control--column">
+                        <label for="storageLocationDestination">New data folder</label>
+                        <input class="setting-input" id="storageLocationDestination" type="text" autocomplete="off" required disabled>
+                        <button class="control-button" type="submit" disabled>Schedule move</button>
+                        <button class="control-button btn-info" id="storageLocationCancel" type="button" hidden disabled>Cancel scheduled move</button>
+                        <button class="control-button btn-info" id="storageLocationRetry" type="button" hidden>Retry</button>
+                    </form>
+                </div>
+            </div>
+            <div class="settings-group">
                 <h3 class="settings-title">Databases <span class="settings-scope" data-scope="server">This server</span></h3>
                 <div id="storageStores" aria-live="polite">Loading databases…</div>
             </div>
@@ -999,6 +1019,7 @@
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
     <script src="/js/settings/settings_releases.js?v=20261018updateCenter"></script>
     <script src="/js/settings/settings_storage.js?v=20261103cards"></script>
+    <script src="/js/settings/settings_storage_location.js?v=20261121"></script>
     <script src="/js/shared/chat_display.js"></script>
     <script src="/js/settings/settings_chat_preferences.js?v=20261016separateProcessor"></script>
     <script src="/js/settings/settings_auto_compact.js?v=20261120agy"></script>

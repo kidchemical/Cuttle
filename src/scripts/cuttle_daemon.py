@@ -88,6 +88,11 @@ PROJECT_ROOT = SRC_ROOT.parent
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+# Relocation must precede even dotenv and log-directory initialization.
+if __name__ == "__main__":
+    from core.home_relocation import apply_at_startup
+    apply_at_startup(PROJECT_ROOT)
+
 # Load <home>/.env so API keys and optional REST tokens (e.g. DISCORD_TOKEN for agent-ops) are available
 from core.runtime_paths import env_file as _home_env_file
 
