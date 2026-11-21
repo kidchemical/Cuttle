@@ -61,6 +61,13 @@ def _hermes_catalog(refresh: bool) -> _Catalog:
     return [dict(m) for m in list_hermes_known_models()], "config"
 
 
+def _antigravity_catalog(refresh: bool) -> _Catalog:
+    from api.agent_harness.agents.antigravity.model_catalog import list_antigravity_catalog_models
+
+    result = list_antigravity_catalog_models(refresh=refresh)
+    return list(result.get("models") or []), str(result.get("source") or "cli")
+
+
 def _opencode_catalog(refresh: bool) -> _Catalog:
     from api.agent_harness.agents.opencode.model_catalog import list_opencode_catalog_models
 
@@ -75,6 +82,7 @@ _CATALOG_LOADERS: Dict[str, Callable[[bool], _Catalog]] = {
     "muse": _muse_catalog,
     "hermes": _hermes_catalog,
     "opencode": _opencode_catalog,
+    "antigravity": _antigravity_catalog,
 }
 _PERSISTED_AGENT_CATALOGS = frozenset(_CATALOG_LOADERS)
 
@@ -84,7 +92,7 @@ def load_agent_catalog(
 ) -> _Catalog:
     """Live rows for ``agent_id``; manifest ids when the harness has no loader or fails.
 
-    A harness with no live loader (drop-ins, DeepSeek, Antigravity) *is* its
+    A harness with no live loader (drop-ins, DeepSeek) *is* its
     manifest snapshot — that is not an error, so ``source`` stays ``manifest``.
     """
     loader = _CATALOG_LOADERS.get(str(agent_id or "").strip().lower())

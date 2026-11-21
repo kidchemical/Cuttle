@@ -1439,6 +1439,8 @@ def get_session_messages(session_id):
         codex_effort = ''
         claude_model = None
         claude_effort = ''
+        antigravity_model = None
+        antigravity_effort = ''
         try:
             from scripts.utilities.muse_cli_session_store import (
                 load_muse_effort,
@@ -1491,6 +1493,16 @@ def get_session_messages(session_id):
             claude_effort = _effective_effort('claude', load_claude_effort(session_id))
         except Exception:
             pass
+        try:
+            from api.agent_harness.agent_defaults import get_starred_model as _star_agy
+            from api.agent_harness.agents.antigravity.session_store import (
+                load_antigravity_effort,
+                load_antigravity_model,
+            )
+            antigravity_model = load_antigravity_model(session_id) or _star_agy('antigravity') or ''
+            antigravity_effort = _effective_effort('antigravity', load_antigravity_effort(session_id))
+        except Exception:
+            pass
 
         followup_state = db.get_followup_state(session_id, user['id']) or {'followups': [], 'revision': 0}
         usage_summary = None
@@ -1529,6 +1541,7 @@ def get_session_messages(session_id):
                 'opencode': {'model': opencode_model, 'effort': opencode_effort},
                 'codex': {'model': codex_model, 'effort': codex_effort},
                 'claude': {'model': claude_model, 'effort': claude_effort},
+                'antigravity': {'model': antigravity_model, 'effort': antigravity_effort},
             },
         })
         
@@ -1548,6 +1561,7 @@ _EXPORT_AGENT_NAMES = {
     'deepseek': 'DeepSeek',
     'opencode': 'OpenCode',
     'hermes': 'Hermes',
+    'antigravity': 'Antigravity',
 }
 
 

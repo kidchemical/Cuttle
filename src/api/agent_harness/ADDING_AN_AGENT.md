@@ -436,7 +436,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
 | `muse` | `muse exec` (WSL) | `--prompt-file` for long prompts; `/muse model` in adapter |
 | `claude` | `claude -p` | per-chat `--resume`; `/claude model [refresh]` + `/claude effort` pins → `--model` / `--effort`; catalog from SDK `initialize` (no turn) |
 | `opencode` | `opencode run` | native CLI authentication |
-| `antigravity` | `agy` | user-managed install (BYO-CLI) |
+| `antigravity` | `agy -p` | stdin `--input-format stream-json` (lossless), `--dangerously-skip-permissions`; `--conversation` resume validated against agy's store (a stale id silently starts fresh); `/antigravity model [refresh]` + `/antigravity effort` → `--model <family>` / `--effort` (catalog from `agy models`, grouped per family); quota via headless `/usage` + `/credits` JSON; generic `HARNESS_PIN_SPECS` composer controls |
 | `hermes` | `hermes chat -Q -q` | local or OpenRouter via config.yaml; `requires_cloud: false`; per-chat `--resume` + state.db status poll |
 | `deepseek` | `dsh --profile headless` | Flash by default (`smoke_model` = Flash); no native per-chat resume; needs `DEEPSEEK_API_KEY`. Tentacle for DeepSeek Harness — steal kernel ideas separately ([`MODULARITY.md`](../../../docs/guides/MODULARITY.md)); do not treat dsh as Cuttle’s core. |
 

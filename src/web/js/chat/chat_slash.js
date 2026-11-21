@@ -224,6 +224,13 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
             category: 'claude-cmd',
             keywords: 'claude usage tokens models session transcript',
         },
+        antigravity: {
+            prefix: '/usage',
+            label: 'Usage',
+            hint: 'Show Antigravity quota per model group (weekly / 5-hour) and AI credits',
+            category: 'antigravity-cmd',
+            keywords: 'antigravity usage quota limits credits gemini weekly',
+        },
     };
 
     /** One-message billing order for agents that bill either way (api_fallback). */
@@ -581,7 +588,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         if (cat === 'codex' || cat === 'codex-model' || cat === 'codex-effort' || cat === 'codex-cmd') return 'Codex';
         if (cat === 'claude' || cat === 'claude-model' || cat === 'claude-effort' || cat === 'claude-cmd') return 'Claude';
         if (cat === 'deepseek-cmd') return 'DeepSeek';
-        if (cat === 'antigravity-cmd') return 'Antigravity';
+        if (cat === 'antigravity' || cat === 'antigravity-model' || cat === 'antigravity-effort' || cat === 'antigravity-cmd') return 'Antigravity';
         return 'Command';
     }
 
@@ -594,6 +601,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
         if (c === 'opencode-model' || c === 'opencode-effort' || c === 'opencode-cmd') return 'opencode';
         if (c === 'codex-model' || c === 'codex-effort' || c === 'codex-cmd') return 'codex';
         if (c === 'claude-model' || c === 'claude-effort' || c === 'claude-cmd') return 'claude';
+        if (c === 'antigravity-model' || c === 'antigravity-effort' || c === 'antigravity-cmd') return 'antigravity';
         return c;
     }
 
@@ -1016,6 +1024,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
             || cat === 'hermes' || cat === 'hermes-model' || cat === 'hermes-effort'
             || cat === 'opencode' || cat === 'opencode-model' || cat === 'opencode-effort'
             || cat === 'claude' || cat === 'claude-model' || cat === 'claude-effort'
+            || cat === 'antigravity' || cat === 'antigravity-model' || cat === 'antigravity-effort'
             || cat === 'agent'
         ) {
             // Model/effort companions are not the primary agent header chip.
@@ -1054,7 +1063,7 @@ const CURSOR_AGENT_SLASH_COMMANDS = [
             'codex': 'codex', 'codex-model': 'codex', 'codex-effort': 'codex', 'codex-cmd': 'codex',
             'claude': 'claude', 'claude-model': 'claude', 'claude-effort': 'claude', 'claude-cmd': 'claude',
             'deepseek': 'deepseek', 'deepseek-cmd': 'deepseek',
-            'antigravity': 'antigravity', 'antigravity-cmd': 'antigravity',
+            'antigravity': 'antigravity', 'antigravity-model': 'antigravity', 'antigravity-effort': 'antigravity', 'antigravity-cmd': 'antigravity',
         };
         if (byCat[cat]) return byCat[cat];
         // History title chips often store meta `/codex · model …` with no prefix

@@ -40,6 +40,7 @@ even when it works.
 | Modal overlay | `js/shared/modal.js` (`CuttleModal.create(el)`) | `open()` / `close()` / `isOpen()` | per-page overlay show/hide logic |
 | Agent picker (harness · model · effort) | modal: `js/chat/chat_chip_config.js` (`CuttleChipConfig.openAgent`); app-page adapter: `js/orchestrator/agent_pin_picker.js` (`CuttleAgentPinPicker`) | `CuttleAgentPinPicker.create({ getCatalog, onChange }).open(pin)` with a **live** catalog (see Data) | a new agent/model/effort dialog, `<select>` trio, or a page-local spec builder |
 | Model/effort choices for one catalog row | `js/orchestrator/orchestrator_model.js` (`CuttleOrchestrator.pinOptions`, `pinProblem`, `settingItems`) — pure | `pinOptions(row, model)` → `{models, efforts, …}`; per-model levels from `model_efforts` | copying the row → options mapping; using the `efforts` union for a chosen model |
+| Chat composer model/effort pins for a badge-gated harness (palette rows, picks, seed, badge, request pins) | `js/chat/chat_agent_controls.js` generic controller (`HARNESS_PIN_SPECS` → `agentControls.harnessPins(id)`); pure decisions in `js/chat/chat_agent_model.js` (`harness*` helpers); backend contract `/api/<id>/models\|model\|effort` | add one `HARNESS_PIN_SPECS` row + an agent-slice `routes.py` blueprint | another hand-copied `load/build/persist/seed<Agent>…` family (Muse/Hermes/OpenCode/Codex/Claude predate it) |
 | Project picker / project chip | `js/chat/chat_chip_config.js` (`openProject`) | `CuttleChipConfig.create(host).openProject()` | page-local project lists |
 | Avatar picker (agent profiles) | `js/orchestrator/avatar_picker.js` (`CuttleAvatarPicker.create`) | `create(opts)` | a second emoji/avatar grid |
 | Toast | `js/shared/toast.js` | `showToast(msg, 'success'\|'error'\|'info'\|'warning')` | inline status banners for transient results |
@@ -89,5 +90,8 @@ overhaul. Remove a line when its consolidation lands.
 
 - Orchestrator playbook, Spaces overrides and the supervision dialog read plain
   `/api/agents` for model pickers → live models (e.g. new Codex releases) missing.
+- Composer model/effort pins are hand-copied per agent for Muse, Hermes,
+  OpenCode, Codex and Claude in `chat_agent_controls.js` / `chat_page.js`;
+  migrate each to `HARNESS_PIN_SPECS` (Antigravity already uses it).
 - Catalog-row → choices is copied in `chat_supervision_model.js` and
   `shell_spaces.js`; the Spaces copy ignores `model_efforts`.

@@ -241,7 +241,7 @@ class ToolActivityLog:
         self.tools[key] = (index, name, args)
         detail = ""
         if isinstance(args, dict):
-            for field in ("command", "CommandLine", "file_path", "path", "pattern", "query", "description"):
+            for field in ("command", "CommandLine", "file_path", "path", "Path", "pattern", "query", "description"):
                 if isinstance(args.get(field), str) and args[field].strip():
                     detail = " " + text_preview(args[field])
                     break
@@ -251,7 +251,9 @@ class ToolActivityLog:
         if (phase == "completed" and self.agent_id not in ("codex", "claude", "opencode")
                 and key not in self.native_edit_tools):
             from api.query_events import current_query_id
-            if any(part in name.lower() for part in ("edit", "write", "patch", "bash", "shell", "exec")):
+            # Antigravity reports ``run_command`` / ``sed_file`` with no patch body.
+            if any(part in name.lower() for part in ("edit", "write", "patch", "bash", "shell", "exec",
+                                                      "run_command", "sed_file", "replace")):
                 try:
                     from api.agent_events.snapshots import record_step
                     from api.agent_review.service import note_agent_paths

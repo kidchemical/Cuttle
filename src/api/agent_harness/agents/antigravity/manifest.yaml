@@ -4,30 +4,63 @@ slash: /antigravity
 icon: "▲"
 color: "#0d9488"  # Settings/Studio identity dot; #rrggbb
 requires_cloud: true
-auth_command: agy login
+# `agy` has no login subcommand: launching it bare runs the Google sign-in.
+auth_command: agy
 sticky: true
+# Empty — unpinned turns omit --model so the CLI's saved `/model` wins.
 default_model: ""
+smoke_model: gemini-3.8-flash
+# Snapshot from `agy 1.5.13` → `agy models`, grouped per family: the CLI lists
+# one slug per effort (`gemini-3.8-flash-low`) and takes `--model <family>
+# --effort <level>`. The palette reads the installed CLI live; these rows are
+# the offline fallback.
 models:
-  - gemini-3.7-flash-high
-  - gemini-3.7-flash-medium
-  - gemini-3.6-flash-high
-  - gemini-3.6-flash-medium
-  - gemini-3.5-flash-medium
-  - gemini-3.1-pro-high
-  - claude-sonnet-4-6
+  - gemini-4-neon
+  - gemini-4-argon
+  - gemini-4-hydrogen
+  - gemini-3.8-flash
+  - gemini-pro-orchestrator-neon
+  - gemini-pro-orchestrator-g1-pro
+  - claude-opus-5-5
+  - claude-sonnet-5-5
+  - gpt-oss-120b
+supports_model_pin: true
+supports_effort: true
+efforts: [low, medium, high, xhigh, max]
+model_efforts:
+  gemini-4-neon: [low, medium, high, xhigh]
+  gemini-4-argon: [low, medium, high]
+  gemini-4-hydrogen: [low, medium, high, xhigh]
+  gemini-3.8-flash: [low, medium, high]
+  gemini-pro-orchestrator-neon: []
+  gemini-pro-orchestrator-g1-pro: []
+  claude-opus-5-5: [low, medium, high]
+  claude-sonnet-5-5: [low, medium, high]
+  gpt-oss-120b: [medium]
 pricing_source: models_dev
-pricing_providers: [google, anthropic]
+pricing_providers: [google, anthropic, openai]
 resume: true
 capabilities_inject: once_per_resume
 env_profile: native
 activity: jsonl
-hint: Run Google Antigravity CLI (`agy`) headlessly with per-chat resume
+hint: Run Google Antigravity CLI (`agy -p`) headlessly with per-chat resume
 install_hint: >-
-  Install the official Antigravity CLI yourself and put `agy` on PATH. Cuttle
-  discovers installed CLIs; it does not install them. Authentication requires a Google sign-in via `agy` or a configured GEMINI_API_KEY provider.
+  Install the official Antigravity CLI yourself
+  (https://antigravity.google/docs/install?tab=cli) and put `agy` on PATH.
+  Cuttle discovers installed CLIs; it does not install them. Sign in by running
+  `agy` once interactively (Google account), or configure its Gemini API-key
+  provider (`"modelProvider": "gemini"` + GEMINI_API_KEY) or ADC
+  (`AGY_ADC_AUTH=true`).
 missing_cli_hint: >-
-  Install from https://antigravity.google/docs/cli/install/ and ensure `agy` is available.
+  Install from https://antigravity.google/docs/install?tab=cli and ensure `agy`
+  is on PATH (or set `AGY_CLI_PATH`).
 executable_names:
   - agy
 schema_version: 1
-notes: Official Google Antigravity CLI connector; structured headless JSON output.
+notes: >-
+  Official Google Antigravity CLI connector: `agy -p --output-format stream-json
+  --dangerously-skip-permissions` against the project cwd (headless runs have
+  no approval prompt, so Cuttle bypasses approvals like Codex/Claude). Resume via
+  `--conversation`. Per-chat `/antigravity model …` / `/antigravity effort …`
+  pins map to `--model` / `--effort`; refresh via `/antigravity model refresh`.
+  Quota via headless `/usage` + `/credits` JSON (no turn). Compact via `/compact`.

@@ -14,6 +14,8 @@ class AntigravityStream:
         self.session_id = None
         self.on_session = on_session
         self.last_writing = None
+        self.last_step_usage = None  # last model call's prompt occupancy
+        self.model = None  # init.model — what an unpinned turn really ran
 
     def feed(self, raw):
         try:
@@ -28,6 +30,7 @@ class AntigravityStream:
             self.text.save("writing", str(self.payload.get("response") or ""), self.last_writing or "result")
         elif typ == "init":
             self.session_id = event.get("conversation_id")
+            self.model = (event.get("init") or {}).get("model") or None
             if self.session_id:
                 self.on_session(self.session_id)
             self.activity.emit("Antigravity ready", force=True)
@@ -36,6 +39,8 @@ class AntigravityStream:
             key = str(step.get("step_index"))
             state = step.get("state")
             kind = step.get("step_type")
+            if state == "DONE" and isinstance(step.get("usage"), dict):
+                self.last_step_usage = step["usage"]
             if kind == "agent_response":
                 full = self.text.delta("writing", str(step.get("text_delta") or ""), key)
                 if self.activity.emit(f"writing: {text_preview(full)}", force=state == "DONE") or state == "DONE":

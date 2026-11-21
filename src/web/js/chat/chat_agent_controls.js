@@ -113,7 +113,32 @@
             opencodeModelsGen: 0,
             codexModelsGen: 0,
             claudeModelsGen: 0,
+            ...harnessPinStateFields(),
         };
+    }
+
+    /**
+     * Badge-gated harnesses served by the generic pin controller below
+     * (``/api/<id>/models|model|effort``). Claude Code keeps its hand-written
+     * controller; new harnesses add one row here instead of another copy.
+     */
+    const HARNESS_PIN_SPECS = [
+        { id: 'antigravity', label: 'Antigravity', badgeRe: /^Antigravity\b/i, bareRe: /^antigravity(\s+cli)?$/i,
+          refreshHint: 'Refresh Antigravity models and per-model effort levels from `agy models`', filterExample: 'flash' },
+    ];
+
+    function harnessPinStateFields() {
+        const out = {};
+        HARNESS_PIN_SPECS.forEach(({ id }) => {
+            Object.assign(out, {
+                [id + 'Models']: [], [id + 'Model']: '', [id + 'ModelsLoading']: false,
+                [id + 'ModelsKey']: '', [id + 'ModelsTried']: null, [id + 'ModelsSource']: '',
+                [id + 'ModelsCount']: 0, [id + 'CommonEfforts']: [], [id + 'ModelDirty']: false,
+                [id + 'EffortDirty']: false, [id + 'Effort']: '', [id + 'EffortLoading']: false,
+                [id + 'EffortKey']: '', [id + 'ModelsGen']: 0,
+            });
+        });
+        return out;
     }
 
     /**
@@ -163,6 +188,7 @@
             else if (id === 'opencode') repaintOpenCodeUserBadges();
             else if (id === 'codex') repaintCodexUserBadges();
             else if (id === 'claude') repaintClaudeUserBadges();
+            else if (harnessPins(id)) harnessPins(id).repaintBadges();
         };
         const persistSticky = () => { if (d.persistStickySlashForCurrentSession) d.persistStickySlashForCurrentSession(); };
         const refreshHistoryChips = () => { if (d.refreshHistoryAgentChips) d.refreshHistoryAgentChips(); };
@@ -1232,6 +1258,343 @@
             return items;
         }
 
+        // ── Generic badge-gated harness pins (HARNESS_PIN_SPECS) ─────────
+        /**
+         * One controller per harness in HARNESS_PIN_SPECS: palette load/build,
+         * persist, seed, badge label and enrich — the same contract the
+         * hand-written Claude controller implements, keyed by agent id.
+         */
+        function createHarnessPins(spec) {
+            const id = spec.id;
+            const M = root.CuttleChatAgentModel;
+            const k = (name) => id + name;
+            const hasChip = () => !!(d.hasActiveHarness && d.hasActiveHarness(id));
+            const pretty = (model) => M.prettyHarnessModelLabel(spec.label, model, state[k('Models')]);
+            const modelLabel = (model) => M.harnessModelLabel(model, state[k('Models')]);
+
+            function badgeLabel() {
+                const model = String(state[k('Model')] || '').trim();
+                return agentModelEffortBadgeLabel(spec.label, model ? pretty(model) : '',
+                    String(state[k('Effort')] || '').trim());
+            }
+
+            function repaintBadges() {
+                const next = badgeLabel();
+                if (next) paintUserBadges(spec.badgeRe, next);
+            }
+
+            function loadModels(anyChat, opts) {
+                const key = sessionKey();
+                const forceRefresh = !!(opts && opts.refresh);
+                const gate = M.harnessModelsFetchForPalette(id, {
+                    anyChat, hasChip: hasChip(), loading: state[k('ModelsLoading')],
+                    modelsLength: (state[k('Models')] || []).length, modelsKey: state[k('ModelsKey')],
+                    triedKey: state[k('ModelsTried')], sessionKey: key, forceRefresh,
+                });
+                if (!gate.fetch) return;
+                const generation = beginFetch(k('ModelsGen'));
+                state[k('ModelsLoading')] = true;
+                const mutationToken = captureMutation(id + ':model:read');
+                doFetch(gate.url, { cache: 'no-store' })
+                    .then((r) => r.json())
+                    .then((j) => {
+                        if (!isMutationCurrent(mutationToken)) return;
+                        const applied = M.applyHarnessModelsResponse(j, {
+                            modelDirty: state[k('ModelDirty')] || !isCurrentFetch(k('ModelsGen'), generation),
+                        });
+                        state[k('Models')] = applied.models;
+                        if (applied.model !== null) state[k('Model')] = applied.model;
+                        state[k('ModelsKey')] = key;
+                        state[k('ModelsSource')] = applied.source;
+                        state[k('ModelsCount')] = applied.count;
+                        state[k('CommonEfforts')] = applied.commonEfforts;
+                        renderChips();
+                        repaintBadges();
+                        persistSticky();
+                        refreshHistoryChips();
+                        if (forceRefresh) {
+                            const n = state[k('ModelsCount')] || 0;
+                            const failed = applied.error && !n;
+                            toast(failed ? (spec.label + ' models refresh failed: ' + applied.error)
+                                : (spec.label + ' models and effort support refreshed (' + n + ')'),
+                            failed ? 'error' : 'success');
+                        }
+                    })
+                    .catch(() => {})
+                    .finally(() => {
+                        if (!isMutationCurrent(mutationToken)) return;
+                        state[k('ModelsLoading')] = false;
+                        state[k('ModelsTried')] = key;
+                        finishProviderUi();
+                    });
+            }
+
+            function buildModelItems(filterLower, opts) {
+                if (!hasChip()) return [];
+                const f = (filterLower || '').toLowerCase().trim();
+                if (!f) return [];
+                loadModels(true);
+                const models = state[k('Models')] || [];
+                const modelFilter = M.harnessModelFilterForPalette(id, f);
+                const preferred = String(state[k('Model')] || '').toLowerCase();
+                const flag = id + 'Model';
+                const refreshItem = {
+                    category: id + '-model', prefix: '/' + id + ' model refresh',
+                    label: 'Refresh ' + spec.label + ' models', hint: spec.refreshHint,
+                    meta: 'refresh', keywords: id + ' model refresh reload sync catalog',
+                    modelId: '__refresh__', [flag]: true,
+                };
+                const items = (!modelFilter || itemMatches(refreshItem, modelFilter)) ? [refreshItem] : [];
+                if (state[k('ModelsLoading')] && !models.length) {
+                    items.push({
+                        category: id + '-model', prefix: '/' + id + ' model',
+                        label: 'Loading ' + spec.label + ' models…', hint: 'Reading the ' + spec.label + ' model catalog',
+                        meta: '', keywords: id + ' model loading', modelId: '', [flag]: true, disabled: true,
+                    });
+                    return items;
+                }
+                const mapped = models
+                    .map((m) => M.buildHarnessModelRow(spec, m, preferred))
+                    .filter(Boolean)
+                    .filter((item) => (modelFilter ? itemMatches(item, modelFilter) : true));
+                const MAX = (opts && opts.full) ? Infinity : 40;
+                mapped.sort((a, b) => slashApi.slashPaletteItemSearchRank(a, f) - slashApi.slashPaletteItemSearchRank(b, f));
+                if (mapped.length > MAX) {
+                    items.push({
+                        category: id + '-model', prefix: '/' + id + ' model',
+                        label: '… ' + (mapped.length - MAX) + ' more — type to narrow (e.g. ' + spec.filterExample + ')',
+                        hint: spec.label + ' catalog has ' + (state[k('ModelsCount')] || mapped.length) + ' models',
+                        meta: '', keywords: id + ' model more filter', modelId: '', [flag]: true, disabled: true,
+                    });
+                }
+                return items.concat(mapped.length > MAX ? mapped.slice(0, MAX) : mapped);
+            }
+
+            function loadEffort() {
+                if (state[k('EffortDirty')]) return;
+                const key = sessionKey();
+                const gate = M.harnessEffortFetchForPalette(id, {
+                    hasChip: hasChip(), loading: state[k('EffortLoading')],
+                    effortKey: state[k('EffortKey')], sessionKey: key,
+                });
+                if (!gate.fetch) return;
+                const generation = beginFetch(k('EffortGen'));
+                state[k('EffortLoading')] = true;
+                const mutationToken = captureMutation(id + ':effort:read');
+                doFetch(gate.url, { cache: 'no-store' })
+                    .then((r) => r.json())
+                    .then((j) => {
+                        if (!isMutationCurrent(mutationToken)) return;
+                        if (state[k('EffortDirty')] || !isCurrentFetch(k('EffortGen'), generation)) return;
+                        state[k('Effort')] = M.applyHarnessEffortResponse(j);
+                        state[k('EffortKey')] = key;
+                        renderChips();
+                        repaintBadges();
+                        persistSticky();
+                        refreshHistoryChips();
+                    })
+                    .catch(() => {})
+                    .finally(() => {
+                        if (!isMutationCurrent(mutationToken)) return;
+                        state[k('EffortLoading')] = false;
+                    });
+            }
+
+            function buildEffortItems(filterLower) {
+                if (!agentSupportsEffort(id) || !hasChip()) return [];
+                const f = (filterLower || '').toLowerCase().trim();
+                if (!f) return [];
+                loadEffort();
+                const effortFilter = M.harnessEffortFilterForPalette(id, f);
+                const preferred = String(state[k('Effort')] || '').toLowerCase();
+                const selectedModel = String(state[k('Model')] || '').toLowerCase();
+                const levels = M.harnessEffortLevelsForModel({
+                    selectedModel, models: state[k('Models')], commonEfforts: state[k('CommonEfforts')],
+                });
+                const note = (label, hint, keywords) => [{
+                    category: id + '-effort', prefix: '/' + id + ' effort', label, hint, meta: '',
+                    keywords: id + ' effort ' + keywords, modelId: '', [id + 'Effort']: true, disabled: true,
+                }];
+                if (!levels.length) {
+                    return state[k('ModelsLoading')]
+                        ? note('Loading ' + spec.label + ' effort support…', 'Reading per-model levels', 'loading')
+                        : note('No effort levels for ' + (selectedModel || 'the CLI default'),
+                            'This model takes no --effort level; refresh the catalog if that looks wrong', 'none refresh');
+                }
+                const items = levels
+                    .map((lvl) => M.buildHarnessEffortRow(spec, lvl, { preferredLower: preferred, selectedModel }))
+                    .filter((item) => (effortFilter ? itemMatches(item, effortFilter) : true));
+                if (!items.length && effortFilter) {
+                    return note('`' + effortFilter + '` is not supported' + (selectedModel ? ' by ' + selectedModel : ''),
+                        'Supported: ' + levels.join(', '), 'unsupported ' + effortFilter);
+                }
+                return items;
+            }
+
+            function persistModel(modelId) {
+                const mid = String(modelId || '').trim();
+                if (!mid) return;
+                state[k('ModelsLoading')] = false;
+                beginFetch(k('ModelsGen'));
+                if (M.isHarnessModelRefreshPick(mid)) {
+                    state[k('ModelsKey')] = '';
+                    state[k('Models')] = [];
+                    loadModels(true, { refresh: true });
+                    return;
+                }
+                state[k('Model')] = mid;
+                state[k('Models')] = M.markHarnessCurrentModel(state[k('Models')], mid);
+                const sid = sessionKey();
+                state[k('ModelDirty')] = true;
+                if (!sid) {
+                    state[k('ModelsKey')] = '';
+                    return;
+                }
+                const mutationToken = captureMutation(id + ':model');
+                doSessionMutationFetch('/api/' + id + '/model', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session: sid, model: mid }),
+                })
+                    .then((r) => r.json())
+                    .then((j) => {
+                        if (!isMutationCurrent(mutationToken) || !(j && j.success)) return;
+                        state[k('Model')] = mid;
+                        state[k('ModelDirty')] = false;
+                        state[k('ModelsKey')] = sid;
+                        // The server cleared an effort pin the new model does not offer.
+                        if (j.droppedEffort && !state[k('EffortDirty')]) state[k('Effort')] = '';
+                        repaintBadges();
+                        persistSticky();
+                        refreshHistoryChips();
+                    })
+                    .catch(() => {});
+            }
+
+            function persistEffort(effort) {
+                const lvl = String(effort || '').trim().toLowerCase();
+                if (!lvl) return;
+                state[k('EffortLoading')] = false;
+                beginFetch(k('EffortGen'));
+                state[k('Effort')] = lvl;
+                const sid = sessionKey();
+                state[k('EffortDirty')] = true;
+                state[k('EffortKey')] = sid;
+                if (!sid) return;
+                const mutationToken = captureMutation(id + ':effort');
+                doSessionMutationFetch('/api/' + id + '/effort', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session: sid, effort: lvl, model: state[k('Model')] || '' }),
+                })
+                    .then((r) => r.json())
+                    .then((j) => {
+                        if (!isMutationCurrent(mutationToken) || !(j && j.success)) return;
+                        state[k('EffortKey')] = sid;
+                        state[k('EffortDirty')] = false;
+                    })
+                    .catch(() => {});
+            }
+
+            function seed(data, sid) {
+                if (!data || typeof data !== 'object') return;
+                const patch = M.harnessSeedPatchFromSessionData(id, data, {
+                    modelDirty: state[k('ModelDirty')], effortDirty: state[k('EffortDirty')],
+                    sessionKey: sid != null ? String(sid) : '',
+                });
+                if (patch.model !== undefined) state[k('Model')] = patch.model;
+                if (patch.modelsKey !== undefined) state[k('ModelsKey')] = patch.modelsKey;
+                if (patch.effort !== undefined) state[k('Effort')] = patch.effort;
+                if (patch.effortKey !== undefined) state[k('EffortKey')] = patch.effortKey;
+            }
+
+            function enrich(replySlash, model, effort) {
+                return enrichSlashCommandWithAgentPin(replySlash, {
+                    agentName: spec.label, category: id, model, effort,
+                    prettyModel: String(model || '').trim() ? pretty(model) : '',
+                    slashMeta: '/' + id,
+                    matchChip: (chip) => {
+                        const src = String((chip && (chip.meta || chip.prefix || chip.label)) || '');
+                        return new RegExp('^/' + id + '\\b', 'i').test(src) || spec.badgeRe.test(String((chip && chip.label) || ''));
+                    },
+                });
+            }
+
+            /** Composer pin entry for buildAgentPinsForRequest. */
+            const requestPins = () => ({
+                model: state[k('Model')], effort: state[k('Effort')],
+                modelDirty: state[k('ModelDirty')], effortDirty: state[k('EffortDirty')],
+            });
+
+            function reset(full) {
+                state[k('Models')] = [];
+                state[k('ModelsKey')] = '';
+                state[k('ModelsLoading')] = false;
+                state[k('ModelsTried')] = null;
+                state[k('EffortKey')] = '';
+                state[k('ModelsGen')] = (state[k('ModelsGen')] || 0) + 1;
+                if (!full) return;
+                state[k('Model')] = '';
+                state[k('Effort')] = '';
+                state[k('ModelDirty')] = false;
+                state[k('EffortDirty')] = false;
+                state[k('EffortLoading')] = false;
+            }
+
+            function flushDirty() {
+                if (state[k('ModelDirty')]) {
+                    state[k('ModelDirty')] = false;
+                    persistModel(state[k('Model')]);
+                }
+                if (state[k('EffortDirty')]) {
+                    state[k('EffortDirty')] = false;
+                    persistEffort(state[k('Effort')]);
+                }
+            }
+
+            /** Palette pick (model/effort row) → true when handled. */
+            function handlePick(cmd) {
+                if (!cmd || cmd.disabled) return false;
+                if (cmd.category === id + '-model') {
+                    persistModel(cmd.modelId);
+                    if (!M.isHarnessModelRefreshPick(cmd.modelId)) toast(spec.label + ' model: ' + modelLabel(cmd.modelId), 'success');
+                    return true;
+                }
+                if (cmd.category === id + '-effort') {
+                    persistEffort(cmd.modelId);
+                    repaintBadges();
+                    toast(spec.label + ' reasoning effort: ' + (cmd.modelId || 'default'), 'success');
+                    return true;
+                }
+                return false;
+            }
+
+            /** Agent chip config modal spec (models + efforts). */
+            const menuSpec = () => ({
+                models: { build: (opts) => buildModelItems('model', opts), load: () => loadModels(true), set: persistModel,
+                    current: () => String(state[k('Model')] || '').toLowerCase() },
+                efforts: { build: () => buildEffortItems('effort'), load: () => loadEffort(), set: persistEffort,
+                    current: () => String(state[k('Effort')] || '').toLowerCase(), repaint: repaintBadges },
+            });
+
+            return {
+                spec, hasChip, badgeLabel, repaintBadges, loadModels, loadEffort, buildModelItems, buildEffortItems,
+                persistModel, persistEffort, seed, enrich, requestPins, reset, flushDirty, handlePick, menuSpec,
+                modelLabel, prettyModelLabel: pretty,
+                isBareLabel: (label) => spec.bareRe.test(String(label || '').trim()),
+                tooltip: () => {
+                    const model = String(state[k('Model')] || '').trim();
+                    const eff = String(state[k('Effort')] || '').trim();
+                    return model ? ' · model `' + model + '` · /' + id + ' model … to change'
+                        + (eff ? ' · effort `' + eff + '`' : '') : '';
+                },
+            };
+        }
+
+        const harnessPinControllers = {};
+        HARNESS_PIN_SPECS.forEach((spec) => { harnessPinControllers[spec.id] = createHarnessPins(spec); });
+        const eachHarnessPins = (fn) => Object.values(harnessPinControllers).forEach(fn);
+        /** Controller for a generic pinned harness id, or null. */
+        const harnessPins = (agentId) => harnessPinControllers[String(agentId || '').toLowerCase()] || null;
+
         // ── Muse selection persistence ────────────────────────────────────
         /** Persist the chat's Muse model pick (palette click — no message sent). */
         function persistMuseModelSelection(modelId) {
@@ -1778,6 +2141,7 @@
             S.opencodeModelsGen = (S.opencodeModelsGen || 0) + 1;
             S.codexModelsGen = (S.codexModelsGen || 0) + 1;
             S.claudeModelsGen = (S.claudeModelsGen || 0) + 1;
+            eachHarnessPins((h) => h.reset((prev && next) || !next));
             if (prev && next) {
                 S.preferredModel = 'auto';
                 S.lastReportedModel = null;
@@ -1879,6 +2243,7 @@
                 state.claudeEffortDirty = false;
                 persistClaudeEffortSelection(state.claudeEffort);
             }
+            eachHarnessPins((h) => h.flushDirty());
         }
 
         // ── Labels ────────────────────────────────────────────────────────
@@ -2353,7 +2718,9 @@
             const isOpenCode = agentId === 'opencode' || stickyPrefix.startsWith('/opencode');
             const isCodex = agentId === 'codex' || stickyPrefix.startsWith('/codex');
             const isClaude = agentId === 'claude' || stickyPrefix.startsWith('/claude');
-            if (!isMuse && !isHermes && !isOpenCode && !isCodex && !isClaude) return replySlash || null;
+            const pinned = harnessPins(agentId) || Object.values(harnessPinControllers)
+                .find((h) => stickyPrefix.startsWith('/' + h.spec.id)) || null;
+            if (!isMuse && !isHermes && !isOpenCode && !isCodex && !isClaude && !pinned) return replySlash || null;
             const model = String(
                 (data && (data.agent_model || data.model)) || ''
             ).trim();
@@ -2365,6 +2732,7 @@
                     state.opencodeEffort,
                     state.codexEffort,
                     state.claudeEffort,
+                    pinned ? state[pinned.spec.id + 'Effort'] : '',
                 ],
             });
             let out = replySlash || null;
@@ -2373,6 +2741,7 @@
             else if (isOpenCode) out = enrichSlashCommandWithOpenCodeModel(out, model, effort);
             else if (isCodex) out = enrichSlashCommandWithCodexModel(out, model, effort);
             else if (isClaude) out = enrichSlashCommandWithClaudeModel(out, model, effort);
+            else if (pinned) out = pinned.enrich(out, model, effort);
             const warn = String((data && (data.drift_warning || data.effort_ignored)) || '').trim();
             if (warn) {
                 try { console.warn('[badge-drift]', warn); } catch (_) {}
@@ -2422,6 +2791,7 @@
                         model: S.preferredModel, effort: '',
                         modelDirty: false, effortDirty: false,
                     },
+                    ...Object.fromEntries(Object.values(harnessPinControllers).map((h) => [h.spec.id, h.requestPins()])),
                 },
             });
             if (Object.keys(pins).length) requestBody.agent_pins = pins;
@@ -2680,6 +3050,10 @@
             } else if (aid === 'cursor') {
                 state.cursorModelsLoaded = false;
                 loadCursorAgentModelsForPalette(true);
+            } else if (harnessPins(aid)) {
+                harnessPins(aid).reset(false);
+                harnessPins(aid).loadModels(true);
+                harnessPins(aid).loadEffort();
             }
         }
 
@@ -2698,6 +3072,13 @@
                 state.codexModelsKey = '';
                 state.codexModels = [];
                 loadCodexModelsForPalette(true, { refresh: true });
+                return;
+            }
+            const outboundPins = Object.values(harnessPinControllers)
+                .find((h) => new RegExp('\\b/' + h.spec.id + '\\b').test(low) || h.hasChip());
+            if (outboundPins) {
+                outboundPins.reset(false);
+                outboundPins.loadModels(true, { refresh: true });
                 return;
             }
             if (/\b\/claude\b/.test(low) || (d.hasActiveHarness && d.hasActiveHarness('claude'))) {
@@ -2777,6 +3158,7 @@
             S.claudeEffort = '';
             S.claudeEffortKey = '';
             S.claudeEffortLoading = false;
+            eachHarnessPins((h) => h.reset(true));
         }
 
         return {
@@ -2868,6 +3250,16 @@
             toggleStarredAgentDefault: toggleStarredAgentDefault,
             refreshAgentPreferenceAfterStar: refreshAgentPreferenceAfterStar,
             maybeRefreshModelsCatalogFromOutbound: maybeRefreshModelsCatalogFromOutbound,
+            // Generic badge-gated harness pins (HARNESS_PIN_SPECS)
+            harnessPins: harnessPins,
+            harnessPinIds: () => Object.keys(harnessPinControllers),
+            loadActiveHarnessPins: () => eachHarnessPins((h) => { if (h.hasChip()) { h.loadModels(); h.loadEffort(); } }),
+            seedHarnessPinsFromSessionData: (data, sid) => eachHarnessPins((h) => h.seed(data, sid)),
+            buildHarnessPinPaletteItems: (f) => [].concat(...Object.values(harnessPinControllers)
+                .map((h) => h.buildModelItems(f).concat(h.buildEffortItems(f)))),
+            enrichHarnessPinsSlash: (slash) => Object.values(harnessPinControllers).reduce(
+                (acc, h) => h.enrich(acc, state[h.spec.id + 'Model'], state[h.spec.id + 'Effort']), slash),
+            handleHarnessPinPick: (cmd) => Object.values(harnessPinControllers).some((h) => h.handlePick(cmd)),
         };
     }
 
@@ -2878,6 +3270,7 @@
     const api = {
         create: create,
         createProviderState: createProviderState,
+        HARNESS_PIN_SPECS: HARNESS_PIN_SPECS,
         MUSE_EFFORT_LEVELS: MUSE_EFFORT_LEVELS,
         HERMES_EFFORT_LEVELS: HERMES_EFFORT_LEVELS,
         OPENCODE_EFFORT_LEVELS: OPENCODE_EFFORT_LEVELS,

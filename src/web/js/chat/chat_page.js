@@ -3345,7 +3345,7 @@
         'opencode-model', 'opencode-effort', 'opencode-cmd',
         'codex-model', 'codex-effort', 'codex-cmd',
         'claude-model', 'claude-effort', 'claude-cmd',
-        'deepseek-cmd', 'antigravity-cmd',
+        'deepseek-cmd', 'antigravity-cmd', 'antigravity-model', 'antigravity-effort',
     ];
 
     const MODEL_STAR_SPEC_BY_CATEGORY = {
@@ -3360,6 +3360,7 @@
         'codex-effort': { agent: 'codex', kind: 'effort' },
         'claude-model': { agent: 'claude', kind: 'model' },
         'claude-effort': { agent: 'claude', kind: 'effort' },
+        'antigravity-model': { agent: 'antigravity', kind: 'model' }, 'antigravity-effort': { agent: 'antigravity', kind: 'effort' },
     };
 
     function loadAgentCapabilities() {
@@ -4143,6 +4144,7 @@
                 const isOpenCode = isStickyOpenCodeAgentChip(chip);
                 const isCodex = isStickyCodexAgentChip(chip);
                 const isClaude = isStickyAgentChip(chip, 'claude');
+                const pinH = isStickyAgentChip(chip, composerChipAgentId(chip)) ? agentControls.harnessPins(composerChipAgentId(chip)) : null;
                 const museModel = (slashPaletteSupplement.museModel || '').trim();
                 const museEffortBadge = (slashPaletteSupplement.museEffort || '').trim();
                 const hermesModel = (slashPaletteSupplement.hermesModel || '').trim();
@@ -4187,6 +4189,8 @@
                         claudeModel ? prettyClaudeModelLabel(claudeModel) : '',
                         claudeEffortBadge
                     ) || chip.label;
+                } else if (pinH) {
+                    displayLabel = pinH.badgeLabel() || chip.label;
                 }
                 if (orchestrateChip.isChip(chip)) displayLabel = orchestrateChip.label(chip);
                 const safeLabel = escapeHtmlInline(displayLabel);
@@ -4217,6 +4221,8 @@
                 } else if (isClaude && claudeModel) {
                     tipBase += ' · model `' + claudeModel + '` · /claude model … to change';
                     if (claudeEffortBadge) tipBase += ' · effort `' + claudeEffortBadge + '`';
+                } else if (pinH) {
+                    tipBase += pinH.tooltip();
                 }
                 const tip = escapeHtmlInline(tipBase).replace(/"/g, '&quot;');
                 const catClass = slashCommandChipCategoryClass(
@@ -4225,7 +4231,7 @@
                 const labelInner = slashChipLabelInnerHtml(displayLabel);
                 // Agent badges: multi-tone segments (model truncates; effort stays).
                 // Bare agent chips still skip hyphen-chop.
-                const noShortenClass = (isCursor || isMuse || isHermes || isOpenCode || isCodex || isClaude || labelInner.segmented)
+                const noShortenClass = (isCursor || isMuse || isHermes || isOpenCode || isCodex || isClaude || pinH || labelInner.segmented)
                     ? ' slash-command-chip--no-shorten'
                     : '';
                 const segmentedClass = labelInner.segmented
@@ -4301,6 +4307,7 @@
             agentControls.loadClaudeModelsForPalette();
             agentControls.loadClaudeEffortForPalette();
         }
+        agentControls.loadActiveHarnessPins();
         row.querySelectorAll('.slash-chip-remove').forEach((btn) => {
             btn.addEventListener('click', () => {
                 const i = parseInt(btn.getAttribute('data-chip-index'), 10);
@@ -4343,14 +4350,14 @@
             opencode: { build: (opts) => agentControls.buildOpenCodeModelPaletteItems('model', opts), load: () => agentControls.loadOpenCodeModelsForPalette(true), set: persistOpenCodeModelSelection, current: () => String(S.opencodeModel || '').toLowerCase() },
             codex: { build: (opts) => agentControls.buildCodexModelPaletteItems('model', opts), load: () => agentControls.loadCodexModelsForPalette(true), set: persistCodexModelSelection, current: () => String(S.codexModel || '').toLowerCase() },
             claude: { build: (opts) => agentControls.buildClaudeModelPaletteItems('model', opts), load: () => agentControls.loadClaudeModelsForPalette(true), set: persistClaudeModelSelection, current: () => String(S.claudeModel || '').toLowerCase() },
-        }[id];
+        }[id] || (agentControls.harnessPins(id) && agentControls.harnessPins(id).menuSpec().models);
         const efforts = {
             muse: { build: () => agentControls.buildMuseEffortPaletteItems('effort'), load: () => agentControls.loadMuseEffortForPalette(), set: persistMuseEffortSelection, current: () => String(S.museEffort || '').toLowerCase(), repaint: repaintMuseUserBadges },
             hermes: { build: () => agentControls.buildHermesEffortPaletteItems('effort'), load: () => agentControls.loadHermesEffortForPalette(), set: persistHermesEffortSelection, current: () => String(S.hermesEffort || '').toLowerCase(), repaint: repaintHermesUserBadges },
             opencode: { build: () => agentControls.buildOpenCodeEffortPaletteItems('effort'), load: () => agentControls.loadOpenCodeEffortForPalette(), set: persistOpenCodeEffortSelection, current: () => String(S.opencodeEffort || '').toLowerCase(), repaint: repaintOpenCodeUserBadges },
             codex: { build: () => agentControls.buildCodexEffortPaletteItems('effort'), load: () => agentControls.loadCodexEffortForPalette(), set: persistCodexEffortSelection, current: () => String(S.codexEffort || '').toLowerCase(), repaint: repaintCodexUserBadges },
             claude: { build: () => agentControls.buildClaudeEffortPaletteItems('effort'), load: () => agentControls.loadClaudeEffortForPalette(), set: persistClaudeEffortSelection, current: () => String(S.claudeEffort || '').toLowerCase(), repaint: repaintClaudeUserBadges },
-        }[id];
+        }[id] || (agentControls.harnessPins(id) && agentControls.harnessPins(id).menuSpec().efforts);
         if (!models && !efforts) return null;
         return { models: models || null, efforts: efforts || null, billing: agentBilling.spec(id) };
     }
@@ -4654,6 +4661,7 @@
         seedOpenCodeSupplementFromSessionData(data, sessionId);
         seedCodexSupplementFromSessionData(data, sessionId);
         seedClaudeSupplementFromSessionData(data, sessionId);
+        agentControls.seedHarnessPinsFromSessionData(data, sessionId);
         applySharedComposerSelection(data, sessionId);
     }
 
@@ -5163,6 +5171,7 @@
                 effort
             );
         }
+        if (agentControls.harnessPins(id)) return agentControls.harnessPins(id).badgeLabel();
         return '';
     }
 
@@ -5176,6 +5185,7 @@
         if (id === 'opencode') return /^opencode$/i.test(lab);
         if (id === 'codex') return /^codex$/i.test(lab);
         if (id === 'claude') return /^claude(\s+code)?$/i.test(lab);
+        if (agentControls.harnessPins(id)) return agentControls.harnessPins(id).isBareLabel(lab);
         return false;
     }
 
@@ -5214,7 +5224,8 @@
                 || paletteCat === 'hermes-model' || paletteCat === 'hermes-effort' || paletteCat === 'hermes-cmd'
                 || paletteCat === 'opencode-model' || paletteCat === 'opencode-effort' || paletteCat === 'opencode-cmd'
                 || paletteCat === 'codex-model' || paletteCat === 'codex-effort' || paletteCat === 'codex-cmd'
-                || paletteCat === 'claude-model' || paletteCat === 'claude-effort' || paletteCat === 'claude-cmd')
+                || paletteCat === 'claude-model' || paletteCat === 'claude-effort' || paletteCat === 'claude-cmd'
+                || /^antigravity-(model|effort|cmd)$/.test(paletteCat))
                 ? paletteCat
                 : (id || paletteCat || c.category || 'command');
             if (label === String(c.label || '').trim() && nextCat === c.category) return c;
@@ -5416,7 +5427,7 @@
                 slashPaletteSupplement.claudeModel,
                 slashPaletteSupplement.claudeEffort
             );
-            return slash;
+            return agentControls.enrichHarnessPinsSlash(slash);
         }
         const preferred = (slashPaletteSupplement.preferredModel || 'auto').trim() || 'auto';
         // Synthetic run carries the requested model so enrichSlashCommandWithCursorRun
@@ -11080,7 +11091,7 @@
             const baseSc = hasStoredChips
                 ? sc
                 : (parentSpeaker ? null : slashCommandMetaFromUserMessage(content));
-            const userSc = hasStoredChips || parentSpeaker ? baseSc : enrichSlashCommandWithClaudeModel(enrichSlashCommandWithCodexModel(
+            const userSc = hasStoredChips || parentSpeaker ? baseSc : agentControls.enrichHarnessPinsSlash(enrichSlashCommandWithClaudeModel(enrichSlashCommandWithCodexModel(
                 enrichSlashCommandWithOpenCodeModel(
                     enrichSlashCommandWithHermesModel(
                         enrichSlashCommandWithMuseModel(
@@ -11096,7 +11107,7 @@
                 ),
                 slashPaletteSupplement.codexModel,
                 slashPaletteSupplement.codexEffort
-            ), slashPaletteSupplement.claudeModel, slashPaletteSupplement.claudeEffort);
+            ), slashPaletteSupplement.claudeModel, slashPaletteSupplement.claudeEffort));
             const chips = (userSc && userSc.chips)
                 ? normalizeAgentSlashChips(userSc.chips, null)
                 : [];

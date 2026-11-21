@@ -106,6 +106,7 @@
         'opencode',
         'codex',
         'claude',
+        'antigravity',
     ];
     const SLASH_PALETTE_TYPE_FILTER_KEY = 'cuttleSlashPaletteTypeFilter';
 
@@ -311,6 +312,7 @@
             const codexEfforts = agentControls.buildCodexEffortPaletteItems(f);
             const claudeModels = agentControls.buildClaudeModelPaletteItems(f);
             const claudeEfforts = agentControls.buildClaudeEffortPaletteItems(f);
+            const harnessPinItems = agentControls.buildHarnessPinPaletteItems(f);
             const restartCmds = buildRestartPaletteItems(f).filter((c) =>
                 S.slashPaletteItemMatches(c, f)
             );
@@ -376,6 +378,7 @@
                         .concat(codexEfforts)
                         .concat(claudeModels)
                         .concat(claudeEfforts)
+                        .concat(harnessPinItems)
                 );
             }
 
@@ -929,6 +932,21 @@
                 renderBoth();
                 agentControls.repaintOpenCodeUserBadges();
                 toast('OpenCode reasoning effort: ' + (eid || 'default'), 'success');
+                finish();
+                return;
+            }
+
+            // Generic badge-gated harness picks (Antigravity, …) — chat setting, no message sent.
+            if (/^[a-z]+-(model|effort)$/.test(cmd.category || '') && cmd[String(cmd.category).replace(/-(model|effort)$/, '') + (/-model$/.test(cmd.category) ? 'Model' : 'Effort')]
+                && agentControls.harnessPins(String(cmd.category).replace(/-(model|effort)$/, ''))) {
+                if (cmd.disabled) return;
+                textarea.value = v.slice(0, from) + v.slice(to);
+                agentControls.handleHarnessPinPick(cmd);
+                state.replaceRange = null;
+                state.filtered = [];
+                state.paletteDismissed = false;
+                hideMenu(key);
+                renderBoth();
                 finish();
                 return;
             }
