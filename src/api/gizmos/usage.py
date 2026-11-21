@@ -1,7 +1,8 @@
 """Normalized plan-usage snapshots for usage-meter gizmos.
 
 Every vendor reports plan limits differently (Codex 5-hour/weekly windows,
-Claude 5-hour/weekly/model windows, Cursor billing-cycle percentages). A meter
+Claude 5-hour/weekly/model windows, Cursor billing-cycle percentages,
+Antigravity per-model-group weekly/5-hour windows). A meter
 must never parse ``/usage`` markdown, so each provider normalizes into one
 shape::
 
@@ -252,6 +253,42 @@ def normalize_openrouter(data: Dict[str, Any], now: float) -> Dict[str, Any]:
             "blocked": blocked, "extras": extras}
 
 
+def normalize_antigravity(data: Dict[str, Any], now: float) -> Dict[str, Any]:
+    """Per-model-group windows (Gemini / Claude and GPT / Argon, weekly + 5-hour).
+
+    Groups have separate quota, so the account is blocked only when every
+    group has an exhausted window; one spent group is a note, not a block.
+    """
+    if not isinstance(data, dict) or not data.get("success"):
+        return {"error": str((data or {}).get("error") or "Antigravity usage unavailable")[:240]}
+    windows, spent = [], []
+    groups = [g for g in data.get("groups") or [] if isinstance(g, dict)]
+    for group in groups:
+        exhausted = False
+        for b in group.get("buckets") or []:
+            used = 100.0 - float(b.get("remaining_percent") or 0)
+            win = make_window(f"{group.get('name')}_{b.get('window') or b.get('id')}",
+                              f"{group.get('name')} · {b.get('label')}", used, b.get("reset_at"))
+            if win:
+                windows.append(win)
+                exhausted = exhausted or win["used_percent"] >= 100
+        if exhausted:
+            spent.append(str(group.get("name") or "group"))
+    extras: Dict[str, Any] = {}
+    credits = data.get("credits") if isinstance(data.get("credits"), dict) else {}
+    if credits:
+        extras["credits"] = str(credits.get("remaining"))
+    if spent and len(spent) < len(groups):
+        extras["note"] = "Spent: " + ", ".join(spent) + " (other model groups still run)"
+    blocked = bool(groups) and len(spent) == len(groups)
+    try:
+        blocked = blocked and float(credits.get("remaining") or 0) <= 0
+    except (TypeError, ValueError):
+        pass
+    return {"plan": "", "windows": windows, "blocked": blocked, "extras": extras,
+            "error": data.get("error"), "updated_at": data.get("updated_at")}
+
+
 # ── built-in providers ──────────────────────────────────────────────────────
 
 def _fetch_codex() -> Dict[str, Any]:
@@ -272,6 +309,12 @@ def _fetch_cursor() -> Dict[str, Any]:
     return normalize_cursor(fetch_cursor_account_usage(), time.time())
 
 
+def _fetch_antigravity() -> Dict[str, Any]:
+    from api.agent_harness.agents.antigravity.usage import fetch_antigravity_quota
+
+    return normalize_antigravity(fetch_antigravity_quota(), time.time())
+
+
 def _fetch_openrouter() -> Dict[str, Any]:
     from api.openrouter_management import fetch_credits
 
@@ -281,6 +324,7 @@ def _fetch_openrouter() -> Dict[str, Any]:
 register_provider("codex", "Codex", _fetch_codex)
 register_provider("claude", "Claude Code", _fetch_claude)
 register_provider("cursor", "Cursor", _fetch_cursor)
+register_provider("antigravity", "Antigravity", _fetch_antigravity)
 register_provider("openrouter", "OpenRouter", _fetch_openrouter)
 
 

@@ -20,7 +20,7 @@ gauge shows 0% with a hint instead of a false 100%.
 | Codex | App-server `tokenUsage.last` + `modelContextWindow` | `thread/compact/start` |
 | Claude | JSON `usage` / snapshot (distrusts aggregates) | `claude -p --resume … "/compact"` |
 | Hermes | Active non-compacted transcript in `state.db` | `hermes chat -Q -q "/compact" --resume …` |
-| Antigravity | Last-turn JSON usage | *(none — auto-compacts)* |
+| Antigravity | Last model call's prompt (`step_update.usage` input + cache read) | `agy -p "/compact" --conversation …` |
 | DeepSeek | Last model-call input, including cache | *(none — headless is one-shot)* |
 
 **Codex:** prefers live app-server occupancy after each turn / on gauge open.
@@ -32,8 +32,11 @@ active transcript (`compacted=0` rows). Session `input_tokens` is cumulative bil
 **DeepSeek:** official headless profile creates a fresh session every call — no
 `--resume` in `dsh --profile headless`. Gauge is last-turn only; Compact hidden.
 
-**Antigravity:** interactive `/context` exists; there is no documented headless
-`/compact`. Auto-compaction is internal.
+**Antigravity:** result `usage` is summed over the turn's steps (billing), so the
+gauge reads the last `step_update.usage` (input excludes cache reads, so fill =
+input + cache_read). `/context` refuses print mode; headless `/compact` runs on
+the resumed conversation; it returns `SUCCESS` with an empty response (plus a
+"no output" stderr warning). The CLI also auto-compacts.
 
 Limits come from (in order):
 
@@ -72,7 +75,7 @@ POST /api/agent-context/compact
 | Codex | `codex app-server` JSON-RPC: `thread/resume` → `thread/compact/start` |
 | Hermes | `hermes chat -Q -q "/compact" --resume …` (`/compact` aliases `/compress`) |
 | Claude Code | `claude -p --resume … "/compact"` |
-| Antigravity | *(none)* — gauge only |
+| Antigravity | `agy -p "/compact" --conversation <id>` (+ the chat's `--model` / `--effort` pin) |
 | DeepSeek | *(none)* — headless one-shot |
 
 **Not used for Codex:** `codex exec resume … "/compact"` — slash commands are
@@ -138,7 +141,7 @@ compact mid-task near the window edge. Owner: `src/api/auto_compact/`.
   an unreliable reading (billing aggregate / no usage yet).
 - **How:** `auto` uses the CLI's own compact; when the next turn still reads
   over the threshold it starts a fresh session instead. CLIs without a
-  headless compact (Antigravity) are left to manage themselves unless the mode
+  headless compact (DeepSeek) are left to manage themselves unless the mode
   is `fresh`. Failures back off (1, 2, 4, 8 turns) and stop after 4 in a row
   until a setting changes. Each compact holds the chat busy with a live
   status and leaves a `compact` timeline notice.

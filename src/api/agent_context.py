@@ -32,7 +32,7 @@ SUPPORTED_AGENTS = frozenset(
 
 # Agents with a real compact path (not just a gauge).
 _COMPACTABLE_AGENTS = frozenset(
-    {"cursor", "muse", "opencode", "codex", "hermes", "claude"}
+    {"cursor", "muse", "opencode", "codex", "hermes", "claude", "antigravity"}
 )
 
 # When catalogs miss, prefer these agent defaults (tokens).
@@ -552,6 +552,14 @@ def _resolve_model_for_agent(
             from scripts.utilities.claude_cli_session_store import load_claude_model
 
             return (load_claude_model(chat_session_id) or "").strip() or None
+        if aid == "antigravity":
+            from api.agent_harness.agents.antigravity.session_store import (
+                load_antigravity_context,
+                load_antigravity_model,
+            )
+
+            snap = load_antigravity_context(chat_session_id) or {}
+            return (load_antigravity_model(chat_session_id) or snap.get("model") or "").strip() or None
     except Exception:
         return None
     return None
@@ -732,6 +740,20 @@ def get_agent_context_status(
         except Exception:
             pass
 
+    if aid == "antigravity":
+        try:
+            from api.agent_harness.agents.antigravity.session_store import load_antigravity_context
+
+            snap = load_antigravity_context(chat_session_id)
+            # Last model call's prompt (input + cached) beats the turn's summed billing.
+            if isinstance(snap, dict) and int(snap.get("context_tokens") or 0) > 0 and (
+                not snap.get("conversation_id") or not resume_id or snap.get("conversation_id") == resume_id
+            ):
+                tokens = int(snap["context_tokens"])
+                token_source = "snapshot"
+        except Exception:
+            pass
+
     if aid == "claude":
         try:
             from scripts.utilities.claude_cli_session_store import (
@@ -782,11 +804,10 @@ def get_agent_context_status(
     compact_ok = aid in _COMPACTABLE_AGENTS
     hint = _status_hint(pct, tokens, resume_id, token_source=token_source)
     if aid == "antigravity":
-        compact_ok = False
         if tokens <= 0:
             hint = (
                 "Waiting for the next Antigravity turn to report usage. "
-                "Antigravity auto-manages context (no headless /compact)."
+                "Antigravity also auto-compacts on its own; Compact runs `/compact`."
             )
     elif aid == "hermes" and tokens <= 0:
         hint = (
@@ -1181,6 +1202,13 @@ def _compact_claude(cwd: str, resume_id: str, chat_session_id: Any = None) -> Di
     return result
 
 
+def _compact_antigravity(cwd: str, resume_id: str, chat_session_id: Any = None) -> Dict[str, Any]:
+    """Antigravity compact via ``agy -p "/compact" --conversation …`` (adapter-owned)."""
+    from api.agent_harness.agents.antigravity.adapter import compact_conversation
+
+    return compact_conversation(cwd, resume_id, chat_session_id)
+
+
 def compact_agent_context(
     *,
     chat_session_id: Any,
@@ -1203,7 +1231,7 @@ def compact_agent_context(
             "agent_id": aid,
             "error": (
                 f"{aid} has no headless compact API in Cuttle "
-                "(Antigravity auto-manages context; DeepSeek headless is one-shot)."
+                "(DeepSeek headless is one-shot)."
             ),
         }
     work = (cwd or "").strip() or os.getcwd()
@@ -1236,6 +1264,8 @@ def compact_agent_context(
         result = _compact_hermes(work, resume_id)
     elif aid == "claude":
         result = _compact_claude(work, resume_id, chat_session_id)
+    elif aid == "antigravity":
+        result = _compact_antigravity(work, resume_id, chat_session_id)
     else:
         result = _compact_opencode(work, resume_id)
     result["elapsed_ms"] = int((time.monotonic() - started) * 1000)

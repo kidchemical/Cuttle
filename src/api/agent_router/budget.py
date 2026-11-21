@@ -3,7 +3,7 @@
 A fixed default → escalate → fallback walk discovers an exhausted account the
 expensive way: by failing on it. Cuttle already knows the answer — the same
 plan windows ``/usage`` shows (Codex 5-hour/weekly, Claude 5-hour/weekly,
-Cursor included API usage). With budget awareness on, the router reads them
+Cursor included API usage, Antigravity per-model-group weekly/5-hour). With budget awareness on, the router reads them
 *before* picking a target: blocked accounts move to the back of the chain,
 nearly-spent ones behind healthy ones, and the declared order is kept
 otherwise (it is still your preference).
@@ -168,6 +168,30 @@ def parse_cursor(data: Dict[str, Any], now: float) -> Account:
     return acc
 
 
+def parse_antigravity(data: Dict[str, Any], now: float) -> Account:
+    """Model groups have separate quota: headroom is the best group's tightest
+    window, and the account is blocked only when every group is spent."""
+    acc = Account("antigravity", fetched_at=now)
+    if not data or not data.get("success"):
+        acc.error = str((data or {}).get("error") or "no data")[:120]
+        return acc
+    groups = [g for g in data.get("groups") or [] if isinstance(g, dict) and g.get("buckets")]
+    best, parts, resets, spent = None, [], [], 0
+    for g in groups:
+        left = min(float(b.get("remaining_percent") or 0) for b in g["buckets"]) / 100.0
+        best = left if best is None else max(best, left)
+        parts.append(f"{g.get('name') or 'group'} {left * 100:.0f}% left")
+        if left <= 0:
+            spent += 1
+            resets.extend(float(b["reset_at"]) for b in g["buckets"]
+                          if b.get("reset_at") and float(b.get("remaining_percent") or 0) <= 0)
+    acc.blocked = bool(groups) and spent == len(groups)
+    acc.headroom = best
+    acc.reset_at = min(resets) if acc.blocked and resets else None
+    acc.label = " · ".join(parts)
+    return acc
+
+
 def _fetchers() -> Dict[str, Tuple[Callable[[], Dict[str, Any]], Callable[[Dict[str, Any], float], Account]]]:
     def codex():
         from api.agent_usage import fetch_codex_account_usage
@@ -184,7 +208,13 @@ def _fetchers() -> Dict[str, Tuple[Callable[[], Dict[str, Any]], Callable[[Dict[
 
         return fetch_cursor_account_usage()
 
-    return {"codex": (codex, parse_codex), "claude": (claude, parse_claude), "cursor": (cursor, parse_cursor)}
+    def antigravity():
+        from api.agent_harness.agents.antigravity.usage import fetch_antigravity_quota
+
+        return fetch_antigravity_quota()
+
+    return {"codex": (codex, parse_codex), "claude": (claude, parse_claude), "cursor": (cursor, parse_cursor),
+            "antigravity": (antigravity, parse_antigravity)}
 
 
 # ── cache ────────────────────────────────────────────────────────────────────

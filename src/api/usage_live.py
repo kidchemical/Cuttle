@@ -8,7 +8,7 @@ import uuid
 from flask import Blueprint, jsonify, request
 from api.http_authz import owner_required
 
-AGENTS = frozenset({"cursor", "codex", "muse", "hermes", "opencode", "claude"})
+AGENTS = frozenset({"cursor", "codex", "muse", "hermes", "opencode", "claude", "antigravity"})
 TTL = 60
 _cache = {}
 _locks = {}
@@ -53,7 +53,7 @@ def usage_snapshot(agent, days=30):
                 markdown = _run_cursor_usage()
             else:
                 reporter = getattr(agent_usage, "run_" + agent + "_usage")
-                markdown = reporter() if agent == "codex" else reporter(days=days)
+                markdown = reporter() if agent in ("codex", "antigravity") else reporter(days=days)
             result = {"agent": agent, "days": days, "markdown": markdown,
                       "updated_at": time.time()}
         except Exception:

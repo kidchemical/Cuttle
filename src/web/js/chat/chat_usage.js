@@ -64,7 +64,7 @@
         let inclusive = typeof raw.cache_inclusive === 'boolean' ? raw.cache_inclusive : null;
         if (inclusive == null) {
             if (['muse', 'codex'].includes(agent)) inclusive = true;
-            else if (['cursor', 'claude', 'opencode', 'deepseek'].includes(agent)) inclusive = false;
+            else if (['cursor', 'claude', 'opencode', 'deepseek', 'antigravity'].includes(agent)) inclusive = false;
         }
         if (inclusive === false) total = pt + ct + cacheRead + cacheWrite;
         const out = {

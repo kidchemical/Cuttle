@@ -1128,7 +1128,7 @@ _HELP_TEXT = """**🦑 Cuttle Web Chat Commands**
 **Agent CLI commands:**
 • `/claude "prompt"` - Claude Code CLI
 • `/opencode "prompt"` - OpenCode CLI (`opencode run`, resumes per chat)
-• `/antigravity "prompt"` - Google Antigravity CLI (`agy`, auto-installs, resumes per chat)
+• `/antigravity "prompt"` - Google Antigravity CLI (`agy -p`, resumes per chat; `/antigravity model|effort|usage`)
 • `/cursor "prompt"` - Cursor Agent CLI (`agent -p`)
 • `/codex "prompt"` - OpenAI Codex CLI (`codex exec`, resumes per chat)
 • `/muse "prompt"` - Meta Muse Code CLI (`muse exec`, resumes per chat; native Windows / macOS / Linux)

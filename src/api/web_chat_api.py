@@ -5,6 +5,7 @@ Connects the landing page to the local bot functionality
 """
 
 import json
+import importlib
 import threading
 import time
 import re
@@ -419,12 +420,12 @@ try:
 except Exception as _provider_keys_err:
     print(f"[PROVIDER KEYS] Failed to register routes: {_provider_keys_err}")
 
-# Claude Code palette pins (owned by the Claude agent slice)
-try:
-    from api.agent_harness.agents.claude.routes import claude_bp
-    app.register_blueprint(claude_bp)
-except Exception as _claude_err:
-    print(f"[CLAUDE] Failed to register routes: {_claude_err}")
+# Claude Code + Antigravity palette pins (each owned by its agent slice)
+for _pin_agent in ("claude", "antigravity"):
+    try:
+        app.register_blueprint(importlib.import_module(f"api.agent_harness.agents.{_pin_agent}.routes").__dict__[f"{_pin_agent}_bp"])
+    except Exception as _pin_err:
+        print(f"[{_pin_agent.upper()}] Failed to register routes: {_pin_err}")
 
 # Muse Code palette pins (owned by the Muse agent slice)
 try:
@@ -2564,13 +2565,12 @@ def _apply_request_agent_pins(session_id, data, message_text=None) -> None:
     except Exception as exc:
         print(f"[CHAT] apply opencode agent_pins failed: {exc}", flush=True)
 
-    try:
-        claude = _entry('claude')
-        if claude:
-            from api.agent_harness.agents.claude.routes import apply_request_pins
-            apply_request_pins(session_id, claude)
-    except Exception as exc:
-        print(f"[CHAT] apply claude agent_pins failed: {exc}", flush=True)
+    for pin_agent in ('claude', 'antigravity'):
+        try:
+            if _entry(pin_agent):
+                importlib.import_module(f'api.agent_harness.agents.{pin_agent}.routes').apply_request_pins(session_id, _entry(pin_agent))
+        except Exception as exc:
+            print(f"[CHAT] apply {pin_agent} agent_pins failed: {exc}", flush=True)
 
     try:
         cursor = _entry('cursor')

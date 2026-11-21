@@ -72,6 +72,7 @@ PRICING_ENTRIES: List[Dict[str, Any]] = [
     {"provider": "deepseek", "model_id": "deepseek-v4-flash", "name": "DeepSeek V4 Flash", "input": 0.15, "output": 0.6},
     {"provider": "deepseek", "model_id": "deepseek-v4-pro", "name": "DeepSeek V4 Pro", "input": 0.435, "output": 0.87},
     {"provider": "google", "model_id": "gemini-3.7-flash", "name": "Gemini 3.7 Flash", "input": 0.75, "output": 3.75},
+    {"provider": "google", "model_id": "gemini-3.8-flash", "name": "Gemini 3.8 Flash", "input": 0.5, "output": 3.0},
     {"provider": "google", "model_id": "gemini-3.1-pro-preview", "name": "Gemini 3.1 Pro Preview", "input": 2.0, "output": 12.0},
     {"provider": "poe", "model_id": "gemini-3.1-pro", "name": "Gemini 3.1 Pro (poe)", "input": 1.5, "output": 9.0},
     {"provider": "openrouter", "model_id": "z-ai/glm-5.3-flash", "name": "GLM 5.3 Flash", "input": 0.15, "output": 0.5},
@@ -525,10 +526,18 @@ def test_deepseek_default_uses_provider_rate(pricing_cache, no_pins, monkeypatch
 
 
 def test_antigravity_effort_ids_share_base_rate(pricing_cache, no_pins, monkeypatch):
+    # `agy models` lists one slug per effort; the catalog groups them into families.
+    from api.agent_harness.agents.antigravity import model_catalog as agy_catalog
+
+    agy_catalog.clear_antigravity_catalog_cache()
+    monkeypatch.setattr(agy_catalog, "_run_agy_models", lambda: (agy_catalog.parse_agy_models(
+        "gemini-3.8-flash-high\tGemini 3.8 Flash (High)\ngemini-3.8-flash-low\tGemini 3.8 Flash (Low)\n"
+        "claude-opus-5-5-high\tClaude Opus 5.5 (High)\n"), None))
     rows = {r["model"]: r for r in _pricing_payload(run_agent_cost(_manifest("antigravity"), ""))["rows"]}
-    assert rows["gemini-3.7-flash"]["input"] == 0.75
-    assert "medium" in rows["gemini-3.7-flash"]["variants"]
-    assert rows["gemini-3.1-pro-high"]["input"] == 2.0  # google -preview row, not poe
+    agy_catalog.clear_antigravity_catalog_cache()
+    assert rows["gemini-3.8-flash"]["input"] == 0.5
+    assert "gemini-3.8-flash-low" not in rows  # efforts are a pin, not separate rows
+    assert rows["claude-opus-5-5"]["input"] == 4.0
 
 
 def test_hermes_local_model_is_free(pricing_cache, no_pins, monkeypatch):
@@ -1019,12 +1028,11 @@ console.log(JSON.stringify(out));
         assert row["nested"] is True
         assert row["stickyLeak"] is False
     # Harnesses with a /usage reporter keep it alongside /cost.
-    for agent in ("muse", "codex", "hermes", "opencode"):
+    for agent in ("muse", "codex", "hermes", "opencode", "antigravity"):
         assert res[agent]["prefixes"] == ["/usage", "/usage-live", "/cost"]
     # Claude also bills either way: one-message billing order after /cost.
     assert res["claude"]["prefixes"] == ["/usage", "/usage-live", "/cost", "/use-api ", "/use-subscription "]
-    for agent in ("deepseek", "antigravity"):
-        assert res[agent]["prefixes"] == ["/cost"]
+    assert res["deepseek"]["prefixes"] == ["/cost"]
     assert res["none"] == 0
 
 

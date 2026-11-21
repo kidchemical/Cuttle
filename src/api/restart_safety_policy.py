@@ -61,6 +61,15 @@ HARNESS_COVERAGE: Dict[str, Dict[str, Any]] = {
         ],
         "notes": "Claude Code may read AGENTS.md; no Cuttle shell intercept.",
     },
+    "antigravity": {
+        "hard_enforcement": None,
+        "hard_path": None,
+        "advisory": [
+            "AGENTS.md",
+            "cuttle_ui_capabilities / restart_safety_brief (injected on /antigravity prompts)",
+        ],
+        "notes": "Antigravity CLI runs headless with approvals bypassed; no Cuttle shell gate, advisory only.",
+    },
     "deepseek": {
         "hard_enforcement": None,
         "hard_path": None,

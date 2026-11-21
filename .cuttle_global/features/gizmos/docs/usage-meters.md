@@ -10,7 +10,7 @@ flag (default off). Tasks are established chat functionality and remain
 available through their scoped Gizmos API/CLI when this flag is off.
 
 The first type is **`usage_meter`**: plan budget left for one agent (Codex,
-Claude Code, Cursor) plus when the tightest window resets, or when a
+Claude Code, Cursor, Antigravity) plus when the tightest window resets, or when a
 blocked account unblocks. **OpenRouter** is a prepaid dollar balance rather
 than a plan window, so it shows a credit-balance **readout** (no reset). It is
 the same data as `/usage`, normalized, for the plan agents.
@@ -48,7 +48,7 @@ no restart and no chat message. Check `list` before creating a meter; do not
 create a second meter for an agent that already has one unless asked (two
 Claude meters with different `billing` views are a normal setup).
 
-`usage_meter` config: `agent` (`codex` | `claude` | `cursor` | `openrouter`),
+`usage_meter` config: `agent` (`codex` | `claude` | `cursor` | `antigravity` | `openrouter`),
 `window` (`tightest` or a window id from `usage <agent>`, e.g. `five_hour`, `weekly`),
 `show` (`remaining` | `used`), `metric` (`auto` | `amount` | `percent` — how the
 meter reads out; `amount` is only meaningful for a provider that reports
@@ -70,6 +70,12 @@ PYTHONPATH=src .venv/bin/python -m api.gizmos create usage_meter --agent claude 
 ```
 
 Changing the agent keeps a default title in step; a custom title sticks.
+
+Antigravity quota is per **model group** (Gemini, Claude and GPT, Argon), each
+with its own weekly and 5-hour window (`gemini_models_5h`,
+`claude_and_gpt_models_weekly`, … — list them with `usage antigravity`). The
+account reads as blocked only when every group is spent; pin `--window` to the
+group you actually run, since `tightest` picks the lowest across all groups.
 
 ### Notify when unblocked
 
