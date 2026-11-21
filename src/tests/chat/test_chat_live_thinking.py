@@ -128,3 +128,48 @@ def test_classic_keeps_the_collapsed_disclosure_and_no_studio_styling(browser, s
         assert errors == []
     finally:
         page.close()
+
+
+def _saved_original_response(page):
+    """A finished post-processed reply: reasoning nested in "Original response"."""
+    page.evaluate("""() => {
+        const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+        const raw = '<think>plan the fix</think><cuttle_original_response>' + JSON.stringify('Fixed it.')
+            + '</cuttle_original_response>Summary.';
+        const out = CuttleChatMessages.extractHeadStructuredBlocks(raw, { escapeHtmlInline: esc, formatMessage: esc });
+        document.getElementById('chatMessages').innerHTML = '<div class="message assistant"><div class="message-content">'
+            + out.blocks.think.join('') + '</div></div>';
+    }""")
+    return page.locator("details.response-original-block")
+
+
+def test_studio_original_response_and_nested_reasoning_match_the_thinking_box(browser, static_server):  # noqa: F811
+    page, errors = _open(browser, static_server, studio=True)
+    try:
+        _sync(page, "q1", "plan")
+        live = page.locator("#typing-indicator details.thinking-block--live")
+        style = "(n) => { const c = getComputedStyle(n); return [c.backgroundColor, c.borderRadius, c.borderLeftWidth]; }"
+        label = "(n) => { const c = getComputedStyle(n); return [c.textTransform, c.fontWeight, c.color]; }"
+        want_box, want_label = live.evaluate(style), live.locator("summary").evaluate(label)
+        original = _saved_original_response(page)
+        original.evaluate("(n) => { n.open = true; }")
+        nested = original.locator(".response-original-content > details.thinking-block")
+        expect(nested).to_have_count(1)
+        for block in (original, nested):
+            assert block.evaluate(style) == want_box
+            assert block.locator("> summary").evaluate(label) == want_label
+        assert nested.locator(".thinking-inner").evaluate("(n) => getComputedStyle(n).fontStyle") == "italic"
+        assert errors == []
+    finally:
+        page.close()
+
+
+def test_classic_original_response_keeps_its_accent_rule(browser, static_server):  # noqa: F811
+    page, errors = _open(browser, static_server, studio=False)
+    try:
+        original = _saved_original_response(page)
+        assert original.evaluate("(n) => getComputedStyle(n).borderLeftWidth") == "3px"
+        assert original.locator("> summary").evaluate("(n) => getComputedStyle(n).textTransform") == "none"
+        assert errors == []
+    finally:
+        page.close()

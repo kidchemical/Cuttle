@@ -343,6 +343,21 @@
     white-space: nowrap;
 }
 
+/* While the turn runs the tag sits at the right edge, over the bubble: the
+   sender group fills the header row and the header's children join it. */
+:root.cuttle-studio .message-sender-group:has(.studio-working-tag) {
+    flex: 1 1 auto;
+}
+
+:root.cuttle-studio .studio-agent-header:has(> .studio-working-tag) {
+    display: contents;
+}
+
+:root.cuttle-studio .message-sender-group .studio-working-tag {
+    order: 1;
+    margin-left: auto;
+}
+
 :root.cuttle-studio .chat-orch-studio-pill {
     display: inline-flex;
     align-items: center;

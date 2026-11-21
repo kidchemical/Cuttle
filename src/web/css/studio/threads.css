@@ -59,16 +59,23 @@
 }
 
 /* Live THINKING box (chat_live_thinking.js): the running turn's reasoning,
-   open by default, a few lines tall, the older lines fading at the top. */
-:root.cuttle-studio .thinking-block--live {
+   open by default, a few lines tall, the older lines fading at the top.
+   A post-processed reply's "Original response" disclosure and the finished
+   turn's reasoning nested in it share the box: same wash, label and chevron. */
+:root.cuttle-studio .thinking-block--live,
+:root.cuttle-studio .response-original-block,
+:root.cuttle-studio .response-original-content > .thinking-block {
     margin: 0 0 var(--studio-space-3, 12px);
     padding: var(--studio-space-2, 8px) var(--studio-space-3, 12px);
     border-radius: var(--studio-radius-md, 14px);
+    border: 0;
     background: var(--studio-thinking-bg);
     box-shadow: none;
 }
 
-:root.cuttle-studio .thinking-block--live > summary {
+:root.cuttle-studio .thinking-block--live > summary,
+:root.cuttle-studio .response-original-block > summary,
+:root.cuttle-studio .response-original-content > .thinking-block > summary {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -81,11 +88,15 @@
     color: var(--studio-ink-muted);
 }
 
-:root.cuttle-studio .thinking-block--live > summary::-webkit-details-marker {
+:root.cuttle-studio .thinking-block--live > summary::-webkit-details-marker,
+:root.cuttle-studio .response-original-block > summary::-webkit-details-marker,
+:root.cuttle-studio .response-original-content > .thinking-block > summary::-webkit-details-marker {
     display: none;
 }
 
-:root.cuttle-studio .thinking-block--live > summary::before {
+:root.cuttle-studio .thinking-block--live > summary::before,
+:root.cuttle-studio .response-original-block > summary::before,
+:root.cuttle-studio .response-original-content > .thinking-block > summary::before {
     content: '';
     width: 6px;
     height: 6px;
@@ -96,7 +107,9 @@
     transition: transform var(--studio-dur-fast, 160ms) var(--studio-ease-out, ease-out);
 }
 
-:root.cuttle-studio .thinking-block--live[open] > summary::before {
+:root.cuttle-studio .thinking-block--live[open] > summary::before,
+:root.cuttle-studio .response-original-block[open] > summary::before,
+:root.cuttle-studio .response-original-content > .thinking-block[open] > summary::before {
     transform: rotate(45deg);
 }
 
@@ -120,8 +133,25 @@
     mask-image: linear-gradient(to bottom, transparent 0, #000 1.5em);
 }
 
+/* Finished reasoning: the live body's type, full height (the turn is over). */
+:root.cuttle-studio .response-original-content > .thinking-block .thinking-inner {
+    margin-top: 6px;
+    padding: 0;
+    border-top: 0;
+    font-size: var(--studio-text-md, 16px);
+    line-height: var(--studio-leading-base, 1.5);
+    font-style: italic;
+    color: var(--studio-ink-muted);
+}
+
+:root.cuttle-studio .response-original-content {
+    margin-top: 6px;
+}
+
 @media (prefers-reduced-motion: reduce) {
-    :root.cuttle-studio .thinking-block--live > summary::before {
+    :root.cuttle-studio .thinking-block--live > summary::before,
+    :root.cuttle-studio .response-original-block > summary::before,
+    :root.cuttle-studio .response-original-content > .thinking-block > summary::before {
         transition: none;
     }
 }

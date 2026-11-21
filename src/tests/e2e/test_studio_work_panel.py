@@ -445,6 +445,30 @@ def test_a_stopped_bubble_drops_the_working_tag(browser, static_server):  # noqa
         context.close()
 
 
+def test_working_tag_sits_at_the_right_edge_over_the_bubble(browser, static_server):  # noqa: F811
+    context, page, errors, _store = _open(browser, static_server)
+    try:
+        out = page.evaluate("""() => {
+            const wrap = document.querySelector('#typing-indicator .message-content-wrapper');
+            wrap.insertAdjacentHTML('afterbegin', '<div class="message-header-row"><span class="message-sender-group">'
+                + '<span class="message-sender">Cuttle</span>'
+                + CuttleWorkPanel.agentHeaderHtml('codex', { label: 'Codex', working: true })
+                + '<span class="slash-command-chip slash-command-chip--header">/plan</span></span></div>');
+            const row = wrap.querySelector('.message-header-row').getBoundingClientRect();
+            const tag = wrap.querySelector('.studio-working-tag').getBoundingClientRect();
+            const chip = wrap.querySelector('.slash-command-chip').getBoundingClientRect();
+            const name = wrap.querySelector('.studio-agent-header').textContent;
+            return { gap: Math.round(row.right - tag.right), tagAfterChip: tag.left > chip.right,
+                     sameLine: Math.abs(tag.top - chip.top) < 12, name };
+        }""")
+        assert out["gap"] <= 1, out
+        assert out["tagAfterChip"] and out["sameLine"], out
+        assert out["name"].startswith("Codex"), out
+        assert errors == []
+    finally:
+        context.close()
+
+
 def test_classic_tray_header_stays_one_flat_row(browser, static_server):  # noqa: F811
     """Classic's header keeps its flat row: title, handle and status on one line; no Studio lines."""
     context, page, errors, _store = _open(browser, static_server)
