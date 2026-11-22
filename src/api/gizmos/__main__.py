@@ -39,7 +39,7 @@ def _json_arg(raw: Optional[str], name: str) -> Dict[str, Any]:
 
 def _config_from(args: argparse.Namespace) -> Dict[str, Any]:
     config = _json_arg(getattr(args, "config", None), "config")
-    for key in ("agent", "window", "show", "metric", "billing"):
+    for key in ("agent", "window", "show", "metric", "billing", "size"):
         value = getattr(args, key, None)
         if value is not None:
             config[key] = value
@@ -81,6 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--show", choices=["remaining", "used"])
         p.add_argument("--metric", choices=["auto", "amount", "percent"],
                        help="usage_meter readout: dollar amount, percent, or provider default")
+        p.add_argument("--size", choices=["regular", "micro", "pico"],
+                       help="usage_meter footprint on the blade bar / float: ring or card, slim bar, bar only")
         p.add_argument("--billing", choices=["subscription", "api", "both", "current"],
                        help="claude usage_meter: subscription windows, API credit, both, or the side billing now")
         p.add_argument("--notify-on-unblock", dest="notify_on_unblock",

@@ -20,6 +20,9 @@ pypdfium2>=5.14.0
 # System monitoring and process management (daemon, process_kill_safety, workers)
 psutil>=7.2.2
 
+# Idle/display-sleep inhibitor (supervision System care → display; imported on first use)
+wakepy>=1.0.0
+
 # System tray (daemon mode)
 pystray>=0.19.5
 

@@ -535,6 +535,13 @@
             }
         }
 
+        function sessionNameIsManual(sessionId) {
+            const authSid = deps.toAuthDbSessionId(sessionId);
+            const row = deps.getAuthSessions().find((s) => s
+                && (deps.sessionIdsEqual(s.id, sessionId) || deps.sessionIdsEqual(s.id, authSid)));
+            return !!row && row.name_auto != null && Number(row.name_auto) === 0;
+        }
+
         function openHistoryRenameModal(sessionId, item) {
             const modal = historyRenameModalEl();
             if (!modal) return;
@@ -563,7 +570,12 @@
             if (input) input.value = current;
 
             modal.hidden = false;
-            if (pendingRenameKind === 'chat') {
+            if (pendingRenameKind === 'chat' && sessionNameIsManual(sessionId)) {
+                // User-chosen names are locked: show them, suggest only on Resuggest.
+                setHistoryRenameSuggesting(false);
+                applyHistoryRenameEditMode(false);
+                setHistoryRenameStatus('Your name — pencil to edit', false);
+            } else if (pendingRenameKind === 'chat') {
                 setHistoryRenameSuggesting(true);
                 suggestHistoryRenameTitle({ force: true });
             } else {

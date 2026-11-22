@@ -9,6 +9,8 @@ turned on and hands the worker one picture:
 * ``memory``: machine memory (psutil) and the kernel's OOM-kill counter
   (``/proc/vmstat``, Linux). Low memory wakes the supervisor once per episode,
   a new OOM kill every time, a working target included.
+* ``display``: owned by ``api.chat_ops.display_care`` (keeps the display awake,
+  reports it off); its picture rides along under ``display``.
 
 Nothing here ends a process: the check-in names
 ``python -m api.jobs end-process`` (identity-checked, Cuttle hosts refused).
@@ -135,6 +137,8 @@ def section(picture: Optional[Mapping[str, Any]], *, now: Optional[float] = None
                      f'({_END}; `python -m api.chat_cli status CH-…` says whether a chat is working). Never end '
                      "a working chat's processes to make room, and do not change machine memory settings "
                      '(swap, sysctl, OOM policy): tell the user what is using the memory instead.')
+    from api.chat_ops import display_care
+    lines += display_care.section(picture.get('display'))
     return lines
 
 
@@ -170,8 +174,8 @@ def _memory() -> Optional[Dict[str, Any]]:
 
 def read(cfg: Mapping[str, Any], sid: Any, state: str, previous: Mapping[str, Any], *,
          children: Iterable[Any] = ()) -> Dict[str, Any]:
-    """One check's picture: ``{leftover, memory, memory_state, consumers, alert,
-    tracking, seen}``. ``children``: the target's sub-agent chat ids. ``tracking``
+    """One check's picture: ``{leftover, memory, memory_state, consumers, display,
+    alert, tracking, seen}``. ``children``: the target's sub-agent chat ids. ``tracking``
     goes into the schedule result; ``alert`` wakes the supervisor."""
     on = brief.system(cfg.get('system'))
     out: Dict[str, Any] = {'leftover': [], 'measured': False, 'alert': False, 'tracking': {}, 'seen': {}}
@@ -205,4 +209,9 @@ def read(cfg: Mapping[str, Any], sid: Any, state: str, previous: Mapping[str, An
             except Exception:
                 out['consumers'] = []
         out['alert'] = out['alert'] or out['memory_state']['alert']
+    from api.chat_ops import display_care
+    out['display'] = display_care.read(cfg, state, previous)
+    out['tracking'].update(out['display']['tracking'])
+    out['seen'].update(out['display']['seen'])
+    out['alert'] = out['alert'] or out['display']['alert']
     return out

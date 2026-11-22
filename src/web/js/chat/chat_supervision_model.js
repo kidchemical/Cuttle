@@ -314,8 +314,10 @@
           hint: 'Lists processes this chat or its sub-agents left running after their turns ended; the supervisor ends the ones nothing needs.' },
         { id: 'memory', label: 'Watch machine memory',
           hint: 'Wakes the supervisor when memory runs low or the system kills a process for memory, even mid-turn.' },
+        { id: 'display', label: 'Keep the display awake',
+          hint: 'Stops the screen from idling off or auto-locking while this chat works, and tells the supervisor when it is off anyway. For work that needs a visible window: games, GPU captures, UI tests.' },
     ];
-    const SYSTEM_DEFAULTS = { processes: true, memory: false };
+    const SYSTEM_DEFAULTS = { processes: true, memory: false, display: false };
 
     function systemFields(stored) {
         const s = stored && typeof stored === 'object' ? stored : null;

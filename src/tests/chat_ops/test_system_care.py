@@ -23,10 +23,11 @@ def _tree(state="processes", chat="2", pid=4242):
 
 
 def test_setting_parses_names_dicts_and_defaults():
-    assert brief.system(None) == {"processes": True, "memory": False}
-    assert brief.system("processes,memory") == {"processes": True, "memory": True}
-    assert brief.system("none") == {"processes": False, "memory": False}
-    assert brief.system({"memory": True}) == {"processes": False, "memory": True}
+    assert brief.system(None) == {"processes": True, "memory": False, "display": False}
+    assert brief.system("processes,memory") == {"processes": True, "memory": True, "display": False}
+    assert brief.system("none") == {"processes": False, "memory": False, "display": False}
+    assert brief.system({"memory": True}) == {"processes": False, "memory": True, "display": False}
+    assert brief.system("display") == {"processes": False, "memory": False, "display": True}
     with pytest.raises(ValueError):
         brief.system("disk")
 
@@ -102,7 +103,7 @@ def test_edit_changes_system_care_and_the_view_reports_it(chats):
                                       db=db)["updated"] == []  # the default is not an edit
     out = service.update_supervision(sched["id"], owner, {"system": "processes,memory"}, db=db)
     assert out["updated"] == ["system"]
-    assert service._schedule_view(store.find(sched["id"]))["system"] == {"processes": True, "memory": True}
+    assert service._schedule_view(store.find(sched["id"]))["system"] == {"processes": True, "memory": True, "display": False}
     with pytest.raises(ValueError):
         service.update_supervision(sched["id"], owner, {"system": "disk"}, db=db)
 

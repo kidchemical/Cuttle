@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 
-from api.chat_ops import rules, service, store, transport
+from api.chat_ops import display_care, rules, service, store, transport
 
 _lock = threading.Lock()
 _thread = None
@@ -875,6 +875,7 @@ def _loop():
             _background_tick()
         except Exception as exc:
             print(f'[CHAT OPS] pump failed: {type(exc).__name__}', flush=True)
+        display_care.sync()
 
 
 def ensure_started():

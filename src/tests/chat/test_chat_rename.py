@@ -197,3 +197,16 @@ def test_patch_and_suggest_title_api(tmp_path: Path, monkeypatch):
         json={"session_name": "hacked"},
     )
     assert denied.status_code == 404
+
+
+def test_rename_modal_keeps_manual_name_without_auto_suggest():
+    """Reopening Rename on a user-named chat must not swap in an LLM suggestion."""
+    panel = (
+        Path(__file__).resolve().parents[2] / "web" / "js" / "chat" / "chat_history_panel.js"
+    ).read_text(encoding="utf-8")
+    helper = panel[panel.find("function sessionNameIsManual(") :][:400]
+    assert "name_auto" in helper and "=== 0" in helper
+    opener = panel[panel.find("function openHistoryRenameModal(") :][:2400]
+    manual = opener.find("sessionNameIsManual(sessionId)")
+    suggest = opener.find("suggestHistoryRenameTitle({ force: true })")
+    assert 0 < manual < suggest

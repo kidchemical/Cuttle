@@ -785,7 +785,7 @@ def build_parser() -> argparse.ArgumentParser:
                             help='When the supervisor involves the user')
             op.add_argument('--nudge', choices=('agent', 'template'), default=None,
                             help='template: the host sends an idle chat its next open Tasks item (no supervisor turn)')
-            op.add_argument('--system', default=None, help="System care, comma-separated: processes (list the chat's leftover processes for the supervisor to end), memory (wake it on low machine memory or an OOM kill); none turns both off")
+            op.add_argument('--system', default=None, help="System care, comma-separated: processes (list the chat's leftover processes for the supervisor to end), memory (wake it on low machine memory or an OOM kill), display (keep the display awake while the chat works and report it off); none turns all off")
             op.add_argument('--require-branch', default=None)
             op.add_argument('--require-path', default=None)
             op.add_argument('--forbid-branch', action='append', default=None,
@@ -796,15 +796,16 @@ def build_parser() -> argparse.ArgumentParser:
                             help="Comma-separated Tasks ids to follow ('' = none); lists the chat makes later still count")
             op.add_argument('--all-tasks', action='store_true', help='Follow every Tasks list the chat sees')
         if verb == 'supervise':
-            op.add_argument('--every', type=int, default=900, help='Seconds between checks, minimum 60')
+            op.add_argument('--every', type=int, default=None,
+                            help='Seconds between checks, minimum 60 (default: the Supervision app setting, 900 out of the box)')
             op.add_argument('--instructions', default=None,
                             help="Optional Focus: the user's job-specific notes. Settings have their own flags")
-            op.add_argument('--involve', choices=('never', 'blocked', 'questions'), default='blocked',
-                            help='When the supervisor involves the user (default: blocked = logins/payments/irreversible)')
-            op.add_argument('--nudge', choices=('agent', 'template'), default='agent',
-                            help='template: the host sends an idle chat its next open Tasks item (no supervisor turn)')
+            op.add_argument('--involve', choices=('never', 'blocked', 'questions'), default=None,
+                            help='When the supervisor involves the user (default: the Supervision app setting; out of the box blocked = logins/payments/irreversible)')
+            op.add_argument('--nudge', choices=('agent', 'template'), default=None,
+                            help='template: the host sends an idle chat its next open Tasks item (no supervisor turn). Default: the Supervision app setting (agent out of the box)')
             op.add_argument('--system', default=None,
-                            help="System care, comma-separated: processes (list the chat's leftover processes for the supervisor to end), memory (wake it on low machine memory or an OOM kill); none turns both off (default: processes)")
+                            help="System care, comma-separated: processes (list the chat's leftover processes for the supervisor to end), memory (wake it on low machine memory or an OOM kill), display (keep the display awake while the chat works and report it off); none turns all off (default: the Supervision app setting, processes out of the box)")
             op.add_argument('--require-branch', default='')
             op.add_argument('--require-path', default='')
             op.add_argument('--forbid-branch', action='append', default=[])

@@ -428,15 +428,21 @@ def _agent_slash(agent, project_path):
     return found[0].slash_prefix().strip().lstrip('/')
 
 
-def supervise(target, actor=None, *, every=900, instructions='', required_branch='',
+def supervise(target, actor=None, *, every=None, instructions='', required_branch='',
               required_path='', forbidden_branches=(), model_tiers=None, agent='',
               start_now=False, forbidden_paths='', on_violation=None, task_ids=None, checkpoints=None,
               involve_user='', nudge='', system=None, db=None):
-    """``instructions`` is the optional Focus note; the brief comes from the settings (``brief``)."""
-    from api.chat_ops import brief
+    """``instructions`` is the optional Focus note; the brief comes from the settings (``brief``).
+    ``every`` / ``involve_user`` / ``nudge`` / ``system`` left out start from the
+    Supervision app's defaults (``api.chat_ops.defaults``)."""
+    from api.chat_ops import brief, defaults
     db, actor, row = context(target, actor, db=db)
     if actor == int(row['id']):
         raise ValueError('Supervisor and target must be different chats')
+    base = defaults.load()
+    every = base['every'] if every is None else every
+    involve_user, nudge = involve_user or base['involve_user'], nudge or base['nudge']
+    system = base['system'] if system in (None, '') else system
     if not 60 <= every <= 86400:
         raise ValueError('Check-in interval must be 60–86400 seconds')
     if model_tiers is not None and not isinstance(model_tiers, dict):
@@ -490,7 +496,7 @@ def _pin_supervisor_chat(db, sup, user_id, agent, model, effort, project_path):
         'prefix': f'/{agent}', 'label': chip.get('label') or agent, 'category': agent}]})
 
 
-def start_supervisor(target, *, user_id, agent, every=900, instructions='', required_branch='',
+def start_supervisor(target, *, user_id, agent, every=None, instructions='', required_branch='',
                      required_path='', forbidden_branches=(), model_tiers=None, model='', effort='',
                      task_ids=None, checkpoints=None, involve_user='', nudge='', system=None, db=None):
     """Create a fresh supervisor chat for ``target`` and brief it right away."""
@@ -539,7 +545,7 @@ _FIELD_LABELS = {'every': 'check-in interval', 'agent': 'check-in agent', 'instr
                  'required_branch': 'required branch', 'required_path': 'required checkout',
                  'forbidden_branches': 'forbidden branches', 'model_tiers': 'model guidance',
                  'model': 'check-in model', 'effort': 'check-in effort', 'task_ids': 'Tasks lists',
-                 'checkpoints': 'wake checkpoints', 'system': 'system care (processes, memory)'}
+                 'checkpoints': 'wake checkpoints', 'system': 'system care (processes, memory, display)'}
 
 
 def _schedule_fields(cfg, project_path):
@@ -764,6 +770,8 @@ def update_supervision(op_id, user_id, changes, *, db=None):
 
     def same(k, v):  # blank model/effort/tiers equal a field the schedule never stored
         old = cfg.get(k) or policy.get(k)
+        if k == 'system':  # a schedule stored before a care was added lacks its key
+            old = brief.system(old)
         return v == old or (k != 'task_ids' and not v and not old)
     updated = {k: v for k, v in new.items() if k != 'task_ids_known' and not same(k, v)}
     if not updated:
@@ -812,7 +820,32 @@ def supervise_defaults(session, user_id, *, db=None):
     return {'handle': f'CH-{sid:06d}', 'branch': branch, 'execution_path': path, 'branches': _branch_names(path),
             'worktree': bool(checkout), 'project_path': row.get('project_path') or '',
             'tasks': task_candidates(db, int(user_id), sid, row.get('project_path') or ''),
-            'playbook': _playbook_supervisor(sid, db)}
+            'playbook': _playbook_supervisor(sid, db), 'defaults': _app_defaults()}
+
+
+def _app_defaults():
+    from api.chat_ops import defaults
+    return defaults.load()
+
+
+def supervisions(user_id, *, db=None):
+    """Every supervision of ``user_id`` still in force (paused ones included), for
+    the Supervision app: each schedule with both chats' names, newest first."""
+    from api.auth_db import get_auth_db
+    from api.chat_ops import display_care
+    db = db or get_auth_db()
+    rows = []
+    for op in sorted(store.schedules(paused=True), key=lambda o: -float(o.get('updated') or 0)):
+        sup = db.get_chat_session(int(op['actor']), int(user_id))
+        if not sup:
+            continue
+        target = db.get_chat_session(int(op['target']), int(user_id)) or {}
+        view = _schedule_view(op)
+        view.pop('history', None)
+        rows.append({**view, 'supervisor_id': int(op['actor']), 'target_id': int(op['target']),
+                     'supervisor_name': sup.get('session_name') or '', 'target_name': target.get('session_name') or '',
+                     'project_name': target.get('project_name') or ''})
+    return {'schema_version': 1, 'supervisions': rows, 'display': display_care.status()}
 
 
 def _branch_names(path):

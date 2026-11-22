@@ -36,6 +36,7 @@ PYTHONPATH=src .venv/bin/python -m api.gizmos list
 PYTHONPATH=src .venv/bin/python -m api.gizmos create usage_meter --agent claude --dock titlebar
 PYTHONPATH=src .venv/bin/python -m api.gizmos create usage_meter --agent codex --id codex-meter --dock float --x 0.8 --y 0.05
 PYTHONPATH=src .venv/bin/python -m api.gizmos update codex-meter --show used --window weekly --title "Codex weekly"
+PYTHONPATH=src .venv/bin/python -m api.gizmos update codex-meter --size micro
 PYTHONPATH=src .venv/bin/python -m api.gizmos move codex-meter --dock popout
 PYTHONPATH=src .venv/bin/python -m api.gizmos data codex-meter --refresh
 PYTHONPATH=src .venv/bin/python -m api.gizmos usage codex
@@ -52,8 +53,11 @@ Claude meters with different `billing` views are a normal setup).
 `window` (`tightest` or a window id from `usage <agent>`, e.g. `five_hour`, `weekly`),
 `show` (`remaining` | `used`), `metric` (`auto` | `amount` | `percent` — how the
 meter reads out; `amount` is only meaningful for a provider that reports
-dollars, otherwise it falls back to `percent`), `notify_on_unblock` (bool,
-default off), and for `claude` only `billing`:
+dollars, otherwise it falls back to `percent`), `size` (`regular` | `micro` |
+`pico` — footprint on the blade bar and float/pop-out: `regular` is the ring or
+card, `micro` a slim label · value over a thin horizontal bar, `pico` a
+two-letter tag and the bar only; the title bar pill ignores it),
+`notify_on_unblock` (bool, default off), and for `claude` only `billing`:
 
 | `billing` | Shows |
 |---|---|

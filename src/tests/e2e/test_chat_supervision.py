@@ -369,7 +369,7 @@ def test_menu_opens_dialog_and_posts_supervise(browser, static_server):
         assert body["forbidden_branches"] == ["main", "feature"] and body["required_branch"] == "dev/x"
         assert body["task_ids"] == ["t0", "t4"] and body["instructions"] == "Animation first."
         assert body["involve_user"] == "blocked" and body["nudge"] == "agent"
-        assert body["system"] == {"processes": True, "memory": True}
+        assert body["system"] == {"processes": True, "memory": True, "display": False}
         # New schedules wake on milestones and repeated failures by default.
         assert body["checkpoints"] == {"milestone": {"do": ["wake"]}, "repeat_failures": {"do": ["wake"], "n": 3}}
         assert not errors

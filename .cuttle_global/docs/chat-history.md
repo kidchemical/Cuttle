@@ -98,7 +98,11 @@ their turns ended (PID, create time, memory) and wakes the supervisor once per n
 one, to end with `python -m api.jobs end-process`; `memory` wakes it when
 available machine memory drops under 10% (once per episode) or the kernel kills a
 process for memory (every time), a working target included, with the largest
-agent-owned processes. The host only measures; with it off, process and memory
+agent-owned processes; `display` keeps the display awake (an idle inhibitor, so no
+blanking or auto-lock) while a live supervision's chat is not finished, and wakes
+the supervisor once per episode when the display is off or locked anyway or no
+inhibitor could be taken; for work that needs a visible window. The host never
+wakes a display. The host only measures; with it off, process and memory
 cleanup are not part of the job. A supervisor never ends a working chat's
 processes or a Cuttle host.
 

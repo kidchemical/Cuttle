@@ -12,7 +12,7 @@ from flask import Blueprint, jsonify, request
 
 from api.chat_ops import service
 from api.experimental import is_enabled
-from api.http_authz import authenticated_required, current_user
+from api.http_authz import authenticated_required, current_user, owner_required
 
 chat_ops_bp = Blueprint("chat_ops", __name__, url_prefix="/api/chat-ops")
 
@@ -61,6 +61,30 @@ def supervise_defaults(session: str):
     return _call(service.supervise_defaults, session, _uid())
 
 
+@chat_ops_bp.get("/supervisions")
+@authenticated_required
+def supervisions():
+    """Supervision app: every supervision of the signed-in user still in force."""
+    return _call(service.supervisions, _uid())
+
+
+@chat_ops_bp.get("/defaults")
+@authenticated_required
+def get_defaults():
+    from api.chat_ops import defaults
+    return _call(defaults.view)
+
+
+@chat_ops_bp.put("/defaults")
+@owner_required
+def put_defaults():
+    """Install-wide (settings.json), so only the owner changes them."""
+    from api.chat_ops import defaults
+    data = request.get_json(silent=True)
+    return _call(lambda: {"schema_version": defaults.SCHEMA_VERSION, "defaults": defaults.save(data),
+                          "builtin": defaults.normalize(None)})
+
+
 @chat_ops_bp.post("/supervise")
 @authenticated_required
 def start_supervision():
@@ -73,7 +97,7 @@ def start_supervision():
     def run():
         return service.start_supervisor(
             data.get("target"), user_id=_uid(), agent=str(data.get("agent") or ""),
-            every=int(data.get("every") or 900), instructions=str(data.get("instructions") or ""),
+            every=int(data["every"]) if data.get("every") else None, instructions=str(data.get("instructions") or ""),
             required_branch=str(data.get("required_branch") or ""),
             required_path=str(data.get("required_path") or ""),
             forbidden_branches=[str(b) for b in forbidden], model_tiers=tiers,

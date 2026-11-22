@@ -271,6 +271,14 @@ def clear_pending_changes(oid, rev):
         return True
 
 
+def schedules(*, paused=False):
+    """Supervision schedules in force: live ones, plus paused ones with ``paused``."""
+    states = "('pending','dispatching','paused')" if paused else "('pending','dispatching')"
+    with connection() as conn:
+        return [public(r) for r in conn.execute(
+            f"SELECT * FROM operations WHERE kind='supervise' AND state IN {states}")]
+
+
 def paused_schedules():
     """Every paused supervision schedule (for the stale-pause alert and context)."""
     with connection() as conn:

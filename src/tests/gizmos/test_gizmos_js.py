@@ -66,6 +66,19 @@ out.escaped = html.every(h => !h.includes('<usage>'));
 out.variants = html.map(h => /gizmo--(\w+)/.exec(h)[1]);
 out.cardRows = (html[4].match(/gizmo-row /g) || []).length;
 out.detail = M.renderDetailHtml(g, data, now).includes('Plan: plus');
+const sized = z => ({...g, config: {...g.config, size: z}});
+out.sizes = [M.sizeOf(g), M.sizeOf(sized('micro')), M.sizeOf(sized('pico')), M.sizeOf(sized('huge'))];
+const microRail = M.renderGizmoHtml(sized('micro'), data, 'rail', now);
+const picoRail = M.renderGizmoHtml(sized('pico'), data, 'rail', now);
+out.slim = {
+  microRail: microRail.includes('gizmo--micro') && microRail.includes('gizmo-bar--slim') && !microRail.includes('gizmo-ring')
+    && microRail.includes('>18<'),
+  picoRail: picoRail.includes('gizmo--pico') && picoRail.includes('>Co<') && !picoRail.includes('gizmo-ring'),
+  microFloat: /gizmo--float gizmo--micro/.test(M.renderGizmoHtml(sized('micro'), data, 'float', now))
+    && !M.renderGizmoHtml(sized('micro'), data, 'float', now).includes('gizmo-head'),
+  titlebarIgnores: !M.renderGizmoHtml(sized('pico'), data, 'titlebar', now).includes('gizmo--pico'),
+  cardIgnores: M.renderGizmoHtml(sized('pico'), data, 'card', now).includes('gizmo-rows'),
+};
 const orG = {id: 'or', type: 'usage_meter', title: 'OpenRouter', config: {agent: 'openrouter', window: 'tightest', show: 'remaining'},
   placement: {dock: 'float', order: 0}};
 const orData = {label: 'OpenRouter', plan: 'Credits', blocked: false, updated_at: 1_800_000_000,
@@ -155,6 +168,12 @@ def test_markup(harness):
     assert harness["variants"] == ["titlebar", "rail", "float", "popout", "card"]
     assert harness["cardRows"] == 2
     assert harness["detail"] is True
+
+
+def test_micro_and_pico_sizes_swap_the_ring_for_a_bar(harness):
+    assert harness["sizes"] == ["regular", "micro", "pico", "regular"]
+    assert harness["slim"] == {"microRail": True, "picoRail": True, "microFloat": True,
+                               "titlebarIgnores": True, "cardIgnores": True}
 
 
 def test_readout_headline_drives_meter(harness):

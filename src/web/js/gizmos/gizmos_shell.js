@@ -568,6 +568,9 @@
                     + '<label class="shell-gizmo-popover-field"><span>Show</span><select data-gizmo-field="show">'
                     + ['remaining', 'used'].map(s => '<option value="' + s + '"' + ((g.config.show || 'remaining') === s ? ' selected' : '')
                         + '>' + (s === 'used' ? 'Used' : 'Remaining') + '</option>').join('') + '</select></label>'
+                    + '<label class="shell-gizmo-popover-field"><span>Size</span><select data-gizmo-field="size">'
+                    + M.SIZES.map(z => '<option value="' + z + '"' + (M.sizeOf(g) === z ? ' selected' : '')
+                        + '>' + esc(M.SIZE_LABELS[z]) + '</option>').join('') + '</select></label>'
                     + ((data && data.readout)
                         ? '<label class="shell-gizmo-popover-field"><span>Readout</span><select data-gizmo-field="metric">'
                             + metricOptions().map(m => '<option value="' + esc(m) + '"' + ((g.config.metric || 'auto') === m ? ' selected' : '')

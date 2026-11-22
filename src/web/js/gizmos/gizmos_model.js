@@ -225,21 +225,62 @@
             + bar(r.pct, 'gizmo-bar--row') + '</div>').join('') + '</div>';
     }
 
+    /** Per-meter footprint: the ring/card, a slim label + bar, or the bar alone. */
+    const SIZES = ['regular', 'micro', 'pico'];
+    const SIZE_LABELS = { regular: 'Regular', micro: 'Micro', pico: 'Pico' };
+    function sizeOf(gizmo) {
+        const v = String((gizmo && gizmo.config && gizmo.config.size) || '');
+        return SIZES.includes(v) ? v : 'regular';
+    }
+
+    /** Two-letter tag for a pico meter (Codex/Claude/Cursor all start with C). */
+    function tagLabel(label) {
+        const s = String(label || '').replace(/\s+code$/i, '').trim();
+        return s.slice(0, 2);
+    }
+
+    /** Micro / pico on the blade bar: one short line over a thin bar. */
+    function renderRailSlim(model, size, cls, attrs) {
+        const loading = model.state === 'loading';
+        const pct = loading ? '…' : Math.round(model.pct);
+        if (size === 'pico') {
+            const tail = model.hasBar ? bar(model.pct, 'gizmo-bar--slim')
+                : '<span class="gizmo-value">' + escape(loading ? '…' : compactValue(model.value)) + '</span>';
+            return '<div class="' + cls + '"' + attrs + '>'
+                + '<span class="gizmo-agent">' + escape(tagLabel(model.agentLabel)) + '</span>' + tail + '</div>';
+        }
+        const line = '<span class="gizmo-slim-line"><span class="gizmo-agent">' + escape(shortLabel(model.agentLabel)) + '</span>'
+            + (model.hasBar ? '<span class="gizmo-value">' + escape(pct) + '</span>' : '') + '</span>';
+        const tail = model.hasBar ? bar(model.pct, 'gizmo-bar--slim')
+            : '<span class="gizmo-value">' + escape(loading ? '…' : compactValue(model.value)) + '</span>';
+        return '<div class="' + cls + '"' + attrs + '>' + line + tail + '</div>';
+    }
+
+    /** Title-bar style pill; also the micro / pico float and pop-out. */
+    function renderPill(model, cls, attrs, label) {
+        return '<div class="' + cls + '"' + attrs + '>'
+            + '<span class="gizmo-agent">' + escape(label) + '</span>'
+            + (model.hasBar ? bar(model.pct) : '')
+            + '<span class="gizmo-value">' + escape(model.value) + '</span>'
+            + (model.state === 'blocked' && model.unblockAt
+                ? '<span class="gizmo-reset">' + escape(relative(model.unblockAt).replace(/^in /, '')) + '</span>' : '')
+            + '</div>';
+    }
+
     /** variant: titlebar | rail | float | popout | card */
     function renderUsageMeter(gizmo, model, variant) {
-        const cls = 'gizmo gizmo-usage gizmo--' + variant + ' tone-' + model.tone
-            + (model.stale ? ' is-stale' : '') + ' state-' + model.state;
+        // The title bar is already a pill and the App card is the editor
+        // preview: size only changes the blade bar and float / pop-out.
+        const size = variant === 'titlebar' || variant === 'card' ? 'regular' : sizeOf(gizmo);
+        const cls = 'gizmo gizmo-usage gizmo--' + variant + (size === 'regular' ? '' : ' gizmo--' + size)
+            + ' tone-' + model.tone + (model.stale ? ' is-stale' : '') + ' state-' + model.state;
         const attrs = ' data-gizmo-id="' + escape(gizmo.id) + '" data-gizmo-type="usage_meter" title="'
             + escape(tooltipText(model)) + '"';
-        if (variant === 'titlebar') {
-            return '<div class="' + cls + '"' + attrs + '>'
-                + '<span class="gizmo-agent">' + escape(shortLabel(model.agentLabel)) + '</span>'
-                + (model.hasBar ? bar(model.pct) : '')
-                + '<span class="gizmo-value">' + escape(model.value) + '</span>'
-                + (model.state === 'blocked' && model.unblockAt
-                    ? '<span class="gizmo-reset">' + escape(relative(model.unblockAt).replace(/^in /, '')) + '</span>' : '')
-                + '</div>';
+        if (variant === 'rail' && size !== 'regular') return renderRailSlim(model, size, cls, attrs);
+        if ((variant === 'float' || variant === 'popout') && size !== 'regular') {
+            return renderPill(model, cls, attrs, size === 'pico' ? tagLabel(model.agentLabel) : shortLabel(model.agentLabel));
         }
+        if (variant === 'titlebar') return renderPill(model, cls, attrs, shortLabel(model.agentLabel));
         if (variant === 'rail') {
             const visual = model.hasBar
                 ? ringSvg(model.pct, 36)
@@ -345,7 +386,7 @@
     }
 
     const api = {
-        DOCKS, DOCK_LABELS, BILLING_VIEWS, BILLING_LABELS, claudeBilling, escape, clampPct, formatDuration, relative, absolute, toneFor,
+        DOCKS, DOCK_LABELS, SIZES, SIZE_LABELS, sizeOf, BILLING_VIEWS, BILLING_LABELS, claudeBilling, escape, clampPct, formatDuration, relative, absolute, toneFor,
         pickWindow, dataKey, meterModel, tooltipText, renderGizmoHtml, renderDetailHtml, detailInfoLines,
         effectiveDock, sortForDock, orderBetween, compactValue,
     };

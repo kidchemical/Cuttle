@@ -36,8 +36,10 @@ SYSTEM = {
                  'ended, for you to end the ones nothing still needs',
     'memory': 'the host watches machine memory and wakes you when it runs low or the kernel kills a '
               'process for memory',
+    'display': 'the host keeps the display awake while the chat works and tells you when it is off or '
+               'locked anyway',
 }
-DEFAULT_SYSTEM = {'processes': True, 'memory': False}
+DEFAULT_SYSTEM = {'processes': True, 'memory': False, 'display': False}
 
 CHECKPOINT_LABELS = {'milestone': 'Tasks milestones', 'tests': 'test runs', 'repeat_failures': 'repeated failures',
                      'watched_paths': 'watched files'}
@@ -60,8 +62,8 @@ def nudge(value: Any) -> str:
 
 
 def system(value: Any) -> Dict[str, bool]:
-    """``{'processes': bool, 'memory': bool}`` from a stored dict, a list of names or
-    ``"processes,memory"`` / ``"none"``; None or '' = the defaults."""
+    """``{'processes': bool, 'memory': bool, 'display': bool}`` from a stored dict, a
+    list of names or ``"processes,memory"`` / ``"none"``; None or '' = the defaults."""
     if value is None or value == '':
         return dict(DEFAULT_SYSTEM)
     if isinstance(value, Mapping):
@@ -129,7 +131,8 @@ def settings_lines(cfg: Mapping[str, Any], snap: Mapping[str, Any]) -> List[str]
                      'anything else.')
     care = [text for key, text in SYSTEM.items() if system(cfg.get('system'))[key]]
     lines.append('- System care: ' + ('; '.join(care) + '.' if care else
-                                      'off. Cleaning up processes or machine memory is not part of this job.'))
+                                      'off. Cleaning up processes or machine memory and keeping the '
+                                      'display awake are not part of this job.'))
     text = str(cfg.get('instructions') or '').strip()  # stored before the Focus cap: never raise here
     if text:
         lines += ['', "**Focus** (the user's notes for this job):", text]
@@ -177,6 +180,10 @@ _LINT = (
                 r'|\bend-process\b|\bwork-tree\b', re.I),
      'asks for process or memory cleanup: turn on System care (--system processes,memory); the host '
      'measures both and lists what to end in the check-in'),
+    (re.compile(r'\b(display|screen|monitor)s?\b[^.]{0,40}\b(awake|asleep|sleep\w*|blank\w*|turn\w* off)\b'
+                r'|\b(wake|keep)\b[^.]{0,30}\b(display|screen|monitor)s?\b', re.I),
+     'asks to keep the display on: turn on System care → display (--system processes,display); the host '
+     'holds the display awake while the chat works'),
     (re.compile(r'`python -m |\.sh\b|`[^`]*\b(kill|pkill|end-process)\b', re.I),
      'embeds a procedure (commands to run on every check-in): use the setting that owns it, or put the '
      'steps in a project/personal runbook (docs/) and name that runbook here; an always-on rule would '
