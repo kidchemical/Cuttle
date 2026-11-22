@@ -371,13 +371,16 @@
      */
     function dialogDefaults(defaults, schedule) {
         const d = defaults || {};
+        // Install-wide starting values (Apps → Supervision); a playbook or a stored schedule wins below.
+        const app = d.defaults || {};
         const base = {
             target: d.handle || '',
-            every: 900,
+            agent: String(app.agent || ''),
+            every: INTERVALS.indexOf(Number(app.every)) >= 0 ? Number(app.every) : 900,
             instructions: '',
-            involveUser: 'blocked',
-            nudge: 'agent',
-            system: systemFields(null),
+            involveUser: app.involve_user || 'blocked',
+            nudge: app.nudge || 'agent',
+            system: systemFields(app.system || null),
             branches: splitList(d.branches),
             requiredBranch: d.branch || '',
             requiredPath: d.worktree ? (d.execution_path || '') : '',
@@ -398,7 +401,7 @@
             const tiers = pb.model_tiers || {};
             return Object.assign(base, {
                 playbookName: String(pb.name || pb.id || ''),
-                agent: String(pb.agent || ''),
+                agent: String(pb.agent || base.agent),
                 every: Number(pb.every) || base.every,
                 instructions: pb.instructions || base.instructions,
                 involveUser: pb.involve_user || base.involveUser,

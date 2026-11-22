@@ -516,6 +516,17 @@ deferred `api.subagents.store` / `api.chat_ops.store` reads). Client:
 `tests/gizmos/test_tasks_app*.py`, `e2e/test_tasks_app.py`. Notes:
 `.cuttle/docs/tasks-app.md`.
 
+**Supervision App (flag `chat_supervision`):** Apps → Supervision lists every
+supervision in force and edits the install-wide defaults a new one starts from.
+Owner stays `api.chat_ops`: `defaults` (pure `normalize`; `settings.json` →
+`supervision_defaults`), `service.supervisions`, `display_care` (System care →
+display). Precedence: per-supervision value → playbook → defaults → built-in.
+Client: `js/supervision/supervision_model.js` (`CuttleSupervisionApp`, pure,
+on `CuttleChatSupervisionModel`'s option lists) + `supervision_page.js` on the
+shared Orchestrator page skin. Tests: `tests/chat_ops/test_supervision_*.py`,
+`test_display_care.py`, `e2e/test_supervision_app.py`. Notes:
+`.cuttle/docs/supervision-app.md`.
+
 **Media App (not flag-gated):** Apps → Media browses every image/video shared in
 the user's chats (uploads and agent replies), newest first, with type / source /
 chat / project / date filters, sort, grouping and tile sizes; clicking opens the

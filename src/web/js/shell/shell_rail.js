@@ -77,6 +77,7 @@
             'nav-secrets',
             'nav-orchestrator',
             'nav-agents',
+            'nav-supervision',
             'nav-tasks',
             'nav-media',
             'nav-projects',
@@ -92,9 +93,9 @@
         // not page apps, but the Apps grid still lists them so they can be re-pinned.
         const HIDEABLE_FOOTER_IDS = new Set(['nav-workspace']);
         // Cuttle web apps that live in the Apps grid (not the blade bar) until the user pins them.
-        const DEFAULT_RAIL_HIDDEN = ['nav-editor', 'nav-achievements', 'nav-gizmos', 'nav-test-lab', 'nav-secrets', 'nav-orchestrator', 'nav-agents', 'nav-tasks', 'nav-media', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];
+        const DEFAULT_RAIL_HIDDEN = ['nav-editor', 'nav-achievements', 'nav-gizmos', 'nav-test-lab', 'nav-secrets', 'nav-orchestrator', 'nav-agents', 'nav-supervision', 'nav-tasks', 'nav-media', 'nav-projects', 'nav-agent-feed', 'nav-mesh'];
         // Bump only for saved-layout migrations; fresh-install defaults do not migrate user pins.
-        const RAIL_LAYOUT_VERSION = 15;
+        const RAIL_LAYOUT_VERSION = 16;
 
         const DEFAULT_LAYOUT = {
             rail_items: CANONICAL_RAIL_ITEM_ORDER.filter(id => !DEFAULT_RAIL_HIDDEN.includes(id)),
@@ -116,6 +117,7 @@
             'nav-secrets': 'secret_vault',
             'nav-orchestrator': 'orchestrator',
             'nav-agents': 'orchestrator',
+            'nav-supervision': 'chat_supervision',
         };
         let enabledFlags = new Set();
         function railAppEnabled(id) {
@@ -329,7 +331,8 @@
             const hidden = new Set(Array.isArray(saved.rail_hidden) ? saved.rail_hidden : []);
             // Existing v4 user pins remain intact; only the new App starts stashed.
             const version = Number(saved.layout_version) || 0;
-            const additions = version >= 14 ? ['nav-media']
+            const additions = version >= 15 ? []
+                : version >= 14 ? ['nav-media']
                 : version >= 13 ? ['nav-tasks', 'nav-media']
                 : version >= 12 ? ['nav-orchestrator', 'nav-agents', 'nav-tasks']
                 : version >= 11 ? ['nav-secrets']
@@ -355,7 +358,9 @@
             // v14: the Tasks App starts stashed; v13 pins survive.
             if (version < 14) hidden.add('nav-tasks');
             // v15: the Media App starts stashed; v14 pins survive.
-            hidden.add('nav-media');
+            if (version < 15) hidden.add('nav-media');
+            // v16: the Supervision App starts stashed; v15 pins survive.
+            hidden.add('nav-supervision');
             const known = new Set(CANONICAL_RAIL_ITEM_ORDER);
             layout.rail_hidden = Array.from(hidden).filter(id => known.has(id));
             layout.rail_items = (Array.isArray(saved.rail_items) ? saved.rail_items : CANONICAL_RAIL_ITEM_ORDER)

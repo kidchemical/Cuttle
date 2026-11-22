@@ -756,6 +756,7 @@ const PAGE_TITLES = {
     '/orchestrator_page.html': 'Orchestrator',
     '/agent_profiles_page.html': 'Agents',
     '/ide_page.html': 'IDE',
+    '/supervision_page.html': 'Supervision',
     '/tasks_page.html': 'Tasks',
     '/media_page.html': 'Media',
     '/projects_page.html': 'Projects',

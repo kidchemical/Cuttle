@@ -84,7 +84,7 @@ register_flag(FlagSpec(
 
 register_flag(FlagSpec(
     id="chat_supervision", label="Chat supervision",
-    description="Show chat supervision in the UI: a header chip in the supervisor chat (target, interval, next check, check history, pause/cancel), a \"Supervised by\" badge with branch-rule warnings in the worker chat, queued messages, a \"Supervise this chat…\" menu action, and schedules on the Jobs page. Agent commands (python -m api.chat_cli supervise/send) work regardless.",
+    description="Show chat supervision in the UI: a header chip in the supervisor chat (target, interval, next check, check history, pause/cancel), a \"Supervised by\" badge with branch-rule warnings in the worker chat, queued messages, a \"Supervise this chat…\" menu action, schedules on the Jobs page, and Apps → Supervision (everything running, plus the defaults new supervisions start from). Agent commands (python -m api.chat_cli supervise/send) work regardless.",
     default=False, category="agents", risk="low", since="0.0.0", needs_restart=False,
 ))
 

@@ -339,6 +339,9 @@ answer `{success:false, disabled:true}` while it is off.
   each one.
 - **Jobs page:** schedules and queued sends appear as `chat` rows that can
   be cancelled.
+- **Apps → Supervision:** every supervision in force with pause/resume/stop,
+  and the install-wide defaults a new supervision starts from
+  (`.cuttle/docs/supervision-app.md`).
 
 Owner: `src/api/chat_ops/` (`routes`, `service.overview` /
 `start_supervisor`, `store.checks`); client

@@ -504,9 +504,9 @@ except Exception as _jev_watch_err:
 
 # Existing-chat agent operations (durable outbox, check-ins, supervision UI routes).
 try:
-    from api.chat_ops.routes import chat_ops_bp
+    from api.chat_ops.routes import chat_ops_bp, chat_ops_pages_bp
     from api.chat_ops.worker import ensure_started as _chat_ops_start
-    app.register_blueprint(chat_ops_bp)
+    for _bp in (chat_ops_bp, chat_ops_pages_bp): app.register_blueprint(_bp)
     _chat_ops_start()
 except Exception as _chat_ops_err:
     print(f"[CHAT OPS] worker not started: {_chat_ops_err}")

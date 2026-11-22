@@ -92,7 +92,10 @@ change Focus when the user asked for that guidance. `--involve`: `blocked`
 `--nudge template`: an idle chat with open Tasks items gets its next item from
 the host with no supervisor turn (twice without Tasks progress, then the
 supervisor is woken); errors, questions, stalls and violations always wake it.
-`--system` is **System care**, comma-separated (default `processes`; `none` = off):
+`--every`, `--involve`, `--nudge` and `--system` left out start from the user's
+defaults in Apps → Supervision (out of the box: 900 s, `blocked`, `agent`,
+`processes`); pass a flag only when this job needs something else.
+`--system` is **System care**, comma-separated (`none` = off):
 `processes` lists the processes the chat or its sub-agents left running after
 their turns ended (PID, create time, memory) and wakes the supervisor once per new
 one, to end with `python -m api.jobs end-process`; `memory` wakes it when

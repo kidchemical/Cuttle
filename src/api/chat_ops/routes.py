@@ -8,13 +8,25 @@ not go through here and stay available regardless.
 
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request
+from pathlib import Path
+
+from flask import Blueprint, jsonify, request, send_from_directory
 
 from api.chat_ops import service
 from api.experimental import is_enabled
 from api.http_authz import authenticated_required, current_user, owner_required
 
 chat_ops_bp = Blueprint("chat_ops", __name__, url_prefix="/api/chat-ops")
+chat_ops_pages_bp = Blueprint("chat_ops_pages", __name__)
+
+_WEB = Path(__file__).resolve().parents[2] / "web"
+
+
+@chat_ops_pages_bp.route("/supervision_page.html")
+@authenticated_required
+def supervision_page():
+    """Supervision App; the data endpoints enforce the flag."""
+    return send_from_directory(_WEB, "supervision_page.html")
 
 _DISABLED = {"success": False, "disabled": True, "error": "Chat supervision is disabled"}
 

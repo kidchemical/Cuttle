@@ -19,6 +19,7 @@
         'nav-secrets': 32,
         'nav-orchestrator': 286,
         'nav-agents': 330,
+        'nav-supervision': 46,
         'nav-tasks': 152,
         'nav-media': 340,
         'nav-ide': 204,
