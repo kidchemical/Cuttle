@@ -353,6 +353,14 @@ def _no_live_steer_servers(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_background_catalog_refresh(monkeypatch):
+    """Plain catalog reads must not start background vendor-CLI model refreshes."""
+    from api.agent_harness import agent_models
+
+    monkeypatch.setattr(agent_models, "BACKGROUND_REFRESH", False)
+
+
+@pytest.fixture(autouse=True)
 def _no_live_agent_scopes(monkeypatch):
     """Spawned test CLIs must not create real systemd user scopes on the dev host."""
     monkeypatch.setenv("CUTTLE_AGENT_SCOPES", "0")

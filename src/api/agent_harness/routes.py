@@ -114,9 +114,9 @@ def get_agents_catalog_api():
             or ''
         ).strip() or None
         agents = public_catalog(project_path)
-        # Settings asks for `?live_models=1` so its dropdowns read the same live
-        # CLI/API catalog as the chat palette instead of the manifest snapshot.
-        # The chat page's plain `/api/agents` stays cheap (no CLI calls).
+        # Plain `/api/agents` carries each agent's last saved live catalog
+        # (file reads; stale ones rebuild in the background). Settings asks for
+        # `?live_models=1` to read the CLI/API catalog now.
         live = (request.args.get('live_models') or '').strip().lower() in (
             '1', 'true', 'yes', 'live',
         )

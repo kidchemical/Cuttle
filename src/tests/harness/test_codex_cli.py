@@ -322,7 +322,7 @@ def test_codex_catalog_static_fallback(monkeypatch):
     out = mc.list_codex_catalog_models(refresh=True)
     assert out["source"] == "static_fallback"
     assert out["count"] >= 5
-    assert {m["id"] for m in out["models"]} >= {"gpt-5.6-sol", "gpt-5.5"}
+    assert {m["id"] for m in out["models"]} >= {"gpt-6.2-sol", "gpt-5.6-sol"}
 
 
 def test_codex_catalog_from_cli(monkeypatch):
@@ -371,7 +371,7 @@ def test_codex_efforts_for_cli_only_model_after_cache_expiry(monkeypatch):
     # Manifest models stay CLI-free when nothing is cached.
     mc.clear_codex_catalog_cache()
     calls.clear()
-    assert "low" in mc.codex_efforts_for_model("gpt-5.5")
+    assert "low" in mc.codex_efforts_for_model("gpt-5.6-luna")
     assert calls == []
 
     # Ids the CLI does not list stay empty (guard still refuses them).

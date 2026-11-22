@@ -52,7 +52,7 @@ even when it works.
 
 | Data | Canonical source | Notes |
 |---|---|---|
-| Agent catalog + **live** model/effort lists for pickers | `GET /api/agents?live_models=1` → `agent_harness.agent_models.enrich_agent_catalog`; same loaders as the chat chip's `/api/<agent>/models` | Plain `GET /api/agents` is the **manifest snapshot** — for labels, icons, availability and capability booleans only. Never feed a model or effort picker from it: new CLI models are missing. Fall back to plain only on error (`agent_profiles_page.js`). |
+| Agent catalog + model/effort lists for pickers | `GET /api/agents` → `agent_harness.catalog.public_catalog` (+ `agent_models.overlay_saved_catalogs`); `?live_models=1` → `enrich_agent_catalog` for a live CLI read | One chain everywhere: live CLI/API catalog → last saved live catalog (`<home>/cache/model_catalogs/`) → manifest `models:`. Plain reads carry the saved catalog (`models_source: last_successful_cache`) and rebuild a missing/stale one in the background. The manifest is a tracked offline fallback; never rewrite it at runtime or feed a picker from it directly. |
 | One agent's model list with last-good fallback | `agent_models.load_agent_catalog` / `list_agent_models` (`model_catalog_delta` keeps the persisted last-good list) | one fallback chain; per-agent loaders return the manifest when the CLI is down |
 | Server-side pin validation | `agent_models.check_agent_pin` | used by orchestrator, profiles, chat-ops, sub-agent spawn |
 | Starred model/effort defaults | `agent_harness.agent_defaults` (`get_starred_model` / `get_starred_effort`) | |

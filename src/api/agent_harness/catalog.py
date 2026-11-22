@@ -656,7 +656,9 @@ def public_catalog(project_path: Optional[str] = None) -> List[Dict[str, Any]]:
     """Catalog rows for the palette and Settings.
 
     Guest authentication belongs to each CLI. Legacy credential fields remain
-    in the wire shape but never consult Cuttle's provider environment.
+    in the wire shape but never consult Cuttle's provider environment. Model
+    lists carry the last saved live catalog, not only the manifest snapshot
+    (``agent_models.overlay_saved_catalogs``).
     """
     rows: List[Dict[str, Any]] = []
     for agent_id in list_agents(project_path):
@@ -674,6 +676,12 @@ def public_catalog(project_path: Optional[str] = None) -> List[Dict[str, Any]]:
         # Installed is not a claim that the native login is valid.
         row["ready"] = avail
         rows.append(row)
+    try:
+        from api.agent_harness.agent_models import overlay_saved_catalogs
+
+        overlay_saved_catalogs(rows)
+    except Exception as exc:  # noqa: BLE001 — keep the manifest snapshot
+        print(f"[agent_harness.catalog] saved model catalogs unavailable: {exc}", flush=True)
     return rows
 
 

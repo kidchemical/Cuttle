@@ -223,3 +223,89 @@ def test_opencode_manifest_exposes_effort_levels():
     manifest, _ = get_agent("opencode")
     assert agent_capabilities("opencode")["supports_effort"] is True
     assert list(manifest.efforts) == list(OPENCODE_REASONING_EFFORTS)
+
+
+def _saved_catalogs(tmp_path, monkeypatch, agent, rows, fetched_at=None):
+    import json
+    import time
+
+    from api import model_catalog_delta
+
+    monkeypatch.setattr(
+        model_catalog_delta, "_snapshot_path", lambda a: tmp_path / f"{a}.json"
+    )
+    (tmp_path / f"{agent}.json").write_text(json.dumps({
+        "version": 1,
+        "fetched_at": time.time() if fetched_at is None else fetched_at,
+        "models": rows,
+    }))
+
+
+def test_plain_catalog_carries_saved_live_models(tmp_path, monkeypatch):
+    """Models the CLI added after the manifest snapshot reach every picker."""
+    _saved_catalogs(tmp_path, monkeypatch, "codex", [
+        {"id": "gpt-9-sol", "label": "GPT-9-Sol", "efforts": ["low", "ultra"]},
+    ])
+    scheduled = []
+    monkeypatch.setattr(am, "schedule_catalog_refresh",
+                        lambda aid, fb=None: scheduled.append(aid) or True)
+    rows = [{"id": "codex", "available": True, "models": ["gpt-5.6-sol"],
+             "model_efforts": {"gpt-5.6-sol": ["low"]}, "efforts": ["low"]}]
+    am.overlay_saved_catalogs(rows)
+    assert rows[0]["models"] == ["gpt-9-sol"]
+    assert rows[0]["models_source"] == "last_successful_cache"
+    assert rows[0]["model_efforts"]["gpt-9-sol"] == ["low", "ultra"]
+    assert scheduled == []  # fresh snapshot: no rebuild
+
+
+def test_plain_catalog_rebuilds_missing_or_stale_saved_models(tmp_path, monkeypatch):
+    _saved_catalogs(tmp_path, monkeypatch, "codex", [{"id": "old"}], fetched_at=1.0)
+    scheduled = []
+    monkeypatch.setattr(am, "schedule_catalog_refresh",
+                        lambda aid, fb=None: scheduled.append((aid, fb)) or True)
+    rows = [
+        {"id": "codex", "available": True, "models": ["manifest-1"]},
+        {"id": "claude", "available": True, "models": ["sonnet"]},  # no snapshot
+        {"id": "cursor", "available": False, "models": ["auto"]},  # not installed
+        {"id": "deepseek", "available": True, "models": ["chat"]},  # no live loader
+    ]
+    am.overlay_saved_catalogs(rows)
+    assert rows[0]["models"] == ["old"]
+    assert rows[1]["models"] == ["sonnet"] and "models_source" not in rows[1]
+    assert scheduled == [("codex", ["manifest-1"]), ("claude", ["sonnet"])]
+
+
+def test_background_refresh_persists_live_catalog_once(tmp_path, monkeypatch):
+    import threading
+
+    from api import model_catalog_delta
+
+    monkeypatch.setattr(am, "BACKGROUND_REFRESH", True)
+    monkeypatch.setattr(model_catalog_delta, "_snapshot_path",
+                        lambda a: tmp_path / f"{a}.json")
+    gate = threading.Event()
+
+    def loader(refresh):
+        gate.wait(5)
+        return [{"id": "gpt-live", "efforts": ["low"]}], "cli_live"
+
+    monkeypatch.setitem(am._CATALOG_LOADERS, "codex", loader)
+    assert am.schedule_catalog_refresh("codex", ["m"]) is True
+    assert am.schedule_catalog_refresh("codex", ["m"]) is False  # deduped
+    gate.set()
+    for thread in threading.enumerate():
+        if thread.name == "catalog-refresh-codex":
+            thread.join(5)
+    assert am.saved_model_ids("codex", ["m"]) == ["gpt-live"]
+    assert am.schedule_catalog_refresh("unknown-agent") is False
+
+
+def test_router_options_use_saved_catalog(tmp_path, monkeypatch):
+    _saved_catalogs(tmp_path, monkeypatch, "codex", [
+        {"id": "gpt-9-sol", "efforts": ["low", "high"]},
+    ])
+    models = {"codex": ["gpt-5-codex"], "hermes": ["default"]}
+    efforts = {}
+    am.overlay_saved_router_models(models, efforts)
+    assert models == {"codex": ["gpt-9-sol"], "hermes": ["default"]}
+    assert efforts["codex"]["model_levels"] == {"gpt-9-sol": ["low", "high"]}

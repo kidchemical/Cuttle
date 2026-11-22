@@ -64,7 +64,7 @@ def get_agent_router_options_api():
         cfg = load_router_config()
         static_models = {
             'cursor': sorted(CURSOR_KNOWN_MODELS),
-            'codex': ['gpt-5-codex', 'gpt-5', 'o4-mini'],
+            'codex': [],
             'claude': ['sonnet', 'opus', 'haiku'],
             'opencode': [],
             'muse': [m['id'] for m in MUSE_KNOWN_MODELS],
@@ -90,10 +90,15 @@ def get_agent_router_options_api():
                 }
         except Exception:
             pass
-        # The Router page opts in (`?live=1`) to the same live CLI/API catalog
-        # the chat palette and Settings read, so its model dropdowns no longer
-        # drift from what is actually available. Plain calls stay static/cheap
-        # (auth probes, tests) and skip every CLI.
+        # Plain calls carry each agent's last saved live catalog (file reads,
+        # no CLI). The Router page opts in (`?live=1`) to a live CLI/API read,
+        # the same one the chat palette and Settings use.
+        try:
+            from api.agent_harness.agent_models import overlay_saved_router_models
+
+            overlay_saved_router_models(agent_models, agent_efforts)
+        except Exception as exc:  # noqa: BLE001 — keep the static/manifest sets
+            print(f"[api/agent-router/options] saved model catalogs unavailable: {exc}", flush=True)
         live = (request.args.get('live') or '').strip().lower() in (
             '1', 'true', 'yes', 'live',
         )

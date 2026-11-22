@@ -17,17 +17,6 @@ from api.agent_router.supervised.types import (
 
 SETTINGS_KEY = "supervised_coordinator"
 
-# Soft-known Codex model ids (not inventing live discovery; overridable in settings).
-CODEX_SOFT_MODELS = (
-    "gpt-5.6-sol",
-    "gpt-5.6-luna",
-    "gpt-5.5",
-    "gpt-5.3-codex",
-    "gpt-5.1-codex-max",
-    "o3",
-    "o4-mini",
-)
-
 
 def diet_frontier_profile() -> Dict[str, Any]:
     """Initial diet-frontier: Codex GPT-5.6 Sol low → Cursor Auto."""
@@ -238,4 +227,9 @@ def profile_objects(profile: Optional[Dict[str, Any]] = None) -> Tuple[
 
 
 def soft_known_codex_models() -> List[str]:
-    return list(CODEX_SOFT_MODELS)
+    """Codex ids from the saved live catalog, else the manifest snapshot."""
+    from api.agent_harness.agent_models import saved_model_ids
+    from api.agent_harness.catalog import get_agent
+
+    pair = get_agent("codex")
+    return saved_model_ids("codex", list(pair[0].models or []) if pair else [])
