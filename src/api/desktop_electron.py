@@ -21,7 +21,9 @@ import hashlib
 import json
 import os
 import shutil
+import struct
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -41,6 +43,13 @@ HASH_FILES = (
     "device-worker/cuttle_device_worker.py",
 )
 PACK_SCRIPT = ELECTRON_DIR / "pack-desktop-update.js"
+# Files a Client needs to boot the swapped shell. Keep in sync with
+# electron/pack-desktop-update.js PACK_FILES.
+REQUIRED_ASAR_FILES = (
+    "connect.html", "main.js", "package.json", "preload.js", "tls-trust.js", "external-link-policy.js",
+)
+# Concurrent manifest/download requests must not pack at the same time.
+_pack_lock = threading.Lock()
 RELEASE_ONLY_REASON = (
     "This Host was installed from a release package and cannot build desktop "
     "updates; update each Client from the GitHub release."
@@ -100,18 +109,51 @@ def _find_node() -> Optional[list]:
     return None
 
 
+def asar_top_level_entries(path: Path) -> set:
+    """Top-level names in an asar archive (empty set when unreadable)."""
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(16)
+            if len(head) < 16:
+                return set()
+            json_len = struct.unpack("<I", head[12:16])[0]
+            header = json.loads(fh.read(json_len).decode("utf-8"))
+        return set((header.get("files") or {}).keys())
+    except Exception:
+        return set()
+
+
+def _artifact_ready(asar: Path, current_hash: str) -> bool:
+    """Fresh hash *and* every boot file packed — a hash-only check once kept
+    serving an asar that a racing pack had left without package.json."""
+    manifest = _read_manifest()
+    return bool(
+        asar.is_file()
+        and manifest
+        and manifest.get("hash") == current_hash
+        and set(REQUIRED_ASAR_FILES) <= asar_top_level_entries(asar)
+    )
+
+
 def ensure_update_asar(current_hash: str) -> Optional[Path]:
-    """Pack the cached app.asar if missing or stale. Returns it only when it
-    matches ``current_hash`` (a stale artifact is never offered)."""
+    """Pack the cached app.asar if missing, stale or incomplete. Returns it only
+    when it matches ``current_hash`` and holds every boot file."""
     if not has_electron_sources():
         return None
     asar = update_asar()
-    manifest = _read_manifest()
-    if asar.is_file() and manifest and manifest.get("hash") == current_hash:
+    if _artifact_ready(asar, current_hash):
         return asar
+    with _pack_lock:
+        if _artifact_ready(asar, current_hash):
+            return asar
+        _pack()
+    return asar if _artifact_ready(asar, current_hash) else None
+
+
+def _pack() -> None:
     cmd_base = _find_node()
     if not cmd_base:
-        return None
+        return
     env = os.environ.copy()
     env["ELECTRON_RUN_AS_NODE"] = "1"
     env["CUTTLE_DESKTOP_UPDATE_DIR"] = str(update_dir())
@@ -131,10 +173,6 @@ def ensure_update_asar(current_hash: str) -> Optional[Path]:
             print(f"[DESKTOP] pack-desktop-update exit {proc.returncode}: {err[:500]}")
     except Exception as exc:
         print(f"[DESKTOP] pack-desktop-update failed: {exc}")
-    manifest = _read_manifest()
-    if asar.is_file() and manifest and manifest.get("hash") == current_hash:
-        return asar
-    return None
 
 
 _artifact_digest_cache: Dict[tuple, str] = {}

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from api import desktop_electron as desk
 
@@ -285,3 +288,52 @@ plan = p.updatePlan({role:'client', snapshot:src(), mesh:{wrongBranch:true, bran
 assert.strictEqual(plan.channels.find((c) => c.id === 'host').state, 'blocked');
 assert.strictEqual(plan.titlebar.show, false);
 """)
+
+
+def _fake_asar(path: Path, names) -> None:
+    import struct
+
+    header = json.dumps({"files": {n: {"size": 0, "offset": "0"} for n in names}}).encode("utf-8")
+    path.write_bytes(struct.pack("<4I", 4, len(header) + 8, len(header) + 4, len(header)) + header)
+
+
+def test_incomplete_cached_asar_is_repacked_not_served(monkeypatch, tmp_path):
+    """A racing pack once cached an asar without package.json/preload.js; its
+    hash still matched, so every Client that updated could no longer start."""
+    monkeypatch.setattr(desk, "update_dir", lambda: tmp_path)
+    (tmp_path / "manifest.json").write_text(json.dumps({"hash": "h"}), encoding="utf-8")
+    _fake_asar(tmp_path / "app.asar", ["main.js", "connect.html", "external-link-policy.js"])
+    packs = []
+
+    def repack():
+        packs.append(1)
+        _fake_asar(tmp_path / "app.asar", desk.REQUIRED_ASAR_FILES)
+
+    monkeypatch.setattr(desk, "_pack", repack)
+    assert desk.ensure_update_asar("h") == tmp_path / "app.asar"
+    assert packs == [1]
+    assert desk.ensure_update_asar("h") == tmp_path / "app.asar"
+    assert packs == [1]
+
+    monkeypatch.setattr(desk, "_pack", lambda: None)
+    _fake_asar(tmp_path / "app.asar", ["main.js"])
+    assert desk.ensure_update_asar("h") is None
+
+
+def test_concurrent_packs_each_produce_a_complete_asar(tmp_path):
+    """Two pack runs at once must not share (and wipe) one staging dir."""
+    node = shutil.which("node")
+    if not node or not (desk.ELECTRON_DIR / "node_modules" / "@electron" / "asar").is_dir():
+        pytest.skip("node + electron/node_modules needed to pack")
+    env = {**os.environ, "CUTTLE_DESKTOP_UPDATE_DIR": str(tmp_path / "desktop_update")}
+    procs = [
+        subprocess.Popen([node, str(desk.PACK_SCRIPT)], cwd=str(desk.ELECTRON_DIR), env=env,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        for _ in range(3)
+    ]
+    for proc in procs:
+        _out, err = proc.communicate(timeout=120)
+        assert proc.returncode == 0, err.decode("utf-8", "replace")
+    entries = desk.asar_top_level_entries(tmp_path / "desktop_update" / "app.asar")
+    assert set(desk.REQUIRED_ASAR_FILES) <= entries
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["desktop_update"]

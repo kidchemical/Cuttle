@@ -45,6 +45,12 @@ New-CuttleShortcut -Name 'Cuttle Daemon' -Arguments 'daemon' -Icon $iconClient `
 # Remove legacy shortcut names this replaces (never touch unrelated files).
 foreach ($name in @('Cuttle.lnk', 'Start Cuttle.lnk', 'Start-Cuttle-Client.cmd', 'Cuttle.cmd')) {
     $legacy = Join-Path $desktop $name
+    # The release installer owns its own Desktop\Cuttle.lnk (installed build);
+    # only a .lnk that launches this checkout is ours to replace.
+    if ($name -like '*.lnk' -and (Test-Path -LiteralPath $legacy)) {
+        $target = $shell.CreateShortcut($legacy).TargetPath
+        if (-not $target -or -not $target.StartsWith($repo, [StringComparison]::OrdinalIgnoreCase)) { continue }
+    }
     if (Test-Path -LiteralPath $legacy) {
         Remove-Item -LiteralPath $legacy -Force -ErrorAction SilentlyContinue
         if (-not $Quiet) { Write-Host "[del] $legacy" -ForegroundColor DarkGray }

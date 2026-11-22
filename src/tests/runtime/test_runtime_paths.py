@@ -142,6 +142,21 @@ def test_windows_client_launcher_skips_npm_when_electron_is_installed():
     assert client.index("electron.exe") < client.index("npm.cmd")
 
 
+def test_windows_client_launcher_prefers_checkout_over_stale_unpacked_build():
+    """dist/win-unpacked is a stale local pack that Smart App Control blocks;
+    the source Client shortcut must run the checkout's shell first."""
+    text = (REPO / ".cuttle" / "scripts" / "start-cuttle.cmd").read_text(encoding="utf-8")
+    client = text.split(":START_CLIENT", 1)[1].split(":START_HOST", 1)[0]
+    assert client.index('if exist "%ELECTRON_BIN%"') < client.index('if exist "%CUTTLE_EXE%"')
+
+
+def test_shortcut_script_keeps_the_installed_builds_cuttle_lnk():
+    """Desktop\\Cuttle.lnk from the release installer is not a legacy launcher."""
+    text = (REPO / "src" / "scripts" / "create_desktop_shortcuts.ps1").read_text(encoding="utf-8")
+    loop = text[text.index("foreach ($name in @('Cuttle.lnk'"):]
+    assert loop.index("StartsWith($repo") < loop.index("Remove-Item")
+
+
 def test_windows_launcher_runs_the_daemon_in_one_console():
     """`start` spawned a second console for the Host shortcut; Daemon-only must not open the app."""
     text = (REPO / ".cuttle" / "scripts" / "start-cuttle.cmd").read_text(encoding="utf-8")
