@@ -2047,14 +2047,14 @@ html.cuttle-bg-paused .chat-session-background-icon {
 }
 
 .git-push-confirm-accept {
-    background: var(--accent-color, #667eea);
-    border: 1px solid var(--accent-hover, #5568d3);
-    color: #fff;
+    background: var(--popup-accent-fill);
+    border: 1px solid var(--popup-accent-fill);
+    color: var(--popup-on-accent);
 }
 
 .git-push-confirm-accept:hover,
 .git-push-confirm-accept:focus-visible {
-    background: var(--accent-hover, #5568d3);
+    background: color-mix(in srgb, var(--popup-accent-fill) 88%, var(--popup-text));
 }
 
 .history-delete-modal-confirm {

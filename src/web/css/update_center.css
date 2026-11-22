@@ -1,5 +1,7 @@
 /* Cuttle updates modal (js/shell/shell_updates.js). Shares the Account panel
-   surface (auth-modal + logout-confirm-*); only the channel list is new. */
+   surface (auth-modal + logout-confirm-*); only the channel list is new.
+   Colors come from the shared --popup-* palette (design_tokens.css) so every
+   theme, light or dark, stays readable. */
 .update-center-modal {
     max-width: 460px;
     max-height: calc(100vh - 48px);
@@ -7,7 +9,7 @@
 }
 
 .update-center-icon {
-    color: #c4b5fd;
+    color: var(--popup-accent-text);
 }
 
 .update-center-modal .auth-modal-subtitle {
@@ -34,23 +36,23 @@
     align-items: flex-start;
     padding: 12px 14px;
     border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--popup-border);
+    background: var(--popup-field);
     cursor: pointer;
     transition: border-color 0.15s, background 0.15s;
 }
 
 .update-channel:hover:not(.is-disabled) {
-    border-color: rgba(139, 92, 246, 0.5);
+    border-color: color-mix(in srgb, var(--popup-accent) 55%, var(--popup-border));
 }
 
 .update-channel:has(input:checked) {
-    border-color: rgba(139, 92, 246, 0.85);
-    background: rgba(139, 92, 246, 0.12);
+    border-color: var(--popup-accent);
+    background: color-mix(in srgb, var(--popup-accent) 12%, var(--popup-bg));
 }
 
 .update-channel:has(input:focus-visible) {
-    outline: 2px solid #a78bfa;
+    outline: 2px solid var(--focus-ring-color, var(--popup-accent));
     outline-offset: 2px;
 }
 
@@ -61,7 +63,7 @@
 
 .update-channel input {
     margin-top: 3px;
-    accent-color: #8b5cf6;
+    accent-color: var(--popup-accent);
     flex: 0 0 auto;
 }
 
@@ -87,16 +89,20 @@
     font-weight: 700;
     letter-spacing: 0.06em;
     line-height: 16px;
-    background: rgba(255, 255, 255, 0.12);
-    color: #e2e8f0;
+    background: color-mix(in srgb, var(--popup-text) 12%, transparent);
+    color: var(--popup-text);
 }
 
-.update-channel[data-channel="host"] .update-channel-chip { background: rgba(45, 164, 78, 0.28); }
-.update-channel[data-channel="official"] .update-channel-chip { background: rgba(59, 130, 246, 0.28); }
+.update-channel[data-channel="host"] .update-channel-chip {
+    background: color-mix(in srgb, var(--popup-success) 16%, transparent);
+}
+.update-channel[data-channel="official"] .update-channel-chip {
+    background: color-mix(in srgb, var(--popup-info) 16%, transparent);
+}
 
 .update-channel-title {
     font-size: 0.95rem;
-    color: #f1f5f9;
+    color: var(--popup-text);
 }
 
 /* State is always spelled out; color only reinforces it. */
@@ -104,21 +110,21 @@
     margin-left: auto;
     font-size: 0.72rem;
     font-weight: 600;
-    color: #94a3b8;
+    color: var(--popup-muted);
 }
 
-.update-channel.is-available .update-channel-state { color: #86efac; }
-.update-channel.is-blocked .update-channel-state { color: #fca5a5; }
+.update-channel.is-available .update-channel-state { color: var(--popup-success); }
+.update-channel.is-blocked .update-channel-state { color: var(--popup-danger); }
 
 .update-channel-sub {
     font-size: 0.78rem;
-    color: #94a3b8;
+    color: var(--popup-muted);
     overflow-wrap: anywhere;
 }
 
 .update-channel-summary {
     font-size: 0.85rem;
-    color: #cbd5e1;
+    color: var(--popup-text);
     overflow-wrap: anywhere;
 }
 
@@ -127,16 +133,16 @@
     margin: 0;
     font-size: 0.85rem;
     line-height: 1.45;
-    color: #cbd5e1;
+    color: var(--popup-text);
 }
 
-.update-center-note { color: #a0aec0; }
+.update-center-note { color: var(--popup-muted); }
 
 .update-confirm-what code,
 .update-confirm-commits code {
     font-size: 0.8rem;
     overflow-wrap: anywhere;
-    color: #e9d5ff;
+    color: var(--popup-accent-text);
 }
 
 .update-confirm-commits {
@@ -145,22 +151,23 @@
     max-height: 160px;
     overflow-y: auto;
     border-radius: 10px;
-    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid var(--popup-border);
+    background: var(--popup-field);
     font-size: 0.82rem;
-    color: #cbd5e1;
+    color: var(--popup-text);
 }
 
-.update-confirm-more { color: #94a3b8; list-style: none; margin-left: -16px; }
+.update-confirm-more { color: var(--popup-muted); list-style: none; margin-left: -16px; }
 
 .update-confirm-warning {
     margin: 0;
     padding: 10px 12px;
     border-radius: 10px;
-    border: 1px solid rgba(251, 191, 36, 0.4);
-    background: rgba(251, 191, 36, 0.1);
+    border: 1px solid color-mix(in srgb, var(--popup-warning) 45%, transparent);
+    background: color-mix(in srgb, var(--popup-warning) 10%, var(--popup-bg));
     font-size: 0.85rem;
     line-height: 1.45;
-    color: #fde68a;
+    color: var(--popup-warning);
 }
 
 .update-center-running::before {
@@ -170,8 +177,8 @@
     height: 12px;
     margin-right: 8px;
     vertical-align: -1px;
-    border: 2px solid rgba(255, 255, 255, 0.35);
-    border-top-color: #fff;
+    border: 2px solid color-mix(in srgb, var(--popup-text) 25%, transparent);
+    border-top-color: var(--popup-accent);
     border-radius: 50%;
     animation: cuttle-update-spin 0.7s linear infinite;
 }

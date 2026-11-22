@@ -247,15 +247,15 @@ body.is-electron.fullscreen .shell-zoom-hud {
 }
 
 .shell-connection-modal .shell-connection-role[data-role="host"] {
-    background: rgba(63, 185, 80, 0.12);
-    border-color: rgba(63, 185, 80, 0.45);
-    color: #7ee2a8;
+    background: color-mix(in srgb, var(--popup-success) 12%, transparent);
+    border-color: color-mix(in srgb, var(--popup-success) 45%, transparent);
+    color: var(--popup-success);
 }
 
 .shell-connection-modal .shell-connection-role[data-role="client"] {
-    background: rgba(88, 166, 255, 0.12);
-    border-color: rgba(88, 166, 255, 0.5);
-    color: #9ecbff;
+    background: color-mix(in srgb, var(--popup-info) 12%, transparent);
+    border-color: color-mix(in srgb, var(--popup-info) 50%, transparent);
+    color: var(--popup-info);
 }
 
 .shell-connection-info {
@@ -264,8 +264,8 @@ body.is-electron.fullscreen .shell-zoom-hud {
     margin: 0 0 14px;
     padding: 4px 14px;
     border-radius: 12px;
-    background: rgba(255, 255, 255, 0.035);
-    border: 1px solid rgba(255, 255, 255, 0.09);
+    background: var(--popup-field);
+    border: 1px solid var(--popup-border);
 }
 
 .shell-connection-info dt {
@@ -274,12 +274,12 @@ body.is-electron.fullscreen .shell-zoom-hud {
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #8b95a7;
+    color: var(--popup-muted);
 }
 
 .shell-connection-info dt:not(:first-of-type) {
     margin-top: 2px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 1px solid color-mix(in srgb, var(--popup-border) 60%, transparent);
 }
 
 .shell-connection-info dd {
@@ -290,7 +290,7 @@ body.is-electron.fullscreen .shell-zoom-hud {
     min-height: 26px;
     margin: 2px 0 0;
     padding-bottom: 8px;
-    color: #e2e8f0;
+    color: var(--popup-text);
 }
 
 .shell-connection-value {
@@ -306,9 +306,9 @@ body.is-electron.fullscreen .shell-zoom-hud {
 
 .shell-connection-copy {
     flex-shrink: 0;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    background: rgba(255, 255, 255, 0.04);
-    color: #cbd5e1;
+    border: 1px solid var(--popup-border);
+    background: color-mix(in srgb, var(--popup-text) 4%, transparent);
+    color: var(--popup-text);
     font-size: 11px;
     font-weight: 600;
     font-family: inherit;
@@ -319,20 +319,20 @@ body.is-electron.fullscreen .shell-zoom-hud {
 }
 
 .shell-connection-copy:hover {
-    background: rgba(139, 92, 246, 0.18);
-    border-color: rgba(139, 92, 246, 0.5);
-    color: #fff;
+    background: var(--popup-hover);
+    border-color: color-mix(in srgb, var(--popup-accent) 50%, transparent);
+    color: var(--popup-text);
 }
 
 .shell-connection-warning {
     margin: 0 0 14px;
     padding: 9px 12px;
     border-radius: 10px;
-    background: rgba(251, 191, 36, 0.08);
-    border: 1px solid rgba(251, 191, 36, 0.28);
+    background: color-mix(in srgb, var(--popup-warning) 10%, var(--popup-bg));
+    border: 1px solid color-mix(in srgb, var(--popup-warning) 40%, transparent);
     font-size: 12px;
     line-height: 1.45;
-    color: #fcd34d;
+    color: var(--popup-warning);
 }
 
 .shell-connection-warning[hidden] {
@@ -344,7 +344,7 @@ body.is-electron.fullscreen .shell-zoom-hud {
     flex-direction: column;
     gap: 8px;
     padding-top: 16px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid var(--popup-border);
 }
 
 .shell-connection-label {
@@ -352,7 +352,7 @@ body.is-electron.fullscreen .shell-zoom-hud {
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    color: #8b95a7;
+    color: var(--popup-muted);
 }
 
 .shell-connection-row {
@@ -365,9 +365,9 @@ body.is-electron.fullscreen .shell-zoom-hud {
     min-width: 0;
     height: 40px;
     box-sizing: border-box;
-    background: rgba(0, 0, 0, 0.28);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    color: #e2e8f0;
+    background: var(--popup-field);
+    border: 1px solid var(--popup-border);
+    color: var(--popup-text);
     border-radius: 10px;
     padding: 0 12px;
     font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
@@ -377,12 +377,12 @@ body.is-electron.fullscreen .shell-zoom-hud {
 }
 
 .shell-connection-input::placeholder {
-    color: #64748b;
+    color: var(--popup-muted);
 }
 
 .shell-connection-input:focus {
-    border-color: rgba(139, 92, 246, 0.7);
-    box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.18);
+    border-color: color-mix(in srgb, var(--popup-accent) 70%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--popup-accent) 18%, transparent);
 }
 
 .shell-connection-modal .shell-connection-connect {
@@ -418,11 +418,11 @@ body.is-electron.fullscreen .shell-zoom-hud {
     gap: 10px;
     width: 100%;
     text-align: left;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--popup-border);
     border-radius: 10px;
     padding: 9px 12px;
-    background: rgba(255, 255, 255, 0.03);
-    color: #e2e8f0;
+    background: var(--popup-field);
+    color: var(--popup-text);
     font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
     font-size: 13px;
     cursor: pointer;
@@ -433,22 +433,22 @@ body.is-electron.fullscreen .shell-zoom-hud {
     margin-left: auto;
     font-family: inherit;
     font-size: 11px;
-    color: #8b95a7;
+    color: var(--popup-muted);
 }
 
 .shell-connection-saved-entry:hover:not(:disabled) {
-    border-color: rgba(139, 92, 246, 0.55);
-    background: rgba(139, 92, 246, 0.1);
+    border-color: color-mix(in srgb, var(--popup-accent) 55%, transparent);
+    background: var(--popup-hover);
 }
 
 .shell-connection-saved-entry[data-current="1"] {
-    border-color: rgba(63, 185, 80, 0.4);
-    background: rgba(63, 185, 80, 0.07);
+    border-color: color-mix(in srgb, var(--popup-success) 40%, transparent);
+    background: color-mix(in srgb, var(--popup-success) 7%, var(--popup-bg));
     cursor: default;
 }
 
 .shell-connection-saved-entry[data-current="1"] small {
-    color: #7ee2a8;
+    color: var(--popup-success);
 }
 
 .shell-connection-saved-entry:disabled:not([data-current="1"]) {
@@ -470,7 +470,7 @@ body.is-electron.fullscreen .shell-zoom-hud {
 .shell-connection-status {
     margin: 0;
     font-size: 12px;
-    color: #a0aec0;
+    color: var(--popup-muted);
     text-align: center;
 }
 
@@ -479,7 +479,7 @@ body.is-electron.fullscreen .shell-zoom-hud {
 }
 
 .shell-connection-status.is-error {
-    color: #fca5a5;
+    color: var(--popup-danger);
 }
 
 .shell-titlebar-workers {
@@ -3249,7 +3249,7 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
 }
 
 .cuttle-whats-new-icon {
-    color: var(--popup-accent);
+    color: var(--popup-accent-text);
 }
 
 .cuttle-whats-new-modal .auth-modal-title {
@@ -3263,7 +3263,7 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
     font-variant-numeric: tabular-nums;
     background: color-mix(in srgb, var(--popup-accent) 16%, transparent);
     border-color: color-mix(in srgb, var(--popup-accent) 42%, transparent);
-    color: var(--popup-accent);
+    color: var(--popup-accent-text);
 }
 
 .cuttle-whats-new-version:empty {
@@ -3368,7 +3368,7 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
 .cuttle-whats-new-notes h2 {
     padding-bottom: 6px;
     border-bottom: 1px solid var(--popup-border);
-    color: var(--popup-accent);
+    color: var(--popup-accent-text);
     font-size: 0.74rem;
     font-weight: 700;
     letter-spacing: 0.08em;
@@ -3387,7 +3387,7 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
 }
 
 .cuttle-whats-new-notes li::marker {
-    color: var(--popup-accent);
+    color: var(--popup-accent-text);
 }
 
 .cuttle-whats-new-notes strong {
@@ -3399,14 +3399,14 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
     padding: 1px 5px;
     border-radius: 5px;
     background: color-mix(in srgb, var(--popup-accent) 14%, transparent);
-    color: var(--popup-accent);
+    color: var(--popup-text);
     font-family: ui-monospace, 'SFMono-Regular', 'Cascadia Code', Consolas, monospace;
     font-size: 0.8em;
     overflow-wrap: anywhere;
 }
 
 .cuttle-whats-new-notes a {
-    color: var(--popup-accent);
+    color: var(--popup-accent-text);
     text-decoration: underline;
     text-decoration-color: color-mix(in srgb, var(--popup-accent) 45%, transparent);
     text-underline-offset: 2px;
@@ -3414,7 +3414,7 @@ html.cuttle-bg-paused .split-column.pane-drop-target > .pane-drop-overlay {
 
 .cuttle-whats-new-notes a:hover,
 .cuttle-whats-new-notes a:focus-visible {
-    color: var(--popup-accent);
+    color: var(--popup-accent-text);
     text-decoration-color: currentColor;
 }
 

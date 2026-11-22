@@ -161,3 +161,57 @@ def test_update_center_uses_shared_account_modal_surface(browser, static_server)
         _assert_blocked_api_free(blocked)
     finally:
         context.close()
+
+
+# WCAG contrast of every visible text node in a popup, composited over the
+# real backdrop (popup backgrounds are translucent color-mix layers).
+CONTRAST_JS = """(sel) => {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 1;
+  const cx = cv.getContext('2d', {willReadFrequently: true});
+  const rgba = (s) => { cx.clearRect(0, 0, 1, 1); cx.fillStyle = '#000'; cx.fillStyle = s; cx.fillRect(0, 0, 1, 1);
+    const d = cx.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
+  const over = (t, u) => [0, 1, 2].map((i) => t[i] * t[3] + u[i] * (1 - t[3])).concat(1);
+  const lum = (c) => c.slice(0, 3).reduce((acc, v, i) => { v /= 255;
+    v = v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); return acc + [0.2126, 0.7152, 0.0722][i] * v; }, 0);
+  const bgOf = (el) => { const layers = [];
+    for (let n = el; n; n = n.parentElement) { const c = rgba(getComputedStyle(n).backgroundColor);
+      if (c[3] > 0) { layers.push(c); if (c[3] >= 1) break; } }
+    let base = layers.length && layers[layers.length - 1][3] >= 1 ? layers.pop() : [255, 255, 255, 1];
+    for (let i = layers.length - 1; i >= 0; i--) base = over(layers[i], base); return base; };
+  const out = [];
+  for (const el of document.querySelector(sel).querySelectorAll('*')) {
+    if (!Array.from(el.childNodes).some((t) => t.nodeType === 3 && t.textContent.trim())) continue;
+    const cs = getComputedStyle(el);
+    if (cs.visibility === 'hidden' || !el.getClientRects().length) continue;
+    const bg = bgOf(el), fg = over(rgba(cs.color), bg);
+    const a = lum(fg), b = lum(bg);
+    out.push({text: el.textContent.trim().slice(0, 30), ratio: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)});
+  }
+  return out;
+}"""
+
+ALL_THEMES = ("dark", "midnight", "light", "sakura", "mint", "lavender", "paper",
+              "graphite", "onyx", "nord", "rgb", "synthwave", "glitch", "matrix")
+
+
+def test_update_center_text_is_readable_in_every_theme(browser, static_server):
+    """Light themes once got fixed dark-theme pastels (~1.1:1 on white)."""
+    failures = []
+    for theme in ALL_THEMES:
+        world = UpdateWorld(DEV_SNAPSHOT)
+        context, page, errors, blocked = _open(browser, static_server, world)
+        try:
+            context.add_init_script(f"localStorage.setItem('theme', '{theme}');")
+            _load_shell(page, static_server)
+            _open_center(page)
+            page.wait_for_function("document.querySelector('[data-update-continue]') && !document.querySelector('[data-update-continue]').disabled")
+            rows = page.evaluate(CONTRAST_JS, "#cuttleUpdateModal")
+            page.locator("[data-update-continue]").click()
+            page.wait_for_selector(".update-confirm-commits")
+            rows += page.evaluate(CONTRAST_JS, "#cuttleUpdateModal")
+            assert rows
+            failures += [(theme, r["text"], round(r["ratio"], 2)) for r in rows if r["ratio"] < 4.5]
+            assert not errors
+        finally:
+            context.close()
+    assert not failures, failures

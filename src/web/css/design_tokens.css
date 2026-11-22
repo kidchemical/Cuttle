@@ -65,12 +65,33 @@ body.light-mode {
 :root, body {
     --popup-bg: var(--bg-secondary, var(--panel-bg, #16213e));
     --popup-text: var(--text-primary, var(--panel-text, #e2e8f0));
-    --popup-muted: color-mix(in srgb, var(--popup-text) 72%, var(--popup-bg));
+    --popup-muted: color-mix(in srgb, var(--popup-text) 82%, var(--popup-bg));
     --popup-border: color-mix(in srgb, var(--popup-text) 24%, var(--popup-bg));
     --popup-accent: var(--accent-color, var(--accent, #667eea));
     --popup-on-accent: var(--text-inverse, #fff);
     --popup-field: color-mix(in srgb, var(--popup-text) 6%, var(--popup-bg));
     --popup-hover: color-mix(in srgb, var(--popup-accent) 14%, var(--popup-bg));
+    /* Status text: the hue pulled toward --popup-text, so it darkens on light
+       popups and lightens on dark ones instead of fixed pastels. */
+    --popup-danger: color-mix(in srgb, #ef4444 38%, var(--popup-text));
+    --popup-success: color-mix(in srgb, #16a34a 42%, var(--popup-text));
+    --popup-warning: color-mix(in srgb, #d97706 42%, var(--popup-text));
+    --popup-info: color-mix(in srgb, #3b82f6 55%, var(--popup-text));
+    /* Accent as text (links, code, section labels) stays readable on pale
+       accents and light popups alike. */
+    --popup-accent-text: color-mix(in srgb, var(--popup-accent) 50%, var(--popup-text));
+    /* Accent-filled controls with --popup-on-accent text (primary buttons,
+       active tabs). Older engines keep the plain accent. */
+    --popup-accent-fill: var(--popup-accent);
+}
+
+/* Push the fill away from its label color (darker under white text, lighter
+   under dark text) so primary buttons clear WCAG AA on mid-tone accents. */
+@supports (color: rgb(from red r g b)) {
+    :root, body {
+        --popup-accent-fill: color-mix(in srgb, var(--popup-accent) 78%,
+            rgb(from var(--popup-on-accent) calc(255 - r) calc(255 - g) calc(255 - b)));
+    }
 }
 
 /* ── Shared keyframes ─────────────────────────────────────────── */
