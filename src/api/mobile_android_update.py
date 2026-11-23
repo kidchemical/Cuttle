@@ -6,6 +6,8 @@ apps/mobile/dist/update/app-debug.apk so a phone can install without USB.
 
 Automatic source builds are an explicit opt-in (CUTTLE_MOBILE_AUTO_REBUILD=1);
 otherwise only an APK published by a build (or ``publish --apk``) is served.
+An automatic build waits for quiet sources and publishes only if no hash input
+was rewritten while Gradle ran; otherwise it rebuilds (up to REBUILD_ATTEMPTS).
 No APK is committed to git; each host builds or is given one.
 """
 
@@ -295,6 +297,84 @@ def _rebuild_command() -> List[str]:
     raise FileNotFoundError("No Android Gradle wrapper / build-android-debug.bat found")
 
 
+# A rebuild only publishes what it compiled from an untouched tree: sources
+# rewritten mid-build (an agent editing, or ``git stash`` / ``pop`` swapping the
+# old tree in for a moment) leave the same final hash but stale classes.
+SOURCE_QUIET_S = 10.0
+SOURCE_QUIET_MAX_WAIT_S = 120.0
+REBUILD_ATTEMPTS = 3
+
+
+def _source_fingerprint() -> tuple:
+    """(path, mtime_ns, size) of every hash input; any rewrite changes it."""
+    out = []
+    for path in hash_input_files():
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        out.append((str(path), st.st_mtime_ns, st.st_size))
+    return tuple(out)
+
+
+def _await_quiet_sources() -> None:
+    """Hold the build until no hash input was written in the last SOURCE_QUIET_S."""
+    deadline = time.monotonic() + SOURCE_QUIET_MAX_WAIT_S
+    while time.monotonic() < deadline:
+        newest = max((m for _p, m, _s in _source_fingerprint()), default=0) / 1e9
+        quiet_for = time.time() - newest
+        if quiet_for >= SOURCE_QUIET_S:
+            return
+        time.sleep(min(SOURCE_QUIET_S - quiet_for, max(0.0, deadline - time.monotonic())) + 0.1)
+
+
+def _build_once(env: Dict[str, str]) -> tuple:
+    """npm ci + Capacitor sync + Gradle. Returns (exit_code, err, digest, unchanged)."""
+    cmd = _rebuild_command()
+    if os.name == "nt" and BUILD_BAT.is_file():
+        cwd = str(MOBILE_DIR)
+    else:
+        cwd = str(MOBILE_DIR / "android")
+    # Dependency upgrades must reach the native project before Capacitor sync.
+    # Source APK builds are opt-in; use the checked-in lockfile for this app.
+    npm = "npm.cmd" if os.name == "nt" else "npm"
+    install = subprocess.run(
+        [npm, "ci"], cwd=str(MOBILE_DIR), env=env, check=False,
+        capture_output=True, text=True, timeout=300,
+        encoding="utf-8", errors="replace",
+    )
+    if install.returncode != 0:
+        raise RuntimeError("Android dependency installation failed: "
+                           + (install.stderr or install.stdout)[-500:])
+    sync = subprocess.run(
+        [npm, "run", "sync:android"],
+        cwd=str(MOBILE_DIR), env=env, check=False, capture_output=True,
+        text=True, timeout=300,
+        encoding="utf-8", errors="replace",
+    )
+    if sync.returncode != 0:
+        raise RuntimeError("Android asset sync failed; install mobile build dependencies with npm ci. "
+                           + (sync.stderr or sync.stdout)[-500:])
+    # Sync regenerates Capacitor files, so the snapshot starts after it.
+    digest = mobile_source_hash()
+    before = _source_fingerprint()
+    proc = subprocess.run(
+        cmd,
+        cwd=cwd,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60 * 25,
+        encoding="utf-8", errors="replace",
+    )
+    exit_code = int(proc.returncode)
+    err = None
+    if exit_code != 0:
+        err = (proc.stderr or proc.stdout or f"exit {exit_code}").strip()[:800]
+    return exit_code, err, digest, _source_fingerprint() == before
+
+
 def _run_rebuild(target_hash: str) -> None:
     started = datetime.now(timezone.utc).isoformat()
     with _rebuild_lock:
@@ -310,55 +390,29 @@ def _run_rebuild(target_hash: str) -> None:
     exit_code = 1
     err_text = None
     try:
-        cmd = _rebuild_command()
-        if os.name == "nt" and BUILD_BAT.is_file():
-            cwd = str(MOBILE_DIR)
-        else:
-            cwd = str(MOBILE_DIR / "android")
         env = os.environ.copy()
         # Prefer Android Studio JBR when present (same as build-android-debug.bat).
         studio_jbr = Path(r"C:\Program Files\Android\Android Studio\jbr")
         if studio_jbr.is_dir() and (studio_jbr / "bin" / "java.exe").is_file():
             env.setdefault("JAVA_HOME", str(studio_jbr))
-        # Dependency upgrades must reach the native project before Capacitor sync.
-        # Source APK builds are opt-in; use the checked-in lockfile for this app.
-        npm = "npm.cmd" if os.name == "nt" else "npm"
-        install = subprocess.run(
-            [npm, "ci"], cwd=str(MOBILE_DIR), env=env, check=False,
-            capture_output=True, text=True, timeout=300,
-            encoding="utf-8", errors="replace",
-        )
-        if install.returncode != 0:
-            raise RuntimeError("Android dependency installation failed: "
-                               + (install.stderr or install.stdout)[-500:])
-        sync = subprocess.run(
-            [npm, "run", "sync:android"],
-            cwd=str(MOBILE_DIR), env=env, check=False, capture_output=True,
-            text=True, timeout=300,
-            encoding="utf-8", errors="replace",
-        )
-        if sync.returncode != 0:
-            raise RuntimeError("Android asset sync failed; install mobile build dependencies with npm ci. "
-                               + (sync.stderr or sync.stdout)[-500:])
-        proc = subprocess.run(
-            cmd,
-            cwd=cwd,
-            env=env,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=60 * 25,
-            encoding="utf-8", errors="replace",
-        )
-        exit_code = int(proc.returncode)
-        if exit_code != 0:
-            err_text = (proc.stderr or proc.stdout or f"exit {exit_code}").strip()[:800]
-            print(f"[MOBILE] APK rebuild failed ({exit_code}): {err_text}")
-        else:
-            # publish task should run from Gradle doLast; ensure copy anyway
-            if publish_gradle_apk(target_hash) is None:
+        # Gradle's own publish hook would serve the APK before it is checked.
+        env["CUTTLE_ANDROID_PUBLISH"] = "0"
+        for attempt in range(1, REBUILD_ATTEMPTS + 1):
+            _await_quiet_sources()
+            exit_code, err_text, digest, unchanged = _build_once(env)
+            with _rebuild_lock:
+                _rebuild_state["targetHash"] = digest
+            if exit_code != 0:
+                print(f"[MOBILE] APK rebuild failed ({exit_code}): {err_text}")
+                break
+            if not unchanged:
+                exit_code, err_text = 1, "App sources changed during the build; not publishing it."
+                print(f"[MOBILE] APK sources changed during build {attempt}/{REBUILD_ATTEMPTS}; rebuilding")
+                continue
+            if publish_gradle_apk(digest) is None:
                 raise RuntimeError("Built APK does not contain the requested source hash")
-            print(f"[MOBILE] APK rebuild finished for hash {target_hash}")
+            print(f"[MOBILE] APK rebuild finished for hash {digest}")
+            break
     except Exception as exc:
         err_text = str(exc)
         print(f"[MOBILE] APK rebuild error: {exc}")
