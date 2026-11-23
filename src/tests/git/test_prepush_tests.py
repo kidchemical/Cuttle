@@ -144,9 +144,11 @@ def test_run_pytest_turns_default_encoding_into_a_failure(tmp_path):
            "import subprocess, sys\n"
            "def test_default_encoding():\n"
            "    subprocess.run([sys.executable, '-c', 'print(1)'], capture_output=True, text=True)\n")
-    status, failed, _ = pt.run_pytest(["test_enc.py"], tmp_path, sys.executable, 120)
+    log = tmp_path / "logs" / "run.log"
+    status, failed, _ = pt.run_pytest(["test_enc.py"], tmp_path, sys.executable, 120, log=log)
     assert status == "failed"
     assert failed == ["test_enc.py::test_default_encoding"]
+    assert "EncodingWarning" in log.read_text(encoding="utf-8")
 
 
 def test_hook_runs_the_gate_in_the_pushed_repo(repo):

@@ -170,8 +170,12 @@ class Worktree:
 
 
 def run_pytest(paths: Sequence[str], cwd: Path, python: str, timeout: float,
-               extra: Sequence[str] = ()) -> Tuple[str, List[str], str]:
-    """Return (status, failed node ids, summary). status: passed | failed | timeout | error."""
+               extra: Sequence[str] = (), log: Optional[Path] = None) -> Tuple[str, List[str], str]:
+    """Return (status, failed node ids, summary). status: passed | failed | timeout | error.
+
+    ``log`` receives pytest's full output when the run does not pass, so a
+    failure in the throwaway worktree can be read without reproducing it.
+    """
     env = dict(os.environ, PYTHONWARNDEFAULTENCODING="1", PYTHONUTF8="0")
     env.pop("PYTHONPATH", None)  # pytest.ini sets pythonpath = src for the worktree
     basetemp = Path(tempfile.mkdtemp(prefix="cuttle-prepush-pytest-"))
@@ -185,6 +189,9 @@ def run_pytest(paths: Sequence[str], cwd: Path, python: str, timeout: float,
     finally:
         shutil.rmtree(basetemp, ignore_errors=True)
     out = proc.stdout or ""
+    if log is not None and proc.returncode not in (0, 5):
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(out + (proc.stderr or ""), encoding="utf-8", newline="\n")
     failed = re.findall(r"^(?:FAILED|ERROR) (\S+)", out, re.M)
     tail = [ln for ln in out.splitlines()
             if re.search(r"\b(passed|failed|errors?|no tests ran)\b.* in [\d.]+s", ln)]
@@ -211,11 +218,15 @@ def release_check(rev: str = "HEAD", repo: Path = REPO) -> dict:
     python = venv_python(repo)
     if not sha or not python:
         return {"status": "error", "summary": "unknown revision" if not sha else "no project venv"}
+    log = _stamp_dir(repo) / f"{sha}.log"
+    log.unlink(missing_ok=True)
     with Worktree(sha, repo) as wt:
-        status, failed, summary = run_pytest(["src/tests"], wt, python, RELEASE_TIMEOUT)
+        status, failed, summary = run_pytest(["src/tests"], wt, python, RELEASE_TIMEOUT, log=log)
     result = {"status": status, "commit": sha, "failed": failed, "summary": summary}
     if status == "passed":
         result["stamp"] = str(write_stamp(sha, summary, repo))
+    elif log.is_file():
+        result["log"] = str(log)
     return result
 
 

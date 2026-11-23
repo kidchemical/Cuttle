@@ -911,7 +911,10 @@ def test_agent_router_options_requires_owner(tmp_path, monkeypatch):
     )
     live = ctx["client"].get("/api/agent-router/options?live=1", environ_base=LAN)
     assert live.status_code == 200, live.get_json()
-    assert live.get_json()["agent_models"]["opencode"] == ["openrouter/deepseek/v9"]
+    # Live ids come first; manifest ids the live list omits stay after them.
+    opencode = live.get_json()["agent_models"]["opencode"]
+    assert opencode[0] == "openrouter/deepseek/v9"
+    assert set(data["agent_models"]["opencode"]) <= set(opencode)
 
 
 def test_worker_bearer_cannot_read_router_options(tmp_path, monkeypatch):

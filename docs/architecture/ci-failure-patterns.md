@@ -22,6 +22,15 @@ PYTHONPATH=src .venv/bin/python -m core.prepush_tests fast                 # wha
 ```
 
 Windows PowerShell: `$env:PYTHONPATH = "src"; .\.venv\Scripts\python.exe -m core.prepush_tests …`.
+When a push's changed sources touch more than 60 test files (a batch of
+commits, or a widely imported module), the branch tier drops the related tests
+and runs only the changed ones, so a stale pinned test (theme 4) reaches only
+`release-check`. Run `release-check` before pushing a large batch. A failed
+`release-check` keeps pytest's full output at the `log` path it prints.
+
+Targeted runs by hand need `PYTHONWARNDEFAULTENCODING=1` as well as
+`-W error::EncodingWarning`; the flag alone never fires.
+
 `CUTTLE_PREPUSH_TESTS=0` skips the test gate for one push (the secret scan
 still runs); say why in the push message.
 

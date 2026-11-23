@@ -17,7 +17,7 @@ def dirs(tmp_path, monkeypatch):
         conn.execute("CREATE TABLE chats(body)")
         conn.execute("INSERT INTO chats VALUES ('kept')")
         conn.commit()
-    (home / ".env").write_text("test fixture only")
+    (home / ".env").write_text("test fixture only", encoding="utf-8")
     (home / "db/events.sqlite-wal").write_bytes(b"sidecar")
     if os.name != "nt":
         (home / "history").symlink_to("db", target_is_directory=True)
@@ -50,7 +50,7 @@ def test_cold_move_and_move_again(dirs):
     move.apply_at_startup(install)
     assert home.resolve() == again
     assert target.resolve() == again  # older absolute paths still work
-    assert (home / ".env").read_text() == "test fixture only"
+    assert (home / ".env").read_text(encoding="utf-8") == "test fixture only"
     move.check_reader()
     # Missing drive must not reopen owner registration beside the real store.
     again.rename(target.with_name("offline"))

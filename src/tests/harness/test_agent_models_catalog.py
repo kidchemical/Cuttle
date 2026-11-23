@@ -238,7 +238,7 @@ def _saved_catalogs(tmp_path, monkeypatch, agent, rows, fetched_at=None):
         "version": 1,
         "fetched_at": time.time() if fetched_at is None else fetched_at,
         "models": rows,
-    }))
+    }), encoding="utf-8")
 
 
 def test_plain_catalog_carries_saved_live_models(tmp_path, monkeypatch):

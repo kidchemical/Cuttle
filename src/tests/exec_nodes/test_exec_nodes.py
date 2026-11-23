@@ -478,7 +478,7 @@ assert.deepStrictEqual(M.plan({ node_id: 'laptop', cwd: 'C:\\w' }, { nodeId: 'ho
   { kind: 'save', body: { node_id: 'host', cwd: '' } });
 assert.deepStrictEqual(M.plan(null, { nodeId: 'laptop', cwd: '' }), { kind: 'save', body: { node_id: 'laptop', cwd: '' } });
 """ % json.dumps(str(web / "js" / "chat" / "chat_exec_node_model.js"))
-    done = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=60)
+    done = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert done.returncode == 0, done.stderr
 
 

@@ -229,7 +229,7 @@ def test_stale_conversation_is_dropped_before_the_briefing_is_skipped(agy_state,
     store.save_antigravity_resume_id(cwd, 9, "gone-conv")
     assert adapter.load_resume(cwd, 9) is None
     assert store.load_antigravity_resume_id(cwd, 9) is None
-    (agy_state / "kept-conv.db").write_text("")
+    (agy_state / "kept-conv.db").write_text("", encoding="utf-8")
     store.save_antigravity_resume_id(cwd, 9, "kept-conv")
     assert adapter.load_resume(cwd, 9) == "kept-conv"
 

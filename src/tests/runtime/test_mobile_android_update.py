@@ -337,7 +337,7 @@ def test_rebuild_never_publishes_a_build_whose_sources_changed_mid_build(monkeyp
     """A ``git stash`` / ``pop`` during Gradle leaves the same hash but stale classes."""
     from types import SimpleNamespace
     src = tmp_path / "Notify.java"
-    src.write_text("new")
+    src.write_text("new", encoding="utf-8")
     published, gradle_envs = [], []
     monkeypatch.setattr(apk, "_rebuild_command", lambda: ["fixture-gradle"])
     monkeypatch.setattr(apk, "_rebuild_state", {})
@@ -349,7 +349,7 @@ def test_rebuild_never_publishes_a_build_whose_sources_changed_mid_build(monkeyp
         if argv == ["fixture-gradle"]:
             gradle_envs.append(kwargs["env"].get("CUTTLE_ANDROID_PUBLISH"))
             if len(gradle_envs) == 1:  # stash + pop while the first build compiles
-                src.write_text("new")
+                src.write_text("new", encoding="utf-8")
                 os.utime(src, ns=(src.stat().st_mtime_ns + 10**9,) * 2)
         return SimpleNamespace(returncode=0, stderr="", stdout="")
 
@@ -364,7 +364,7 @@ def test_rebuild_never_publishes_a_build_whose_sources_changed_mid_build(monkeyp
 def test_rebuild_gives_up_while_sources_keep_changing(monkeypatch, tmp_path):
     from types import SimpleNamespace
     src = tmp_path / "Notify.java"
-    src.write_text("x")
+    src.write_text("x", encoding="utf-8")
     published = []
     monkeypatch.setattr(apk, "mobile_source_hash", lambda: "c" * 20)
     monkeypatch.setattr(apk, "_rebuild_command", lambda: ["fixture-gradle"])
@@ -374,7 +374,7 @@ def test_rebuild_gives_up_while_sources_keep_changing(monkeypatch, tmp_path):
 
     def run(argv, **kwargs):
         if argv == ["fixture-gradle"]:
-            src.write_text(src.read_text() + "x")
+            src.write_text(src.read_text(encoding="utf-8") + "x", encoding="utf-8")
         return SimpleNamespace(returncode=0, stderr="", stdout="")
 
     monkeypatch.setattr(apk.subprocess, "run", run)
