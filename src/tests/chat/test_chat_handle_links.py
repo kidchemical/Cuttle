@@ -201,3 +201,43 @@ def test_stopped_bubble_ref_stays_copyable():
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     assert "stopped-ref-ok" in proc.stdout
+
+
+_LIVE_REF_DRIVER = r"""
+require(%s);
+const assert = require('assert');
+
+const mk = (id) => ({ id, dataset: {}, matches: (sel) => !!id && sel.includes('#' + id),
+  compareDocumentPosition(other) { return order.indexOf(other) > order.indexOf(this) ? 4 : 2; } });
+const u1 = mk(''), a1 = mk(''), u2 = mk(''), live = mk('typing-indicator');
+const order = [u1, a1, u2, live];
+const box = { querySelectorAll: () => [u1, a1, u2] };  // live bubble is not a record
+const nav = globalThis.CuttleChatTranscriptNav.create({
+  win: { document: { getElementById: () => box } },
+  storage: { getItem: () => null, setItem: () => {} },
+  escapeHtmlInline: (s) => String(s),
+  recordSelector: '.message',
+  currentSessionId: () => 2757,
+  formatChatDisplayId: () => 'CH-002757',
+  olderVisibleCount: () => 0, hasOlderMessages: () => false, loadOlderMessages: async () => {},
+  unseenBelow: () => 0, attentionIsError: () => false, clearUnseenBelow: () => {},
+  activateViewport: () => {},
+  copyText: async () => true,
+});
+
+(async () => {
+  const hit = await nav.copyMessageRefToClipboard({ closest: () => live });
+  assert.deepStrictEqual(hit, { ok: true, ref: 'CH-002757-4' });
+  assert.strictEqual(live.dataset.messageIndex, undefined);  // not cached while live
+  console.log('live-ref-ok');
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+
+
+@node_only
+def test_generating_bubble_ref_points_at_the_next_slot():
+    """The still-generating bubble's ref button copies the slot its reply lands in."""
+    driver = _LIVE_REF_DRIVER % json.dumps(str(NAV_JS))
+    proc = subprocess.run(["node", "-e", driver], capture_output=True, text=True, encoding="utf-8", timeout=30)
+    assert proc.returncode == 0, proc.stderr or proc.stdout
+    assert "live-ref-ok" in proc.stdout

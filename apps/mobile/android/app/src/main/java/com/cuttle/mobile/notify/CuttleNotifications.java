@@ -16,20 +16,27 @@ public final class CuttleNotifications {
     private CuttleNotifications() {}
 
     public static void showChatComplete(Context ctx, JSONObject obj) {
-        int id = NEXT_ID.incrementAndGet();
-        String pipeline = obj.optString("pipeline", "Cuttle");
-        if (pipeline == null || pipeline.isEmpty() || "null".equals(pipeline)) {
-            pipeline = "Cuttle";
+        String sessionId = stringField(obj, "session_id");
+        // One shade entry per chat: a newer reply replaces that chat's older one.
+        int id = sessionId.isEmpty() ? NEXT_ID.incrementAndGet() : chatNotificationId(sessionId);
+        String agent = stringField(obj, "agent_label");
+        if (agent.isEmpty()) {
+            agent = stringField(obj, "pipeline");
+        }
+        String chatTitle = stringField(obj, "chat_title");
+        String title = !chatTitle.isEmpty() ? chatTitle : (agent.isEmpty() ? "Cuttle" : agent);
+        String sub = chatTitle.isEmpty() ? "" : agent;
+        if (obj.optBoolean("needs_input", false)) {
+            sub = sub.isEmpty() ? "Needs your input" : sub + " · needs your input";
         }
         String text = obj.optString("response", "Done");
-        if (text.length() > 400) {
-            text = text.substring(0, 400) + "…";
+        if (text.length() > 600) {
+            text = text.substring(0, 600) + "…";
         }
-        String sessionId = stringField(obj, "session_id");
 
         NotificationCompat.Builder n = new NotificationCompat.Builder(ctx, Notifier.EVENTS_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_more)
-            .setContentTitle("Cuttle · " + pipeline)
+            .setContentTitle(title)
             .setContentText(text)
             .setStyle(new NotificationCompat.BigTextStyle().bigText(text))
             .setAutoCancel(true)
@@ -37,6 +44,9 @@ public final class CuttleNotifications {
             .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE);
+        if (!sub.isEmpty()) {
+            n.setSubText(sub);
+        }
 
         try {
             NotificationManagerCompat.from(ctx).notify(id, n.build());
@@ -68,6 +78,11 @@ public final class CuttleNotifications {
             NotificationManagerCompat.from(ctx).notify(id, n.build());
         } catch (SecurityException ignored) {
         }
+    }
+
+    private static int chatNotificationId(String sessionId) {
+        // Above the NEXT_ID counter range so per-chat ids never collide with it.
+        return 0x10000000 | (sessionId.hashCode() & 0x0fffffff);
     }
 
     private static String stringField(JSONObject obj, String key) {

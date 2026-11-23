@@ -117,6 +117,11 @@ out.pagedRows = F.renderTimeline(paged);
 out.pagedLoading = F.renderTimeline(Object.assign({}, paged, { loading_more: true }));
 const lastPage = { executing: false, event_store: true, has_more: false, events: [{ kind: 'status', t: 1, text: 'hi' }] };
 out.lastRows = F.renderTimeline(lastPage);
+// Live footer "ago": turn start + last step, ticking off the clock.
+out.liveAgo = F.liveAgoText(1000, 1500, 1620 * 1000);
+out.liveAgoOne = F.liveAgoText(1000, 1000, 1000.5 * 1000);
+out.liveAgoNone = F.liveAgoText(null, null, 5000);
+out.liveAgoRows = F.renderTimeline({ executing: true, events: [{ kind: 'status', t: 1000, text: 'a' }, { kind: 'tool', t: 1500, text: 'b' }] });
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -268,3 +273,14 @@ def test_running_turn_button_ships_pending_not_a_navigable_index():
     assert "getLiveQueryLogFooterHtml()" in page
     # The old footers hardcoded the bare index page as a live link.
     assert "getAssistantMessageFooterHtml('/query_log.html', false)" not in page
+
+
+@node_only
+def test_live_footer_shows_started_and_last_step_ago():
+    res = _run()
+    assert res["liveAgo"] == "started 10m ago · last step 2m ago"
+    assert res["liveAgoOne"] == "started just now"
+    assert res["liveAgoNone"] == ""
+    rows = res["liveAgoRows"]
+    assert 'class="query-log-live-ago" data-ql-live-t0="1000" data-ql-live-last="1500"' in rows
+    assert "started " in rows and "last step " in rows

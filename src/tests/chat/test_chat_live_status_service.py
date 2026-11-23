@@ -279,3 +279,18 @@ def test_live_badge_preserved_for_status_updates_replaced_on_fallback_and_fenced
     assert live.get_live_status('12')['slash_command'] is None
     live.clear_live_status('12', turn=2)
     assert not live.get_live_status('12')['active']
+
+
+def test_started_at_is_kept_for_the_turn_and_reset_by_a_new_one():
+    """The live bubble's "Started … ago" comes from the turn's first publish."""
+    from api import chat_live_status as svc
+
+    svc.set_live_status("902", "Connecting...", turn=1)
+    started = svc.get_live_status("902")["started_at"]
+    with svc._LOCK:
+        svc._STORE["902"]["started_at"] = started - 120
+    svc.set_live_status("902", "tool 1: Bash", turn=1)
+    assert svc.get_live_status("902")["started_at"] == started - 120
+    svc.set_live_status("902", "Connecting...", turn=2)
+    assert svc.get_live_status("902")["started_at"] >= started
+    svc.clear_live_status("902")

@@ -55,6 +55,51 @@ def test_chat_complete_payload_does_not_prefer_agent_session_id():
     assert payload["session_id"] == "196"
 
 
+def test_snippet_prefers_post_processed_text_over_original_wrapper():
+    body = mc.visible_reply_snippet(
+        '<cuttle_original_response>"Idle after the 50-min wait while the LFS fetch ran."'
+        "</cuttle_original_response>\n\nLFS fetch still running; nothing to do yet."
+    )
+    assert body == "LFS fetch still running; nothing to do yet."
+
+
+def test_snippet_falls_back_to_original_when_processed_text_missing():
+    body = mc.visible_reply_snippet(
+        '<cuttle_original_response>"Only the original."</cuttle_original_response>'
+    )
+    assert body == "Only the original."
+
+
+def test_snippet_strips_markdown_and_cuttle_markup():
+    body = mc.visible_reply_snippet(
+        "### Workers resumed\n- **Laptop** (`CH-002750`): see [log](/x)\n\n"
+        '<cuttle_action_form>{"title": "Restart Flask?"}</cuttle_action_form>\n'
+        "<cuttle_stray"
+    )
+    assert body == "Workers resumed\n• Laptop (CH-002750): see log"
+    assert "<" not in body and "**" not in body
+
+
+def test_snippet_names_question_when_reply_is_only_a_form():
+    body = mc.visible_reply_snippet(
+        '<cuttle_action_form>{"title": "Pick a branch", "resume": true}</cuttle_action_form>'
+    )
+    assert body == "Needs your input: Pick a branch"
+
+
+def test_chat_complete_payload_labels_agent_and_question():
+    payload = mc.chat_complete_payload(
+        "not-a-db-id",
+        {
+            "response": 'Done.\n<cuttle_action_form>{"title": "Push?"}</cuttle_action_form>',
+            "type": "cursor_command",
+        },
+    )
+    assert payload["agent_label"] == "Cursor Agent"
+    assert payload["needs_input"] is True
+    assert payload["chat_title"] == ""
+    assert mc.agent_display_label("some_unknown_command") == "Some Unknown"
+
 def test_emit_chat_complete_reaches_registered_device():
     q = mc.register_device_queue("phone-1")
     mc.emit_mobile_event("chat_complete", {"session_id": "185", "response": "done"})

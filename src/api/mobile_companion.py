@@ -57,21 +57,132 @@ def normalize_mobile_session_id(session_id: Any) -> str:
     return s
 
 
-def visible_reply_snippet(text: Any, limit: int = 240) -> str:
-    """Lock-screen body: the readable reply, not model thinking."""
+# Post-processing in append mode keeps the unedited reply in this wrapper ahead
+# of the processed text; the processed text is the one a notification shows.
+_ORIGINAL_RESPONSE = re.compile(
+    r"<cuttle_original_response>(.*?)</cuttle_original_response>", re.DOTALL
+)
+_ACTION_FORM = re.compile(
+    r"<cuttle_action_form\b[^>]*>(.*?)</cuttle_action_form\s*>", re.IGNORECASE | re.DOTALL
+)
+# Any other paired Cuttle UI tag, then whatever stray/truncated tag is left.
+_CUTTLE_BLOCK = re.compile(
+    r"<\s*(cuttle_[\w-]+)\b[^>]*?(?:/\s*>|>.*?<\s*/\s*\1\s*>)", re.IGNORECASE | re.DOTALL
+)
+_CUTTLE_TAG = re.compile(r"<\s*/?\s*cuttle_[\w-]+\b", re.IGNORECASE)
+_MD_IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+_MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_MD_FENCE = re.compile(r"^[ \t]*(?:`{3,}|~{3,})[^\n]*$", re.MULTILINE)
+_MD_TABLE_RULE = re.compile(r"^[ \t]*\|?[ \t]*:?-{3,}[-:| \t]*$", re.MULTILINE)
+_MD_RULE = re.compile(r"^[ \t]*(?:[-*_][ \t]*){3,}$", re.MULTILINE)
+_MD_HEADING = re.compile(r"^[ \t]*#{1,6}[ \t]+", re.MULTILINE)
+_MD_QUOTE = re.compile(r"^[ \t]*>[ \t]?", re.MULTILINE)
+_MD_BULLET = re.compile(r"^([ \t]*)[-*+][ \t]+", re.MULTILINE)
+_MD_STRONG = re.compile(r"(\*\*|__|~~)(?=\S)(.+?)(?<=\S)\1")
+_MD_ITALIC = re.compile(r"(?<![\w*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\w*])")
+_MD_CODE_SPAN = re.compile(r"`+([^`\n]+?)`+")
+
+
+def _unwrap_original(match: "re.Match[str]") -> str:
+    try:
+        original = json.loads(match.group(1))
+    except ValueError:
+        return ""
+    return original if isinstance(original, str) else ""
+
+
+def _form_title(body: str) -> str:
+    try:
+        spec = json.loads(body)
+    except ValueError:
+        return ""
+    if not isinstance(spec, dict):
+        return ""
+    for key in ("title", "question", "prompt"):
+        value = spec.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _markdown_to_plain(text: str) -> str:
+    """Notification shades show raw text: drop the markdown syntax, keep the words."""
+    text = _MD_FENCE.sub("", text)
+    text = _MD_TABLE_RULE.sub("", text)
+    text = _MD_RULE.sub("", text)
+    text = _MD_IMAGE.sub(lambda m: m.group(1), text)
+    text = _MD_LINK.sub(lambda m: m.group(1), text)
+    text = _MD_HEADING.sub("", text)
+    text = _MD_QUOTE.sub("", text)
+    text = _MD_BULLET.sub(lambda m: m.group(1) + "• ", text)
+    text = _MD_STRONG.sub(lambda m: m.group(2), text)
+    text = _MD_ITALIC.sub(lambda m: m.group(1), text)
+    text = _MD_CODE_SPAN.sub(lambda m: m.group(1), text)
+    return text.replace("|", " ")
+
+
+def notification_text(text: Any) -> Dict[str, str]:
+    """Readable reply for a lock screen: final (post-processed) prose, no markup.
+
+    ``form_title`` names the first action form the reply carries (a question
+    waiting on the user), or is empty.
+    """
     raw = text if isinstance(text, str) else ("" if text is None else str(text))
     if _THINK_CLOSE.search(raw):
         raw = _THINK_CLOSE.split(raw)[-1]
     raw = _THINK_BLOCK.sub("", raw).strip()
     if _THINK_OPEN.match(raw):
-        return "Reply ready"
+        return {"text": "", "form_title": ""}
     raw = _THINK_OPEN.sub("", raw)
-    cleaned = " ".join(raw.split()).strip()
+    processed = _ORIGINAL_RESPONSE.sub("", raw)
+    # A wrapper with nothing after it (processed text lost): show the original.
+    raw = processed if processed.strip() else _ORIGINAL_RESPONSE.sub(_unwrap_original, raw)
+    titles = [t for t in (_form_title(m.group(1)) for m in _ACTION_FORM.finditer(raw)) if t]
+    raw = _CUTTLE_BLOCK.sub("", _ACTION_FORM.sub("", raw))
+    raw = _CUTTLE_TAG.split(raw)[0]
+    lines = [" ".join(line.split()) for line in _markdown_to_plain(raw).splitlines()]
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    return {"text": cleaned, "form_title": titles[0] if titles else ""}
+
+
+def visible_reply_snippet(text: Any, limit: int = 480) -> str:
+    """Lock-screen body: the readable reply, not model thinking or Cuttle markup."""
+    clean = notification_text(text)
+    cleaned = clean["text"]
     if not cleaned:
-        return "Reply ready"
+        return f"Needs your input: {clean['form_title']}" if clean["form_title"] else "Reply ready"
     if len(cleaned) > limit:
         return cleaned[: limit - 1].rstrip() + "…"
     return cleaned
+
+
+def agent_display_label(pipeline: Any) -> str:
+    """``cursor_command`` → the agent's manifest label (``Cursor Agent``)."""
+    raw = str(pipeline or "").strip()
+    if not raw or raw.lower() in ("none", "null"):
+        return ""
+    agent_id = raw[: -len("_command")] if raw.endswith("_command") else raw
+    try:
+        from api.agent_harness.catalog import get_agent
+
+        found = get_agent(agent_id)
+        if found and found[0].label:
+            return found[0].label
+    except Exception:
+        pass
+    return agent_id.replace("_", " ").replace("-", " ").strip().title() or raw
+
+
+def _chat_title(session_id: str) -> str:
+    if not session_id.isdigit():
+        return ""
+    try:
+        from api.auth_db import get_auth_db
+
+        row = get_auth_db().get_chat_session_by_id(int(session_id)) or {}
+    except Exception:
+        return ""
+    return " ".join(str(row.get("session_name") or "").split())[:80]
 
 
 def chat_complete_payload(session_id: Any, result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -83,12 +194,16 @@ def chat_complete_payload(session_id: Any, result: Optional[Dict[str, Any]] = No
         result.get("session_id")
     )
     pipeline = result.get("pipeline") or result.get("type") or result.get("agent_id")
+    response = result.get("response", "")
     return {
         "session_id": sid,
         "pipeline": pipeline,
+        "agent_label": agent_display_label(pipeline),
+        "chat_title": _chat_title(sid),
+        "needs_input": bool(notification_text(response)["form_title"]),
         "query_id": result.get("query_id"),
         "report_url": result.get("report_url"),
-        "response": visible_reply_snippet(result.get("response", "")),
+        "response": visible_reply_snippet(response),
     }
 
 

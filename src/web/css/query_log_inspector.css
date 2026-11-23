@@ -307,6 +307,13 @@ body.query-log-standalone .query-log-sheet {
     font-size: 0.75rem;
     color: var(--text-secondary, #b0b0c0);
 }
+.query-log-live-ago {
+    opacity: 0.75;
+    font-variant-numeric: tabular-nums;
+}
+.query-log-live-ago::before {
+    content: '· ';
+}
 .query-log-spinner {
     width: 14px;
     height: 14px;

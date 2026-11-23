@@ -926,3 +926,35 @@ console.log(JSON.stringify(out));
     assert 'transport unavailable' in out['legacy']
     assert out['agent']['chips'][0]['label'] == 'Codex - model · high'
     assert out['unpinned']['chips'][0]['label'] == 'Cursor'
+
+
+@node_only
+def test_live_bubble_timestamp_label_and_turn_start():
+    """A still-generating reply shows when its turn started (CH-002757)."""
+    code = r'''
+const A = require(process.env.MOD_JS);
+console.log(JSON.stringify({
+  sent: A.messageTimestampLabel('3m', false), now: A.messageTimestampLabel('now', false),
+  live: A.messageTimestampLabel('3m', true), liveNow: A.messageTimestampLabel('now', true),
+  fromLive: A.liveTurnStartMs({ started_at: 1700000000.5 }, 5),
+  fromFallback: A.liveTurnStartMs({}, '1700000000000'),
+  fallbackNow: A.liveTurnStartMs(null, null) > 0,
+}));
+'''
+    import os
+    result = subprocess.run(['node', '-e', code], env={**os.environ, 'MOD_JS': str(MOD_JS)}, capture_output=True, text=True, encoding="utf-8", check=True)
+    out = json.loads(result.stdout)
+    assert out['sent'] == 'Sent 3m ago' and out['now'] == 'Just now'
+    assert out['live'] == 'Started 3m ago' and out['liveNow'] == 'Started just now'
+    assert out['fromLive'] == 1700000000500
+    assert out['fromFallback'] == 1700000000000
+    assert out['fallbackNow'] is True
+
+
+def test_live_bubbles_carry_start_stamp_and_message_ref_button():
+    src = CHAT_PAGE_JS.read_text(encoding="utf-8")
+    footer = src[src.index("function getLiveQueryLogFooterHtml"):src.index("function liveTimestampHtml")]
+    assert "getShareRefButtonHtml()" in footer
+    for fn in ("function addRemoteWaitingIndicator", "function addTypingIndicator"):
+        body = src[src.index(fn):src.index("messagesContainer.appendChild(typingDiv)", src.index(fn))]
+        assert "liveTimestampHtml(" in body

@@ -292,6 +292,39 @@
         return false;
     }
 
+    // "started 9m ago · last step 12s ago" beside the Live… footer (epoch seconds in, now in ms).
+    function liveAgoText(t0, last, nowMs) {
+        var now = (nowMs || Date.now()) / 1000;
+        var ago = function (t) { var d = now - Number(t); return d < 1 ? 'just now' : formatAgo(d) + ' ago'; };
+        var parts = [];
+        if (Number(t0) > 0) parts.push('started ' + ago(t0));
+        if (Number(last) > 0 && Number(last) !== Number(t0)) parts.push('last step ' + ago(last));
+        return parts.join(' · ');
+    }
+
+    function formatAgo(d) {
+        var s = Math.floor(d);
+        if (s < 60) return s + 's';
+        if (s < 3600) return Math.floor(s / 60) + 'm';
+        return Math.floor(s / 3600) + 'h ' + (Math.floor(s / 60) % 60) + 'm';
+    }
+
+    // SSE turns re-render only on new events: a clock-only tick (no fetch) keeps
+    // the Live… "ago" label moving while one is on screen.
+    var liveAgoTimer = null;
+    function armLiveAgoTick() {
+        if (liveAgoTimer) return;
+        liveAgoTimer = setTimeout(function () {
+            liveAgoTimer = null;
+            var els = document.querySelectorAll ? document.querySelectorAll('.query-log-live-ago') : [];
+            Array.prototype.forEach.call(els, function (el) {
+                el.textContent = liveAgoText(el.getAttribute('data-ql-live-t0'), el.getAttribute('data-ql-live-last'));
+            });
+            if (els.length) armLiveAgoTick();
+        }, 15000);
+        if (liveAgoTimer.unref) liveAgoTimer.unref(); // node characterization harness
+    }
+
     function isLive(data) {
         return !!(data && data.executing && !hasFinishEvent(data));
     }
@@ -442,7 +475,16 @@
                 '</div>';
         }
         if (isLive(data)) {
-            html += '<div class="query-log-live" aria-live="polite" data-ql-footer><span class="query-log-spinner" aria-hidden="true"></span><span>Live…</span></div>';
+            var lastT = null;
+            for (var j = events.length - 1; j >= 0; j--) {
+                var tj = Number(events[j] && events[j].t);
+                if (isFinite(tj) && tj) { lastT = tj; break; }
+            }
+            var ago = liveAgoText(t0, lastT);
+            if (ago) armLiveAgoTick();
+            html += '<div class="query-log-live" aria-live="polite" data-ql-footer><span class="query-log-spinner" aria-hidden="true"></span><span>Live…</span>' +
+                (ago ? '<span class="query-log-live-ago" data-ql-live-t0="' + esc(t0 || '') + '" data-ql-live-last="' + esc(lastT || '') + '">' + esc(ago) + '</span>' : '') +
+                '</div>';
         }
         return html;
     }
@@ -946,6 +988,7 @@
         isNativeTool: isNativeTool,
         hasFinishEvent: hasFinishEvent,
         isLive: isLive,
+        liveAgoText: liveAgoText,
         renderTimeline: renderTimeline,
         resolveQueryLogClick: resolveQueryLogClick,
         mergeLogRows: mergeLogRows,
