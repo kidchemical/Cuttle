@@ -14,12 +14,14 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
 
 from api import chat_turn_row
 from api.subagents import fleet, service, store
+from api.subagents.types import TERMINAL_CHILD
 from tests.subagents.test_subagents import _runner_factory, _seed
 
 LAUNCHERS_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "chat" / "chat_subagent_launchers.js"
@@ -102,9 +104,15 @@ def test_no_bubble_at_all_keeps_the_cards_on_the_strip_until_one_exists(tmp_path
     _spawn(db, parent, wait=False)
     [entry] = service.public_parent_subagents(parent, db=db)
     assert entry["bound_message_id"] is None  # the page's live strip, at once
-    [batch] = store.list_batches_for_parent(db, parent)
-    for child in batch.children:
-        store.update_child(db, child.id, status="done", result="Scout found it")
+    # The background runner owns the child's status; marking it done here
+    # races its own "running" write (failed on CI). Wait for it instead.
+    deadline = time.monotonic() + 10
+    while True:
+        [batch] = store.list_batches_for_parent(db, parent)
+        if all(c.status in TERMINAL_CHILD for c in batch.children) or time.monotonic() > deadline:
+            break
+        time.sleep(0.02)
+    assert [c.status for c in batch.children] == ["done"]
     service._finalize_if_complete(db, batch)
     assert [e["label"] for e in service.public_parent_subagents(parent, db=db)] == ["Scout"]  # still shown
     last = db.add_message(parent, "assistant", "first reply", metadata=None)

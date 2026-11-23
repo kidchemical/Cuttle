@@ -71,7 +71,7 @@ class LocalNode:
         self.proc = None
 
     def start(self, env: dict, base: str) -> None:
-        self.log = open(self.log_path, "w")
+        self.log = open(self.log_path, "w", encoding="utf-8")
         self.proc = subprocess.Popen([sys.executable, "-c", NODE_MAIN],
                                      env={**os.environ, **env, "CUTTLE_HOME": str(self.home),
                                           "SMOKE_SRC": str(SRC), "CUTTLE_DEVICE_WORKERS_COORDINATOR_URL": base},
@@ -79,7 +79,7 @@ class LocalNode:
 
     def read(self, name: str) -> str:
         path = self.work / name
-        return path.read_text().strip() if path.exists() else ""
+        return path.read_text(encoding="utf-8", errors="replace").strip() if path.exists() else ""
 
     def leftovers(self) -> list:
         import psutil
@@ -97,7 +97,7 @@ class LocalNode:
             self.log.close()
 
     def log_tail(self) -> str:
-        return self.log_path.read_text()[-3000:] if self.log_path.exists() else ""
+        return self.log_path.read_text(encoding="utf-8", errors="replace")[-3000:] if self.log_path.exists() else ""
 
 
 class SshNode:
@@ -117,7 +117,8 @@ class SshNode:
 
     def ssh(self, command: str, timeout: float = 60) -> str:
         out = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", self.host, command],
-                             capture_output=True, text=True, timeout=timeout)
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=timeout)
         return out.stdout
 
     def start(self, env: dict, base: str) -> None:
@@ -129,11 +130,11 @@ class SshNode:
         script = (f"import os, json, sys\nsys.stdout.reconfigure(encoding='utf-8', errors='replace')\n"
                   f"os.environ.update(json.loads({json.dumps(json.dumps(node_env))}))\n"
                   f"os.chdir({self.work!r})\nopen('node.pid', 'w').write(str(os.getpid()))\n" + NODE_MAIN)
-        self.log = open(self.log_path, "w")
+        self.log = open(self.log_path, "w", encoding="utf-8")
         self.proc = subprocess.Popen(
             ["ssh", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes",
              "-R", f"{remote_port}:127.0.0.1:{port}", self.host, f'"{self.repo}\\.venv\\Scripts\\python.exe" -u -'],
-            stdin=subprocess.PIPE, stdout=self.log, stderr=subprocess.STDOUT, text=True)
+            stdin=subprocess.PIPE, stdout=self.log, stderr=subprocess.STDOUT, text=True, encoding="utf-8")
         self.proc.stdin.write(script)
         self.proc.stdin.close()
 
@@ -160,7 +161,7 @@ class SshNode:
         self.ssh(f'rmdir /s /q "{self.dir}"')
 
     def log_tail(self) -> str:
-        return self.log_path.read_text()[-3000:] if self.log_path.exists() else ""
+        return self.log_path.read_text(encoding="utf-8", errors="replace")[-3000:] if self.log_path.exists() else ""
 
 
 def main() -> int:

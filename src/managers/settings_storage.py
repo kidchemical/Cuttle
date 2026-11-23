@@ -89,10 +89,9 @@ def settings_lock(path: Path):
         with path.open("a+b") as stream:
             if os.name == "nt":
                 import msvcrt
-                stream.seek(0, os.SEEK_END)
-                if stream.tell() == 0:
-                    stream.write(b"\0")
-                    stream.flush()
+                # Lock byte 0 even past EOF (Windows allows it). Writing a pad
+                # byte raced: a second process's append could land on the byte
+                # the first had just locked and fail with EACCES.
                 stream.seek(0)
                 # LK_LOCK retries only once a second and gives up after ten
                 # tries, so a busy lock starves waiters; poll non-blocking.

@@ -118,7 +118,7 @@ def configure(body, install: Path | None = None) -> dict:
 
 
 def _run(args: list, success=(0,)) -> str:
-    result = subprocess.run(args, capture_output=True, text=True, errors="replace")
+    result = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if result.returncode not in success:
         detail = (result.stderr or result.stdout).strip().splitlines()
         raise OSError(detail[-1] if detail else f"{args[0]} failed ({result.returncode})")

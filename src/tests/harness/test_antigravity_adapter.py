@@ -13,6 +13,7 @@ import os
 import queue
 import stat
 import sys
+import types
 
 import pytest
 
@@ -166,7 +167,9 @@ def test_auth_preflight_reads_text_not_exit_code(monkeypatch, tmp_path):
     async def _spawn(*_a, **_k):
         return _Proc()
 
-    monkeypatch.setattr(agy, "_auth_ok_at", 0.0)
+    monkeypatch.setattr(agy, "_auth_ok_at", None)
+    # A freshly booted CI runner: monotonic() is still below the cache TTL.
+    monkeypatch.setattr(agy, "time", types.SimpleNamespace(monotonic=lambda: 5.0))
     monkeypatch.setattr(agy.asyncio, "create_subprocess_exec", _spawn)
     msg = asyncio.run(agy._authentication_preflight("/fake/agy", str(tmp_path)))
     assert msg and "not signed in" in msg.lower() and "`agy`" in msg and "\n" not in msg

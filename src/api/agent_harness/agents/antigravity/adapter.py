@@ -64,7 +64,7 @@ from scripts.utilities.agent_process import (
 _EFFORT_WORDS = ("low", "medium", "high", "xhigh", "max")
 _RESET_WORDS = ("default", "reset", "clear", "none")
 _AUTH_OK_TTL_SEC = 600.0
-_auth_ok_at = 0.0
+_auth_ok_at: Optional[float] = None  # monotonic() starts near 0 at boot
 
 
 def antigravity_executable() -> Optional[str]:
@@ -196,7 +196,7 @@ def normalize_antigravity_usage(raw: Any) -> Dict[str, Any]:
 async def _authentication_preflight(exe: str, cwd: str) -> Optional[str]:
     """``agy models`` exits 0 while signed out: read its text, cache success."""
     global _auth_ok_at
-    if time.monotonic() - _auth_ok_at < _AUTH_OK_TTL_SEC:
+    if _auth_ok_at is not None and time.monotonic() - _auth_ok_at < _AUTH_OK_TTL_SEC:
         return None
     try:
         proc = await asyncio.create_subprocess_exec(
