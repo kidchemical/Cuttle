@@ -36,6 +36,7 @@ Builds, uploads, model downloads, ComfyUI, etc.:
 2. Otherwise follow [action-forms.md](action-forms.md) (kick job + watch card, then **stop**).
 
 Short work (Q&A, quick edits, seconds-long commands) needs no watch card.
+Deciding what to run, and how often: [expensive-runs.md](expensive-runs.md).
 
 ### Detached work: unit + `watch-unit` (never the harness's own background watch)
 

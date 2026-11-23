@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 import pytest
 from .test_shared_diff_modal import static_server, browser, apply_request_guard  # noqa: F401
+from .control_helpers import low_contrast_text
 
 BUILTIN = {'every': 900, 'agent': '', 'involve_user': 'blocked', 'nudge': 'agent',
            'system': {'processes': True, 'memory': False, 'display': False}, 'paused_alert_hours': 6}
@@ -158,3 +159,18 @@ def test_empty_list_and_disabled_feature_explain_themselves(page_ctx, static_ser
     assert page.locator('#supContent').is_hidden()
     assert not errors
 
+
+
+@pytest.mark.parametrize('theme', ['dark', 'midnight', 'light', 'graphite', 'paper'])
+def test_text_is_readable_in_each_theme(page_ctx, static_server, theme):
+    """Status tones are border colours in the themes (greys on Midnight): every
+    line, tag and button must still read, with a pause menu open."""
+    page, errors = page_ctx
+    page.add_init_script("localStorage.setItem('theme', %s)" % json.dumps(theme))
+    _open(page, static_server, FakeAPI())
+    page.locator('[data-row="op-game"]').get_by_role('button', name='Pause…').click()
+    page.locator('.sup-pause-menu').wait_for()
+    classes = page.evaluate('document.documentElement.className').split()
+    assert theme + '-mode' in classes or 'theme-' + theme in classes
+    assert low_contrast_text(page) == []
+    assert not errors

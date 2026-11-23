@@ -61,3 +61,11 @@ its built-in values; a stored `supervision_defaults` key is then ignored.
 Display care is independent of the App: drop the `display` key from
 `brief.SYSTEM`, `display_care.py`, its two call sites (`system_care`, the worker
 loop) and the `wakepy` requirement; schedules that stored `display` read as off.
+
+## Themes
+
+Status and accent text on the shared skin uses `--orch-good-text`, `--orch-warn-text`,
+`--orch-bad-text` and `--orch-accent-text` (`orchestrator_page.css`), not the raw
+`--orch-good` / `--orch-bad` tones: those are the themes' border colours, greys on
+Midnight. `test_text_is_readable_in_each_theme` audits the page with
+`control_helpers.low_contrast_text`; use the same helper for another page.

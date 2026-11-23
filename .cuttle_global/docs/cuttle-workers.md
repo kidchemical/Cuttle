@@ -18,6 +18,7 @@ Match this doc when the user (or a good batch candidate) involves:
 - Mesh compute, capability ads, claim/lease jobs
 
 **Not** this doc: same-machine supervision → `docs/guides/SUPERVISED_COORDINATOR.md` in the Cuttle install.
+Running a chat's agent CLI on another machine → execution nodes (experimental `exec_nodes`; its runbook loads while the feature is on).
 
 ## Product rule
 

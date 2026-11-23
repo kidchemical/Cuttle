@@ -235,3 +235,9 @@ register_flag(FlagSpec(
     # Default on: only offers the option; each worktree is still created on purpose.
     default=True, category="agents", risk="medium", since="0.0.0", needs_restart=False,
 ))
+
+register_flag(FlagSpec(
+    id="exec_nodes", label="Execution nodes",
+    description="Run a chat's agent CLI on another paired machine. Each chat gets a node selector in its header; the chat, its history and settings stay on this Cuttle host. A machine becomes a node when it is paired in Jobs → Devices, runs the Cuttle client daemon and turns agent execution on in its own settings. Off: every chat runs on this host.",
+    default=False, category="agents", risk="medium", since="0.0.0", needs_restart=False, context_bundle=True,
+))

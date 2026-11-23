@@ -41,6 +41,7 @@ Global runbooks (match intent → open before acting; resolve via personal overl
   discord.md        — Discord reads: `python -m api.discord_cli`; posts: discord.post
   chat-history.md   — CH- handles + `api.chat_cli` / live panes: `api.panes_cli`
   headless-turns.md — one-shot CLI turn, long build/upload, no wait loops
+  expensive-runs.md — slow builds/tests/benchmarks: plan + batch experiments, targeted checks first, one job per GPU
   remote-access.md  — run a command on another machine via the user's tool (OpenSSH, Tailscale SSH, Teleport, MeshCentral)
   cursor-plan-bridge.md — CreatePlan must land as markdown (+ form) in Cuttle chat (the tool call alone is not delivered)
   gizmos.md         — Tasks gizmos: create early, patch during work through python -m api.gizmos tasks; no Tasks markdown tags

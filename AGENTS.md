@@ -141,6 +141,7 @@ and use or extend that owner — never a look-alike variant.
 | Achievements | `src/api/achievements/` |
 | Orchestration telemetry | `src/api/orchestration_telemetry/` |
 | Orchestrator + Agents | `src/api/orchestrator/`; profiles in `api.subagents.profiles` |
+| Execution nodes (agent CLI on another machine) | `src/api/exec_nodes/`; transport is the mesh (`api.device_workers`) |
 
 ### Tools for agents
 

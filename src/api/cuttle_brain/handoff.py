@@ -220,6 +220,33 @@ def mark_fresh_session(chat_session_id: Any, agent_id: str) -> None:
         _store().update(key, change)
 
 
+# Never a real path: any project compared with it reads as "moved".
+_MOVED_WORKSPACE = "@moved"
+
+
+def mark_workspace_moved(chat_session_id: Any, agent_id: str) -> None:
+    """``agent_id`` now runs this chat somewhere its native session does not
+    reach (the chat's execution node changed): the next turn resends the recent
+    transcript under the workspace-reset notice. No-op for an agent with no
+    seen cursor, which gets the transcript as a first join anyway."""
+    key = _sid_key(chat_session_id)
+    aid = (agent_id or "").strip()
+    if not key or not aid or aid not in _entry(chat_session_id)["seen"]:
+        return
+
+    def change(raw):
+        if not isinstance(raw, dict):
+            return raw
+        state = dict(raw)
+        projects = dict(state.get("projects") or {}) if isinstance(state.get("projects"), dict) else {}
+        projects[aid] = _MOVED_WORKSPACE
+        state["projects"] = projects
+        return state
+
+    with _lock:
+        _store().update(key, change)
+
+
 def clear_last_agent(chat_session_id: Any) -> None:
     """Forget handoff state for a chat (all key spellings)."""
     from api.cuttle_brain.context_delta import sid_variants

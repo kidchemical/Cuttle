@@ -65,6 +65,16 @@ script tags, the two mic buttons in `chat_page.html`, the `voiceClip` call sites
 in `chat_page.js`, the audio branch in `vision_prepass.py`, the `purpose=clip`
 gate in `voice_stt/routes.py`.
 
+**Execution nodes:** flag `exec_nodes` (default off). Runs a chat's agent CLI on
+another paired machine; the chat, history and context stay on this host. The
+node chip in the chat header picks the machine (and a working directory there);
+`python -m api.exec_nodes` does the same for agents, and a sub-agent child spec
+takes `"node"`. A machine takes agent turns only after it is paired, runs the
+client daemon and opts in locally (`CUTTLE_NODE_AGENT_EXEC=1`). Off, or with the
+kill switch, every chat runs on this host and bindings are kept. Owner
+`src/api/exec_nodes/`; design, setup, limits and teardown:
+`docs/guides/EXECUTION_NODES.md`.
+
 **Response post-processing:** flag `response_postprocessing` (default off).
 Its instructions, append/replace behavior, API/CLI, model, effort and fallback
 chain are configured together in Settings → Agents → Response post-processing,

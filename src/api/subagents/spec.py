@@ -113,6 +113,7 @@ def parse_child(raw: Any, *, index: int = 0) -> ChildSpec:
         effort_explicit=effort_explicit,
         tier=tier[:60],
         task=task,
+        node=str(raw.get("node") or "").strip()[:120],
     )
 
 

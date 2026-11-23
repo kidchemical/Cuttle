@@ -212,6 +212,7 @@
         if (!wrap || !text) return;
         supervision.setSession(sessionId);
         orchestration.setSession(sessionId);
+        execNode.setSession(sessionId);
         composerLock.setSession(sessionId);
         if (sessionId == null || sessionId === '') {
             wrap.hidden = true;
@@ -366,6 +367,13 @@
         sendMessage: (text) => sendMessage({ text }), closeMenus: () => closeAllSessionMenus(), confirm: (m) => window.confirm(m),
         navigate: (page) => (window.parent !== window ? window.parent.postMessage({ type: 'cuttle-navigate', page }, '*') : window.location.assign(page)),
         toast: (m, k) => (window.showToast || function () {})(m, k), viewportWidth: () => window.innerWidth, openChat: (sid) => loadChatSession(sid),
+        setInterval: (f, ms) => window.setInterval(f, ms), clearInterval: (t) => window.clearInterval(t),
+    });
+
+    // Execution node chip + dialog: which machine runs this chat's agent (experimental `exec_nodes`).
+    const execNode = CuttleChatExecNode.create({
+        doc: document, fetch: (u, o) => fetch(u, o), escapeHtml: escapeHtmlInline, enabledFlags: fetchEnabledExperimentalFlags,
+        agentId: () => contextGauge.stickyAgentId(), toast: (m, k) => (window.showToast || function () {})(m, k),
         setInterval: (f, ms) => window.setInterval(f, ms), clearInterval: (t) => window.clearInterval(t),
     });
 

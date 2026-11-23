@@ -106,6 +106,24 @@ class DeviceWorkerClient:
             json_body=body,
         )
 
+    def fetch_agent_turn(self, job_id: str) -> Dict[str, Any]:
+        """Payload of an ``agent_turn`` job this worker claimed (api.exec_nodes)."""
+        data = self._request("GET", f"/api/workers/exec/turns/{job_id}", timeout=20)
+        turn = data.get("turn")
+        return turn if isinstance(turn, dict) else {}
+
+    def post_agent_turn(
+        self, job_id: str, events: List[Any], result: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """Relay status items (and the final result); True when the host asked to cancel."""
+        body: Dict[str, Any] = {"worker_id": self.worker_id, "events": events}
+        if result is not None:
+            body["result"] = result
+        data = self._request(
+            "POST", f"/api/workers/exec/turns/{job_id}/events", json_body=body, timeout=20
+        )
+        return bool(data.get("cancel"))
+
     def complete(self, job_id: str, result: Optional[Dict[str, Any]] = None) -> None:
         self._request(
             "POST",

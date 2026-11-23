@@ -702,6 +702,10 @@ def run_agent_web_command(
         }
 
     manifest, adapter = pair
+    # A chat bound to an execution node runs its CLI there (api.exec_nodes).
+    from api.exec_nodes.service import adapter_for_turn
+
+    adapter = adapter_for_turn(manifest, adapter, chat_session_id)
     slash = manifest.slash_prefix().rstrip()
     type_ok = f"{manifest.id}_command"
     type_err = f"{manifest.id}_error"

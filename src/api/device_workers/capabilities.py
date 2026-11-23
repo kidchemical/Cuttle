@@ -373,6 +373,14 @@ def collect_capabilities(
         "features": sorted(RUNNING_FEATURES),
         "blender_python_expr": True,
     }
+    try:
+        # Execution node ad (api.exec_nodes): opt-in flag + installed agent CLIs.
+        from api.exec_nodes import node as exec_node
+
+        caps.update(exec_node.advertise())
+        load["agent_turns"] = exec_node.running()
+    except Exception:
+        caps["agent_exec"] = False
     storage = dict(storage_extra or {})
     disk_rev = cuttle_git_rev()
     boot = boot_git_rev()

@@ -493,6 +493,13 @@ sub-agent defaults). Apps → Orchestrator / Agents are `orchestrator_page.js` /
 `.cuttle_global/features/orchestrator/`. Runbook:
 `.cuttle/docs/experimental-features.md` (Orchestrator and Agents Apps).
 
+**Execution nodes (experimental):** `api.exec_nodes` runs a chat's agent CLI on
+a paired machine. The kernel's one seam is `service.adapter_for_turn`; the turn
+rides a targeted `agent_turn` job on the `api.device_workers` mesh (pairing,
+bearer and liveness stay there) and comes back through relay routes nested in
+the workers blueprint. Host-owned state in `<home>/db/exec_nodes.db`; the node
+keeps none. Guide: [`EXECUTION_NODES.md`](../guides/EXECUTION_NODES.md).
+
 **Gizmos (experimental):** live UI objects outside chat bubbles (widgets stay
 inside bubbles). `api.gizmos` owns types (`catalog`), normalized vendor plan
 usage (`usage`, reused from `api.agent_usage` fetchers), validation/placement

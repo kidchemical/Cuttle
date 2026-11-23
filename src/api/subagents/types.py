@@ -91,6 +91,8 @@ class ChildSpec:
     tier: str = ""
     # Explicit Tasks assignment, "<gizmo>:<item>" (spec.parse_task_ref).
     task: str = ""
+    # Execution node the child runs on ("" = this host; api.exec_nodes).
+    node: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {

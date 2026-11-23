@@ -20,7 +20,7 @@ body[data-page="supervision"] { --role: var(--orch-accent); }
 .sup-handle, .sup-project { font-size: 12px; color: var(--orch-muted); }
 .sup-handle { font-variant-numeric: tabular-nums; }
 .sup-row-status { font-size: 13px; }
-.sup-row.is-paused .sup-row-status { color: var(--orch-warn); }
+.sup-row.is-paused .sup-row-status { color: var(--orch-warn-text); }
 .sup-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 12px; color: var(--orch-muted); }
 .sup-row-actions { flex: none; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 46%; }
 .sup-pause-menu { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }

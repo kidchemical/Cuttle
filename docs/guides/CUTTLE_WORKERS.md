@@ -28,7 +28,7 @@ The user talks to **Cuttle**. Cuttle (orchestrator + Brain) decides when work sh
 | Local host worker loop | Daemon thread `run_device_workers_loop` in `cuttle_daemon.py` |
 | Client sidecar | `electron/device-worker/cuttle_device_worker.py` (stdlib; shipped in Client asar) + Electron `startWorkerSidecar()` |
 | Sidecar log (Client) | `%APPDATA%/cuttle-desktop/device-worker.log` (Electron console on exit) |
-| Job types | `ping`, `file_copy`, `blender_render`, `shell`, `cuttle_self_update` |
+| Job types | `ping`, `file_copy`, `blender_render`, `shell`, `cuttle_self_update`, `agent_turn` (a chat turn on an execution node; created only by the host's chat path, opt-in per machine — [`EXECUTION_NODES.md`](EXECUTION_NODES.md)) |
 | Platform verbs | `.cuttle_global/actions/workers-*.yaml` + `python -m api.device_workers.cli` |
 | Host intent | `workers.plan` / `POST /api/workers/plan` (heuristics); `auto_mesh` default off |
 | Blender farm | Default **work_steal** chunks (untargeted queue); `distribution=pinned` for legacy equal splits; per-frame timing in job results; EWMA `render_profile` on worker meta |
@@ -293,7 +293,7 @@ Success criteria for the benchmark: correct frames, sensible scheduling (idle GP
 | **W2b+** | Work-steal + analytics | Default chunk queue; per-frame timings; EWMA profiles — **code done** |
 | **W2c** | Client daemon + self-update | Host→laptop pull/restart without SSH — **code done** |
 | **W3** | Host intent routing | `workers.plan` heuristics — **partial**; auto-enqueue off |
-| **W4** | Backends + queue migrate | Optional Flamenco plug; optional always-on durable queue; agent/LLM-on-worker |
+| **W4** | Backends + queue migrate | Optional Flamenco plug; optional always-on durable queue. Agent-on-worker: **experimental** as execution nodes ([`EXECUTION_NODES.md`](EXECUTION_NODES.md)) |
 | **W5** *(someday)* | Mobile sensor / HITL edge | Optional — **low priority**; see below |
 
 ### Later — mobile (Capacitor) as edge, not farm node
@@ -311,7 +311,7 @@ Success criteria for the benchmark: correct frames, sensible scheduling (idle GP
 - **Per-harness workers tutorials** (Cursor-only, Codex-only, …) — platform contract only.
 - **Manual Jobs submit as the product path** — observability/debug only.
 - **SSH as control plane** — enroll/claim/self-update stay pull-based; SSH is the user's own tool for ad-hoc commands, outside the mesh.
-- **Free-form shell jobs** — the mesh runs named recipes and `cuttle_self_update` only; arbitrary commands go through OpenSSH (Cuttle doesn't reinvent a remote shell).
+- **Free-form shell jobs** — the mesh runs named recipes and `cuttle_self_update` only; arbitrary commands go through OpenSSH (Cuttle doesn't reinvent a remote shell). An `agent_turn` is not one: it starts a catalog agent CLI for an owned chat, only on a machine that opted in, and cannot be submitted over HTTP.
 
 ## Open questions (defer to implementation)
 

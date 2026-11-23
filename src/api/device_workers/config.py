@@ -144,6 +144,29 @@ def allowed_path_prefixes() -> List[str]:
     return prefixes
 
 
+def agent_exec_enabled() -> bool:
+    """May the paired host run agent CLIs on THIS machine (execution node)?
+
+    Off by default: pairing as a worker never implies it. Owner: api.exec_nodes.
+    """
+    env = _env("CUTTLE_NODE_AGENT_EXEC", "").lower()
+    if env in ("0", "false", "no", "off"):
+        return False
+    if env in ("1", "true", "yes", "on"):
+        return True
+    block = _settings_block().get("agent_exec")
+    return bool(isinstance(block, dict) and block.get("enabled"))
+
+
+def agent_exec_max_turns() -> int:
+    """Agent turns this machine runs at once."""
+    block = _settings_block().get("agent_exec")
+    try:
+        return max(1, min(int((block or {}).get("max_turns") or 2), 8))
+    except (TypeError, ValueError, AttributeError):
+        return 2
+
+
 def default_settings() -> Dict[str, Any]:
     return {
         "enabled": True,
@@ -167,4 +190,6 @@ def default_settings() -> Dict[str, Any]:
         "default_queue_ttl_seconds": 21600,
         "default_max_attempts": 2,
         "no_requeue_types": [],
+        # Execution node (api.exec_nodes): let the paired host run agent CLIs here.
+        "agent_exec": {"enabled": False, "max_turns": 2},
     }

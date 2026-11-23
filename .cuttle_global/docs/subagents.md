@@ -27,6 +27,9 @@ To message, check on, or supervise a chat this CLI did not spawn (a parent,
 sibling, or any existing chat), use `python -m api.chat_cli send|status|snapshot|supervise`
 (`chat-history.md`).
 
+A child runs on this host unless its spec names an execution node
+(`"node": "<id>"`, experimental `exec_nodes`; ids: `python -m api.exec_nodes list`).
+
 ## Spawn
 
 ```bash
