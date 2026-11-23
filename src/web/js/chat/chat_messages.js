@@ -1068,18 +1068,9 @@
         return renderStatusChipHtml(statuses[badge.kind], message, message, esc, 'routing-selection-chip');
     }
 
-    /** Bubble header time: "Sent 3m ago", or "Started 3m ago" for a reply still generating. */
-    function messageTimestampLabel(ago, live) {
-        if (ago === 'now') return live ? 'Started just now' : 'Just now';
-        return (live ? 'Started ' : 'Sent ') + ago + ' ago';
-    }
-
-    /** Start (ms) of a running turn: live-status `started_at` (s), else `fallbackMs`, else now. */
-    function liveTurnStartMs(liveStatus, fallbackMs) {
-        const s = Number(liveStatus && liveStatus.started_at);
-        if (s > 0) return Math.round(s * 1000);
-        const f = Number(fallbackMs);
-        return f > 0 ? f : Date.now();
+    /** Bubble header time: "Just now" / "Sent 3m ago". */
+    function messageTimestampLabel(ago) {
+        return ago === 'now' ? 'Just now' : 'Sent ' + ago + ' ago';
     }
 
     function routingAgentSlash(badge) {
@@ -1210,7 +1201,6 @@
         renderRoutingBadgeHtml,
         routingAgentSlash,
         messageTimestampLabel,
-        liveTurnStartMs,
         renderStatusChipHtml,
         renderAssistantStatusHtml,
         authMessageOptsFromServer,

@@ -7847,7 +7847,7 @@
         }
     }
 
-    function addRemoteWaitingIndicator(initialStatus, liveStatus) {
+    function addRemoteWaitingIndicator(initialStatus) {
         if (document.getElementById('typing-indicator') || document.getElementById('typing-indicator-remote')) {
             if (initialStatus) updateRemoteWaitingStatus(initialStatus);
             // Status-only updates used to leave a stale project chip from the
@@ -7860,8 +7860,6 @@
         const typingDiv = document.createElement('div');
         typingDiv.className = 'message assistant';
         typingDiv.id = 'typing-indicator-remote';
-        const lastRec = lastVisibleChatMessageEl(), lastStamp = lastRec && lastRec.classList.contains('user') && lastRec.querySelector('.message-timestamp[data-ts]');
-        const startedAt = CuttleChatMessages.liveTurnStartMs(liveStatus, lastStamp && lastStamp.dataset.ts);
         const statusLabel = initialStatus || 'Waiting for reply…';
         const pendingChip = (() => {
             const meta = currentTypingSlashMeta();
@@ -7876,7 +7874,6 @@
                         <span class="message-sender">${assistantDisplayName()}</span>
                         ${pendingChip}
                     </span>
-                    ${liveTimestampHtml(startedAt)}
                 </div>
                 <div class="message-content">
                     <div class="typing-indicator" aria-hidden="true">
@@ -8013,7 +8010,7 @@
             if (session.current() && liveActiveOther) {
                 setHistorySessionRunning(session.current(), true);
                 const statusLabel = (liveStatus && liveStatus.status) || 'Waiting for reply…';
-                addRemoteWaitingIndicator(statusLabel, liveStatus);
+                addRemoteWaitingIndicator(statusLabel);
                 if (liveStatus) stampLiveBubbleTurnRow(liveStatus.message_id, liveStatus.report_url, liveStatus.query_id);
                 updateRemoteWaitingStatus(statusLabel, liveStatus && liveStatus.report_url);
                 try { subagentLaunchers.syncLive(liveStatus && liveStatus.subagents); } catch (_) {}
@@ -8053,7 +8050,7 @@
             setHistorySessionRunning(session.current(), liveActive);
         }
         if (liveActive) {
-            addRemoteWaitingIndicator(statusLabel, liveStatus);
+            addRemoteWaitingIndicator(statusLabel);
             if (liveStatus) stampLiveBubbleTurnRow(liveStatus.message_id, liveStatus.report_url, liveStatus.query_id);
             updateRemoteWaitingStatus(statusLabel, liveStatus && liveStatus.report_url);
             try { subagentLaunchers.syncLive(liveStatus && liveStatus.subagents); } catch (_) {}
@@ -11074,7 +11071,7 @@
         }
         const ts = resolveMessageTimestamp(opts.timestamp);
         const timeAgo = formatTimeAgo(ts);
-        const timeLabel = CuttleChatMessages.messageTimestampLabel(timeAgo, false);
+        const timeLabel = CuttleChatMessages.messageTimestampLabel(timeAgo);
         const sc = normalizeSlashCommandStored(opts.slash_command || (role === 'assistant' ? CuttleChatMessages.routingAgentSlash(opts.routing_badge) : null));
         let project = projectFromMessageOpts(opts, projects, currentProject);
         if (!project && opts.message_id == null && currentProject) {
@@ -11316,10 +11313,6 @@
             `title="Query log appears once the agent starts working">${QUERY_LOG_ICON}</a>` +
             `${getShareRefButtonHtml()}</div></div>`
         );
-    }
-
-    function liveTimestampHtml(ts) {
-        return `<span class="message-timestamp message-timestamp--live" data-ts="${ts}">${CuttleChatMessages.messageTimestampLabel(formatTimeAgo(ts), true)}</span>`;
     }
 
     /** Point a typing indicator's query-log button at a real log. */
@@ -11607,7 +11600,6 @@
                         <span class="message-sender">${assistantDisplayName()}</span>
                         ${pendingChip}
                     </span>
-                    ${liveTimestampHtml(Date.now())}
                 </div>
                 <div class="message-content">
                     <div class="typing-indicator" aria-hidden="true">
@@ -11875,8 +11867,6 @@
             bubble.removeAttribute('data-pin-key');
             bubble.classList.remove('is-pinned-message');
             bubble.dataset.rawContent = 'Agent stopped.';
-            const stamp = bubble.querySelector('.message-timestamp--live');
-            if (stamp) { stamp.classList.remove('message-timestamp--live'); stamp.dataset.ts = String(Date.now()); stamp.textContent = 'Just now'; }
             bubble.querySelector('.typing-indicator')?.remove();
             const status = bubble.querySelector('.typing-status');
             if (status) {
@@ -12735,7 +12725,7 @@
                 const ts = parseInt(el.dataset.ts, 10);
                 if (!ts) return;
                 const ago = formatTimeAgo(ts);
-                el.textContent = CuttleChatMessages.messageTimestampLabel(ago, el.classList.contains('message-timestamp--live'));
+                el.textContent = CuttleChatMessages.messageTimestampLabel(ago);
             });
             refreshHistoryItemTimes();
         }, 60000);

@@ -129,8 +129,6 @@ def set_live_status(
             "active": bool(active),
             "status": (message if message is not None else prev.get("status")) or "Connecting...",
             "updated_at": now,
-            # When this turn first published: the live bubble's "Started … ago".
-            "started_at": prev.get("started_at") or now,
             "report_url": report_url if report_url is not None else prev.get("report_url"),
             "query_id": query_id if query_id is not None else prev.get("query_id"),
             "turn": turn if turn is not None else previous_turn,

@@ -316,6 +316,9 @@
         if (liveAgoTimer) return;
         liveAgoTimer = setTimeout(function () {
             liveAgoTimer = null;
+            // Closing only hides the overlay: stop ticking until it renders again.
+            var overlay = document.getElementById('queryLogOverlay');
+            if (overlay && overlay.hidden) return;
             var els = document.querySelectorAll ? document.querySelectorAll('.query-log-live-ago') : [];
             Array.prototype.forEach.call(els, function (el) {
                 el.textContent = liveAgoText(el.getAttribute('data-ql-live-t0'), el.getAttribute('data-ql-live-last'));
