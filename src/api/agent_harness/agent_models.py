@@ -377,9 +377,19 @@ def check_agent_pin(
 
 
 def _apply_catalog(row: Dict[str, Any], models: Any, source: str) -> None:
-    """Overwrite one public catalog row's model/effort lists with catalog rows."""
+    """Put catalog rows first on one public catalog row, keeping manifest ids.
+
+    A vendor's live list can be a curated picker (Claude Code lists only its
+    aliases), so manifest models it omits stay listed after it, as
+    ``check_agent_pin`` already accepts them.
+    """
     model_ids = catalog_model_ids(models)
     if model_ids:
+        listed = {m.lower() for m in model_ids} | {
+            str(r.get("resolved_model") or "").lower()
+            for r in models or [] if isinstance(r, dict)
+        }
+        model_ids += [m for m in row.get("models") or [] if str(m).lower() not in listed]
         row["models"] = model_ids
         row["models_source"] = source or "manifest"
     efforts = catalog_model_efforts(models)
@@ -528,7 +538,10 @@ def _apply_router_catalog(
 ) -> None:
     model_ids = catalog_model_ids(models)
     if model_ids:
-        agent_models[aid] = model_ids
+        listed = {m.lower() for m in model_ids}
+        agent_models[aid] = model_ids + [
+            m for m in agent_models.get(aid) or [] if str(m).lower() not in listed
+        ]
     efforts = catalog_model_efforts(models)
     if efforts:
         slot = agent_efforts.setdefault(

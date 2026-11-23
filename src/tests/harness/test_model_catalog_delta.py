@@ -112,10 +112,10 @@ def test_claude_refresh_reports_delta_on_the_slash_reply(monkeypatch):
 
     state["models"] = [
         {"value": "opus", "displayName": "Opus 5.5"},
-        {"value": "claude-haiku-5-5", "displayName": "Haiku 5.5"},
+        {"value": "claude-haiku-9-9", "displayName": "Haiku 9.9"},
     ]
     second = adapter.handle_meta("/model refresh", cwd=".", chat_session_id="1")
     assert "➕ 1 added" in second.output and "➖ 1 removed" in second.output
-    assert "`claude-haiku-5-5`" in second.output and "`claude-haiku-4-5`" in second.output
-    assert second.meta["claude_catalog_added"] == ["claude-haiku-5-5"]
+    assert "`claude-haiku-9-9`" in second.output and "`claude-haiku-4-5`" in second.output
+    assert second.meta["claude_catalog_added"] == ["claude-haiku-9-9"]
     assert second.meta["claude_catalog_removed"] == ["claude-haiku-4-5"]

@@ -125,7 +125,7 @@ def test_settings_enrichment_uses_live_variant_support(monkeypatch):
         },
     )
     out = am.enrich_agent_catalog(agents)
-    assert out[0]["models"] == ["provider/plain"]
+    assert out[0]["models"] == ["provider/plain", "manifest-model"]
     assert out[0]["supports_effort"] is False
     assert out[0]["model_efforts"] == {"provider/plain": []}
 
@@ -196,7 +196,7 @@ def test_agents_endpoint_live_models_enriches_settings(monkeypatch):
     body = client.get("/api/agents?live_models=1").get_json()
     assert body["success"] and body["live_models"] is True
     oc = next(a for a in body["agents"] if a["id"] == "opencode")
-    assert oc["models"] == ["openrouter/deepseek/v9"]
+    assert oc["models"] == ["openrouter/deepseek/v9", "curated-1"]
     assert oc["models_source"]
 
 
@@ -252,7 +252,7 @@ def test_plain_catalog_carries_saved_live_models(tmp_path, monkeypatch):
     rows = [{"id": "codex", "available": True, "models": ["gpt-5.6-sol"],
              "model_efforts": {"gpt-5.6-sol": ["low"]}, "efforts": ["low"]}]
     am.overlay_saved_catalogs(rows)
-    assert rows[0]["models"] == ["gpt-9-sol"]
+    assert rows[0]["models"] == ["gpt-9-sol", "gpt-5.6-sol"]  # manifest kept after
     assert rows[0]["models_source"] == "last_successful_cache"
     assert rows[0]["model_efforts"]["gpt-9-sol"] == ["low", "ultra"]
     assert scheduled == []  # fresh snapshot: no rebuild
@@ -270,7 +270,7 @@ def test_plain_catalog_rebuilds_missing_or_stale_saved_models(tmp_path, monkeypa
         {"id": "deepseek", "available": True, "models": ["chat"]},  # no live loader
     ]
     am.overlay_saved_catalogs(rows)
-    assert rows[0]["models"] == ["old"]
+    assert rows[0]["models"] == ["old", "manifest-1"]
     assert rows[1]["models"] == ["sonnet"] and "models_source" not in rows[1]
     assert scheduled == [("codex", ["manifest-1"]), ("claude", ["sonnet"])]
 
@@ -307,5 +307,33 @@ def test_router_options_use_saved_catalog(tmp_path, monkeypatch):
     models = {"codex": ["gpt-5-codex"], "hermes": ["default"]}
     efforts = {}
     am.overlay_saved_router_models(models, efforts)
-    assert models == {"codex": ["gpt-9-sol"], "hermes": ["default"]}
+    assert models == {"codex": ["gpt-9-sol", "gpt-5-codex"], "hermes": ["default"]}
     assert efforts["codex"]["model_levels"] == {"gpt-9-sol": ["low", "high"]}
+
+
+def test_curated_live_list_keeps_manifest_models_and_aliases_dedupe():
+    """Claude Code 2.1.330 lists only aliases; pinned full ids must stay listed."""
+    row = {"id": "claude", "models": ["opus", "claude-opus-5-5", "claude-fable-5-1"]}
+    am._apply_catalog(row, [
+        {"id": "opus", "resolved_model": "claude-opus-5-5"},
+        {"id": "fable", "resolved_model": "claude-fable-5-1"},
+    ], "cli")
+    # Aliases first; manifest ids they resolve to are not listed twice.
+    assert row["models"] == ["opus", "fable"]
+    row = {"id": "claude", "models": ["claude-fable-5-2"]}
+    am._apply_catalog(row, [{"id": "opus"}], "cli")
+    assert row["models"] == ["opus", "claude-fable-5-2"]
+
+
+def test_claude_catalog_appends_unlisted_manifest_models(monkeypatch):
+    from api.agent_harness.agents.claude import model_catalog as mc
+
+    mc.clear_claude_catalog_cache()
+    monkeypatch.setattr(mc, "_run_claude_initialize", lambda: (
+        [{"id": "fable", "label": "Fable", "resolved_model": "claude-fable-5-1",
+          "efforts": ["low"]}], ["low"], None))
+    ids = [m["id"] for m in mc.list_claude_catalog_models(refresh=True)["models"]]
+    mc.clear_claude_catalog_cache()
+    assert ids[0] == "fable"
+    assert "claude-fable-5-2" in ids and "opus" in ids
+    assert "claude-fable-5-1" not in ids  # the alias already resolves to it

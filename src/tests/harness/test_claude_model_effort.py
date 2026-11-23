@@ -64,9 +64,10 @@ def cli_models(monkeypatch):
 def test_catalog_reads_initialize_without_a_user_turn(cli_models):
     result = cat.list_claude_catalog_models()
     assert result["source"] == "cli"
-    assert [m["id"] for m in result["models"]] == [
-        "opus", "haiku", "claude-haiku-4-5-20251001", "claude-sonnet-4-6",
-    ]
+    ids = [m["id"] for m in result["models"]]
+    # CLI rows first; verified manifest models the curated CLI list omits follow.
+    assert ids[:4] == ["opus", "haiku", "claude-haiku-4-5-20251001", "claude-sonnet-4-6"]
+    assert "claude-fable-5-2" in ids[4:] and ids.count("claude-sonnet-4-6") == 1
     assert result["models"][0]["efforts"] == ["low", "medium", "high", "xhigh", "max"]
     assert result["models"][1]["efforts"] == ["low", "medium", "high", "xhigh", "max"]
     assert result["models"][2]["efforts"] == []
@@ -105,7 +106,7 @@ def test_efforts_match_alias_and_resolved_model(cli_models):
 def test_model_refresh_list_pin_and_reset(cli_models):
     a = claude_adapter.build_adapter()
     out = a.handle_meta("/model refresh", cwd=".", chat_session_id="7")
-    assert out.success and "4 models" in out.output
+    assert out.success and "models available" in out.output
     out = a.handle_meta("model", cwd=".", chat_session_id="7")
     assert "`claude-sonnet-4-6`" in out.output and "`xhigh`" in out.output
     out = a.handle_meta("model opus", cwd=".", chat_session_id="7")
