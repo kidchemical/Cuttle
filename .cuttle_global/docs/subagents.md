@@ -198,6 +198,9 @@ Click opens the child chat. A follow-up round (`python -m api.subagents message`
 gets its own card on the bubble of the turn that sent it (same rules as below),
 and the earlier bubble's card is frozen at the previous round's outcome
 (`frozen: true`, never re-hydrated).
+A chat that is not your child gets the same card when your turn messages it with
+`python -m api.chat_cli send`: one per chat, on that turn's reply, showing whether
+the message was queued, is being worked on, or what the chat answered.
 
 Cards show **the moment `spawn` creates the batch** and attach to the **turn that
 launched it**, the same for every agent (Claude Code, Codex, Cursor, OpenCode, …).

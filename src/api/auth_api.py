@@ -1414,6 +1414,12 @@ def get_session_messages(session_id):
             hydrate_parent_fleet(db, messages)
         except Exception:
             pass
+        try:
+            from api.chat_ops.cards import hydrate as hydrate_chat_op_cards
+
+            hydrate_chat_op_cards(db, session_id, messages)
+        except Exception:
+            pass
         
         # Session-level Muse/Hermes/OpenCode/Codex/Claude pins so the UI can seed badges before
         # first paint instead of flashing defaults while /api/*/model|effort

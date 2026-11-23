@@ -330,7 +330,10 @@ def snapshot(target, actor=None, *, db=None, request=None, usage_agents=(), task
     return result
 
 
-def send(target, text, actor=None, *, mode='auto', db=None, request=None):
+def send(target, text, actor=None, *, mode='auto', db=None, request=None, turn_id=None):
+    """``turn_id``: the acting chat's turn this send was made in (``chat_cli send``
+    from inside an agent turn); its reply bubble shows the target's card
+    (``api.chat_ops.cards``). Host sends (template nudges) pass none."""
     db, actor, row = context(target, actor, db=db)
     text = str(text or '').strip()
     if not text or len(text) > 20000:
@@ -342,6 +345,7 @@ def send(target, text, actor=None, *, mode='auto', db=None, request=None):
     from api.orchestration_telemetry import record
     record.supervisor_action('sup_send', actor, int(row['id']), chars=len(text))
     request = request or transport.request
+    body = {'text': text, **({'turn_id': str(turn_id)} if turn_id else {})}
     # Read before the card round below marks a sub-agent child as working: that
     # mark makes live status say "generating" with no turn behind it yet.
     live = request(row['user_id'], row['id'], 'GET', '/api/chat-live-status') if mode == 'auto' else {}
@@ -355,7 +359,7 @@ def send(target, text, actor=None, *, mode='auto', db=None, request=None):
     if mode == 'auto':
         if live.get('generating'):
             # Recorded first (not dispatchable) so the steered row renders as Cuttle.
-            op = store.create('send', actor, row['id'], {'text': text}, state='steering')
+            op = store.create('send', actor, row['id'], body, state='steering')
             try:
                 steered = request(row['user_id'], row['id'], 'POST', '/api/chat-steer',
                                   {'message': text, 'chat_op_id': op['id']})
@@ -377,7 +381,7 @@ def send(target, text, actor=None, *, mode='auto', db=None, request=None):
                              'however long. Let it: stopping the target throws away its running work. '
                              'Only when the user asked to pause or stop it, run `chat_cli stop` '
                              '(which also drops queued sends).')}
-    op = store.create('send', actor, row['id'], {'text': text})
+    op = store.create('send', actor, row['id'], body)
     return {'schema_version': 1, 'ok': True, 'delivery': 'queued', 'operation': op,
             'hint': 'Host-owned outbox dispatches when idle; no open browser required'}
 

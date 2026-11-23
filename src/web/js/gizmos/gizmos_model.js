@@ -94,7 +94,7 @@
             title, agentLabel, show, pct: 0, value: '…', valueLabel: show === 'used' ? 'used' : 'left',
             caption: '', resetText: '', rows: [], tone: 'unknown', state: 'loading',
             error: '', stale: false, plan: '', updatedAt: null, unblockAt: null, extras: {},
-            hasBar: false, metric: 'percent', notifyArmed: !!cfg.notify_on_unblock, billing: null,
+            hasBar: false, pctKnown: false, metric: 'percent', notifyArmed: !!cfg.notify_on_unblock, billing: null,
         };
         if (!data) return base;
         base.billing = (data.billing && typeof data.billing === 'object') ? data.billing : null;
@@ -153,7 +153,7 @@
                 : (['ok', 'low', 'critical', 'unknown'].includes(readout.tone)
                     ? readout.tone : (remainingPct != null ? toneFor(remainingPct, false) : 'ok'));
             return {
-                ...base, hasBar: false, metric,
+                ...base, hasBar: false, pctKnown: remainingPct != null, metric,
                 pct: wantUsed ? 100 - (remainingPct == null ? 0 : remainingPct) : (remainingPct == null ? 0 : remainingPct),
                 value: String(amount == null ? '—' : amount), valueLabel: String(valueLabel),
                 caption: String(readout.label || ''), resetText, rows, tone, state,
@@ -165,7 +165,7 @@
         const rem = remainingPct == null ? 0 : remainingPct;
         const pct = wantUsed ? 100 - rem : rem;
         return {
-            ...base, hasBar: true, metric, pct, value: Math.round(pct) + '%',
+            ...base, hasBar: true, pctKnown: remainingPct != null, metric, pct, value: Math.round(pct) + '%',
             caption: win ? win.label : String((readout && readout.label) || ''), resetText, rows,
             tone: toneFor(rem, !!data.blocked), state,
             error: data.error || '', stale: !!data.stale, plan: data.plan || '',
@@ -356,7 +356,12 @@
         } else {
             const readout = (model.value && model.value !== '…' ? model.value : '')
                 + (model.valueLabel ? ' ' + model.valueLabel : '');
-            body = '<div class="gizmo-detail-empty">' + escape(readout || 'Loading…') + '</div>';
+            // A window-less readout (e.g. a credit balance) with a percent
+            // still gets the same labelled bar row every other meter shows.
+            body = model.pctKnown
+                ? renderRows({ rows: [{ label: model.caption || model.agentLabel, valueText: readout,
+                    pct: model.pct, tone: model.tone, active: true }] })
+                : '<div class="gizmo-detail-empty">' + escape(readout || 'Loading…') + '</div>';
         }
         return '<div class="gizmo-detail">' + head + status + body + '</div>';
     }

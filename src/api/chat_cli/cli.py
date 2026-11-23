@@ -513,6 +513,14 @@ FOCUS_NOTICE = ('Note: --instructions sets the Focus note, the user’s own free
                 'with job-specific notes the user asked for.')
 
 
+def _calling_turn(as_chat) -> str:
+    """The agent turn this command runs in, when it acts for that turn's own chat ('' otherwise)."""
+    import os
+
+    from api.chat_turn_id import ambient
+    return ambient(as_chat or os.environ.get('CUTTLE_CHAT_SESSION_ID'))
+
+
 def _focus_notice(args, payload) -> None:
     """Steer agents away from Focus as a settings channel (stderr; never blocks)."""
     if getattr(args, 'instructions', None) is None:
@@ -564,7 +572,8 @@ def cmd_operation(args: argparse.Namespace) -> int:
     else:
         kwargs = {'actor': args.as_chat, 'db': db}
         if verb == 'send':
-            payload = service.send(args.handle, args.text, mode=args.mode, **kwargs)
+            payload = service.send(args.handle, args.text, mode=args.mode,
+                                   turn_id=_calling_turn(args.as_chat), **kwargs)
         elif verb == 'status':
             payload = service.status(args.handle, **kwargs)
         elif verb == 'snapshot':

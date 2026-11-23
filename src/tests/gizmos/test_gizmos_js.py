@@ -104,6 +104,9 @@ out.readoutNoBar = ['titlebar', 'rail', 'float', 'card'].map(v => M.renderGizmoH
   .every(h => !h.includes('gizmo-bar'));
 out.railText = M.renderGizmoHtml(orG, noPct, 'rail', now).includes('gizmo-ring-value--text');
 out.readoutDetail = M.renderDetailHtml(orG, noPct, now).includes('$74.25');
+out.readoutDetailNoBar = !M.renderDetailHtml(orG, noPct, now).includes('gizmo-bar');
+const orDetail = M.renderDetailHtml(orG, orData, now);
+out.readoutDetailBar = orDetail.includes('gizmo-bar-fill" style="width:74.3%') && orDetail.includes('$74.25 left');
 out.orBlocked = M.meterModel(orG, {...orData, blocked: true, unblock_at: null,
   readout: {...orData.readout, value: '$0.00', pct: 0}}, now).state;
 const clG = {id: 'cl', type: 'usage_meter', title: 'Claude', config: {agent: 'claude', window: 'tightest', show: 'remaining', api_credit: true},
@@ -195,6 +198,9 @@ def test_readout_headline_drives_meter(harness):
     assert harness["readoutNoBar"] is True
     assert harness["railText"] is True
     assert harness["readoutDetail"] is True
+    # A credit readout with a percent gets a bar row in the detail panel too.
+    assert harness["readoutDetailBar"] is True
+    assert harness["readoutDetailNoBar"] is True
     assert harness["orBlocked"] == "blocked"
 
 

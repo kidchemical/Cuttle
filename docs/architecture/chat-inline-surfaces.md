@@ -30,6 +30,10 @@ text is untouched, so the agent always reads all of it.
 Sub-agent fleet cards (`chat_subagent_fleet.js`) and supervised activity rows
 (`supervised_control.js`) are specialized renderings inside a parent reply,
 not general-purpose surfaces.
+A fleet card is tied to one reply: the chats that turn spawned
+(`api.subagents`) or messaged through chat-ops (`api.chat_ops.cards`, same card).
+The Supervising strip is tied to the chat: every chat it supervises, whatever
+turn started that.
 
 ## Timeline notices
 

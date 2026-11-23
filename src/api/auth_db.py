@@ -1956,12 +1956,20 @@ class AuthDatabase:
 
     def assistant_message_by_query(self, chat_session_id: int, query_id: str) -> Optional[Dict[str, Any]]:
         """The newest assistant row carrying ``query_id`` (metadata decoded), or None."""
+        return self._newest_message_by_metadata(chat_session_id, 'assistant', 'query_id', query_id)
+
+    def user_message_by_chat_op(self, chat_session_id: int, chat_op_id: str) -> Optional[Dict[str, Any]]:
+        """The user row a chat-ops send arrived as (``metadata.chat_op_id``, decoded), or None."""
+        return self._newest_message_by_metadata(chat_session_id, 'user', 'chat_op_id', chat_op_id)
+
+    def _newest_message_by_metadata(self, chat_session_id: int, role: str, key: str,
+                                    value: str) -> Optional[Dict[str, Any]]:
         conn = self._get_connection()
         try:
             row = conn.execute(
-                "SELECT * FROM chat_messages WHERE chat_session_id=? AND role='assistant' "
-                "AND json_valid(metadata) AND json_extract(metadata, '$.query_id')=? ORDER BY id DESC LIMIT 1",
-                (int(chat_session_id), str(query_id)),
+                "SELECT * FROM chat_messages WHERE chat_session_id=? AND role=? "
+                f"AND json_valid(metadata) AND json_extract(metadata, '$.{key}')=? ORDER BY id DESC LIMIT 1",
+                (int(chat_session_id), role, str(value)),
             ).fetchone()
         finally:
             conn.close()

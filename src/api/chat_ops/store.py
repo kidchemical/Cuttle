@@ -76,6 +76,20 @@ def timeline_operations(actor):
             "SELECT * FROM operations WHERE actor=? AND kind IN ('supervise','send')", (actor,))]
 
 
+def sends_in_turns(actor, turn_ids):
+    """Sends ``actor`` made from inside these turns of its own (``payload.turn_id``), oldest first."""
+    turns = [str(t) for t in turn_ids if t]
+    found = []
+    with connection() as conn:
+        for start in range(0, len(turns), 400):
+            chunk = turns[start:start + 400]
+            marks = ','.join('?' * len(chunk))
+            found += [public(r) for r in conn.execute(
+                "SELECT rowid, * FROM operations WHERE actor=? AND kind='send' "
+                f"AND json_extract(payload, '$.turn_id') IN ({marks})", (int(actor), *chunk))]
+    return sorted(found, key=lambda o: o['rowid'])
+
+
 def timeline_checks(schedule_id):
     with connection() as conn:
         return [{'id': r['rowid'], 'at': r['at'], 'outcome': r['outcome'],
