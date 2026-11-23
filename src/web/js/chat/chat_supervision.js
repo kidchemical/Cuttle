@@ -73,14 +73,29 @@
         }
 
         // `dot`: a status mark before the label (green ping = active, amber bars = paused).
-        function pill(cls, id, label, title, kind, dot) {
+        function pill(cls, id, label, title, kind, compact, dot) {
             return '<button type="button" class="chat-supervision-pill ' + cls + '" data-sup-open="' + esc(kind)
-                + '" data-sup-id="' + esc(id) + '" title="' + esc(title) + '" aria-haspopup="dialog">'
+                + '" data-sup-id="' + esc(id) + '" data-sup-compact="' + esc(compact)
+                + '" title="' + esc(title) + '" aria-haspopup="dialog" aria-label="' + esc(label) + '">'
                 + (dot ? '<span class="chat-supervision-dot" aria-hidden="true"></span>' : '')
                 + '<span class="chat-supervision-pill-text">' + esc(label) + '</span></button>';
         }
 
         function stateClass(paused) { return paused ? ' is-paused' : ' is-active'; }
+
+        function schedulePill(kind, rows) {
+            if (!rows.length) return '';
+            const incoming = kind === 'badge';
+            const count = rows.length;
+            const violations = rows.flatMap((row) => row.violations);
+            const warn = violations.length ? '⚠ ' : '';
+            const label = count === 1 ? rows[0].text : count + (incoming ? ' supervisors' : ' supervised chats');
+            const title = violations.length ? violations.join('\n') : rows.map((row) => row.title).join('\n');
+            const cls = (incoming ? 'is-supervised' : 'is-supervisor')
+                + stateClass(rows.every((row) => row.paused)) + (warn ? ' is-warn' : '');
+            const compact = (incoming ? '↓' : '↑') + count + (warn ? '!' : '');
+            return pill(cls, rows[0].id, warn + label, title, kind, compact, true);
+        }
 
         function render() {
             const el = slot();
@@ -89,29 +104,19 @@
             if (!v || v.empty) {
                 el.hidden = true;
                 el.innerHTML = '';
+                el.__supHtml = '';
                 closePopover();
                 return;
             }
-            const parts = [];
-            v.chips.forEach((c) => parts.push(pill('is-supervisor' + stateClass(c.paused)
-                + (c.violations.length ? ' is-warn' : ''), c.id, (c.violations.length ? '⚠ ' : '') + c.text,
-            c.title + ' — click for details and controls', 'chip', true)));
-            v.badges.forEach((b) => parts.push(pill('is-supervised' + stateClass(b.paused)
-                + (b.violations.length ? ' is-warn' : ''), b.id,
-            (b.violations.length ? '⚠ ' : '') + b.text,
-            b.violations.length ? b.violations.join('\n') : b.title + ' — click for details', 'badge', true)));
+            const parts = [schedulePill('chip', v.chips), schedulePill('badge', v.badges)];
             if (v.queued.length) {
                 parts.push(pill('is-queued', 'queued', v.queued.length + ' queued',
-                    'Messages waiting for this chat to go idle', 'queued'));
+                    'Messages waiting for this chat to go idle', 'queued', '…' + v.queued.length));
             }
-            el.innerHTML = parts.join('');
+            const html = parts.join('');
+            if (el.__supHtml !== html) { el.innerHTML = html; el.__supHtml = html; }
             el.hidden = false;
-            if (popover && popover.__key && popover.__key.studio) {
-                studioPaint();
-            } else if (popover && popover.__key) {
-                const still = popoverContent(popover.__key.kind, popover.__key.id, v);
-                if (still) popover.innerHTML = still; else closePopover();
-            }
+            if (popover) paintPopover(v);
         }
 
         function historyHtml(rows) {
@@ -206,17 +211,65 @@
 
         function openPopover(kind, id, anchor) {
             closePopover();
-            if ((kind === 'chip' || kind === 'badge') && studioOn()) { openStudioPanel(kind, id, anchor); return; }
             const v = overview && M.view(overview, now());
-            const html = v && popoverContent(kind, id, v);
-            if (!html) return;
+            if (!v) return;
+            const timeline = kind !== 'queued' && studioOn();
             popover = doc.createElement('div');
-            popover.className = 'chat-supervision-popover';
+            popover.className = timeline ? 'sup-studio-panel' : 'chat-supervision-popover';
             popover.setAttribute('role', 'dialog');
-            popover.__key = { kind, id };
-            popover.innerHTML = html;
+            popover.setAttribute('aria-label', kind === 'queued' ? 'Queued messages' : 'Supervision');
+            popover.tabIndex = -1;
+            popover.__key = { kind, id, studio: timeline };
+            popover.innerHTML = '<div class="chat-supervision-picker" hidden><label for="chatSupervisionPicker"></label>'
+                + '<select id="chatSupervisionPicker" data-sup-select data-native-select></select></div>'
+                + '<div class="chat-supervision-panel-content"></div>';
+            popover.addEventListener('change', (ev) => {
+                if (!ev.target.matches('[data-sup-select]')) return;
+                popover.__key.id = ev.target.value;
+                pauseMenuFor = null;
+                paintPopover(M.view(overview, now()));
+                if (studio) loadStudio(false);
+            });
+            paintPopover(v);
+            if (!popover) return;
             doc.body.appendChild(popover);
             placeAt(anchor);
+            const picker = popover.querySelector('.chat-supervision-picker');
+            (picker.hidden ? popover : picker.querySelector('select')).focus({ preventScroll: true });
+            if (studio) loadStudio(false);
+        }
+
+        function paintPopover(v) {
+            const key = popover.__key;
+            const rows = key.kind === 'chip' ? v.chips : key.kind === 'badge' ? v.badges : [];
+            if (key.kind !== 'queued' && !rows.length) { closePopover(); return; }
+            if (rows.length && !rows.some((row) => row.id === key.id)) {
+                key.id = rows[0].id;
+                pauseMenuFor = null;
+            }
+            const picker = popover.querySelector('.chat-supervision-picker');
+            picker.hidden = rows.length < 2;
+            if (!picker.hidden) {
+                picker.firstChild.textContent = key.kind === 'chip' ? 'Supervised chat' : 'Supervisor';
+                const select = picker.querySelector('select');
+                const options = rows.map((row) => '<option value="' + esc(row.id) + '">'
+                    + esc(row.target || row.supervisor) + (row.paused ? ' · Paused' : '') + '</option>').join('');
+                if (select.__options !== options) { select.innerHTML = options; select.__options = options; }
+                if (select.value !== key.id) select.value = key.id;
+            }
+            if (key.studio) {
+                const scope = studioScope(key.kind, key.id);
+                if (!scope) { closePopover(); return; }
+                if (!studio || studio.sid !== scope.sid) {
+                    studio = { sid: scope.sid, items: [], nextBefore: null, paged: false,
+                        loading: true, error: '', seq: 0 };
+                }
+                studioPaint();
+            } else {
+                const html = popoverContent(key.kind, key.id, v);
+                if (html) popover.querySelector('.chat-supervision-panel-content').innerHTML = html;
+                else closePopover();
+            }
         }
 
         // ---- Studio panel: the chip and the worker's "Supervised by" badge open a
@@ -253,12 +306,14 @@
 
         function studioPaint() {
             if (!popover || !studio) return;
-            const scope = studioScope(studio.kind, studio.id);
+            const { kind, id } = popover.__key;
+            const scope = studioScope(kind, id);
             if (!scope) { closePopover(); return; }
             const picked = scope.filterChat ? M.filterChat(studio.items, scope.filterChat) : studio.items;
             const rows = M.timelineRows(picked, now());
             const chats = new Set(rows.map((r) => r.chat).filter(Boolean));
-            popover.innerHTML = M.panelHeaderHtml(M.panelHeader(scope.schedules, { title: scope.title }))
+            const content = popover.querySelector('.chat-supervision-panel-content');
+            content.innerHTML = M.panelHeaderHtml(M.panelHeader(scope.schedules, { title: scope.title }))
                 + M.timelineHtml(rows, {
                     loading: studio.loading, error: studio.error, more: !!studio.nextBefore,
                     showChat: !scope.filterChat && chats.size > 1,
@@ -271,11 +326,12 @@
         function studioControls() {
             const v = overview && M.view(overview, now());
             if (!v || !studio) return '';
-            if (studio.kind === 'chip') {
-                const c = v.chips.find((x) => x.id === studio.id);
+            const { kind, id } = popover.__key;
+            if (kind === 'chip') {
+                const c = v.chips.find((x) => x.id === id);
                 return c ? controls(c.id, c.paused, c.target, 'Open ' + c.target) : '';
             }
-            const b = v.badges.find((x) => x.id === studio.id);
+            const b = v.badges.find((x) => x.id === id);
             return b ? controls(b.id, b.paused, b.supervisor, 'Open ' + b.supervisor) : '';
         }
 
@@ -321,31 +377,23 @@
             studioPaint();
         }
 
-        function openStudioPanel(kind, id, anchor) {
-            if (!studioScope(kind, id)) return;
-            popover = doc.createElement('div');
-            popover.className = 'sup-studio-panel';
-            popover.setAttribute('role', 'dialog');
-            popover.setAttribute('aria-label', 'Supervision timeline');
-            popover.__key = { kind, id, studio: true };
-            studio = { kind, id, sid: studioScope(kind, id).sid, items: [], nextBefore: null, paged: false,
-                loading: true, error: '', seq: 0 };
-            studioPaint();
-            doc.body.appendChild(popover);
-            placeAt(anchor);
-            loadStudio(false);
-        }
-
         function closePopover() {
             if (popover) { popover.remove(); popover = null; }
             pauseMenuFor = null;
             studio = null;
         }
 
+        function dismissPopover() {
+            const kind = popover.__key.kind;
+            closePopover();
+            const anchor = slot()?.querySelector('[data-sup-open="' + kind + '"]');
+            if (anchor) anchor.focus({ preventScroll: true });
+        }
+
         async function act(verb, id, choice) {
             if (verb === 'edit') {
                 const sched = M.scheduleById(overview, id);
-                closePopover();
+                dismissPopover();
                 if (sched) openDialog(String(sched.target).replace(/^CH-0*/, ''), sched);
                 return;
             }
@@ -374,7 +422,7 @@
             const t = ev.target;
             const open = t.closest && t.closest('[data-sup-open]');
             if (open && slot() && slot().contains(open)) {
-                const same = popover && popover.__key && popover.__key.id === open.getAttribute('data-sup-id');
+                const same = popover && popover.__key.kind === open.getAttribute('data-sup-open');
                 if (same) closePopover();
                 else openPopover(open.getAttribute('data-sup-open'), open.getAttribute('data-sup-id'), open);
                 return;
@@ -683,6 +731,12 @@
 
         doc.addEventListener('click', onClick);
         doc.addEventListener('click', onMenuClick, true);
+        doc.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Escape' && popover && popover.contains(ev.target)) {
+                ev.preventDefault();
+                dismissPopover();
+            }
+        });
         root.addEventListener('message', (ev) => {
             if (ev.origin === root.location.origin && ev.data && ev.data.type === 'cuttle-experimental-flags-changed') {
                 syncFlag();

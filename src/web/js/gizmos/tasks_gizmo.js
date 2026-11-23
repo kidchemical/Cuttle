@@ -34,6 +34,15 @@
         return { done: done, total: total };
     }
 
+    function displayTitle(title, projectName) {
+        title = String(title || 'Tasks');
+        if (!projectName) return title;
+        var prefix = projectName + ':';
+        var trimmed = title.trim();
+        if (!trimmed.toLowerCase().startsWith(prefix.toLowerCase())) return title;
+        return trimmed.slice(prefix.length).trimStart() || title;
+    }
+
     /** Escaped owner label; the work panel swaps in dot + name (see chat_work_panel.js). */
     function defaultOwnerHtml(owner) {
         return '<span class="chat-widget-task-owner">' + esc(owner && owner.label) + '</span>';
@@ -101,6 +110,7 @@
         var root = options.root || document;
         var getSessionId = options.getSessionId || function () { return null; };
         var getProjectPath = options.getProjectPath || function () { return ''; };
+        var getProjectName = options.getProjectName || function () { return ''; };
         var fetchFn = options.fetchFn || fetch;
         var isStudio = options.isStudio || function () {
             return !!(global.CuttleChatDisplay && global.CuttleChatDisplay.isStudio());
@@ -192,7 +202,7 @@
             return ids;
         }
 
-        function render() {
+        function render(focusWidgetId) {
             var el = ensureStrip();
             var studio = !!isStudio();
             var tasks = (widgets || []).filter(function (w) {
@@ -225,6 +235,7 @@
             }
             if (!el || !dock.length) return;
             el.hidden = false;
+            var projectName = String(getProjectName() || '').trim();
             var html = dock.map(function (w) {
                 var payload = w.payload || {};
                 var items = payload.items || [];
@@ -237,37 +248,28 @@
                     ? 'Linked to this chat from another chat. Manage its chats in the Tasks app.'
                     : 'Pin to this chat or whole project';
                 var editLabel = shared ? 'Shared' : 'Agent';
-                var title = esc(w.title || 'Tasks');
+                var title = esc(displayTitle(w.title, linkedHere ? '' : projectName));
                 var desc = String(w.description || '').trim();
-                var infoBtn = desc
-                    ? (
-                        '<button type="button" class="chat-widget-info" data-widget-info ' +
-                        'aria-label="About this list" data-tooltip="' + esc(desc) + '">' +
-                        '<span class="chat-widget-info-mark" aria-hidden="true">i</span>' +
-                        '</button>'
-                    )
-                    : '';
                 return (
                     '<div class="chat-widget' + (isOpen ? ' is-expanded' : '') +
                     (shared ? '' : ' is-agent-managed') +
                     '" data-widget-id="' + esc(w.id) + '">' +
-                    '<div class="chat-widget-header">' +
                     '<button type="button" class="chat-widget-toggle" data-widget-toggle aria-expanded="' + (isOpen ? 'true' : 'false') + '">' +
                     '<span class="chat-widget-chevron" aria-hidden="true"></span>' +
                     '<span class="chat-widget-title">' + title + '</span>' +
                     '<span class="chat-widget-meta">' + counts.done + '/' + counts.total + '</span>' +
                     '</button>' +
-                    infoBtn +
+                    '<div class="chat-widget-body" ' + (isOpen ? '' : 'hidden') + '>' +
+                    '<div class="chat-widget-actions">' +
                     '<button type="button" class="chat-widget-scope" data-widget-edit data-tooltip="Agent-managed (default) or Shared (you can check boxes)">' +
                     editLabel +
                     '</button>' +
                     '<button type="button" class="chat-widget-scope" data-widget-scope data-tooltip="' + esc(scopeTip) + '">' +
                     scopeLabel +
                     '</button>' +
-                    '<button type="button" class="chat-widget-archive" data-widget-manage data-tooltip="Open in the Tasks app" aria-label="Open in the Tasks app">↗</button>' +
-                    '<button type="button" class="chat-widget-archive" data-widget-archive data-tooltip="Archive">✕</button>' +
+                    '<button type="button" class="chat-widget-action" data-widget-manage>Open in Tasks</button>' +
+                    '<button type="button" class="chat-widget-action" data-widget-archive>Archive</button>' +
                     '</div>' +
-                    '<div class="chat-widget-body" ' + (isOpen ? '' : 'hidden') + '>' +
                     (desc
                         ? '<p class="chat-widget-desc">' + esc(desc) + '</p>'
                         : '') +
@@ -290,11 +292,15 @@
             el.innerHTML = html;
             lastRenderedHtml = html;
             el.querySelectorAll('[data-widget-id]').forEach(function (card) {
-                var position = positions.get(card.getAttribute('data-widget-id'));
+                var id = card.getAttribute('data-widget-id');
+                var position = positions.get(id);
                 var body = card.querySelector('.chat-widget-body');
                 if (position && body) {
                     body.scrollTop = position.top;
                     body.scrollLeft = position.left;
+                }
+                if (id === focusWidgetId) {
+                    card.querySelector('[data-widget-toggle]').focus({ preventScroll: true });
                 }
             });
             el.scrollTop = top;
@@ -408,13 +414,7 @@
                 var wid = card.getAttribute('data-widget-id');
                 if (t.closest('[data-widget-toggle]')) {
                     expanded[wid] = !expanded[wid];
-                    render();
-                    return;
-                }
-                if (t.closest('[data-widget-info]')) {
-                    // Keep list collapsed/expanded as-is; tooltip is CSS/hover.
-                    ev.preventDefault();
-                    ev.stopPropagation();
+                    render(wid);
                     return;
                 }
                 if (t.closest('[data-widget-edit]')) {

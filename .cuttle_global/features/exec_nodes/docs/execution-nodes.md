@@ -21,8 +21,9 @@ PYTHONPATH=src .venv/bin/python -m api.exec_nodes node kcslaptop --default-cwd '
 ```
 
 `--session` defaults to the current chat. A change applies from the chat's next
-turn; a running turn finishes where it started. In the UI the same choice is the
-node chip in the chat header.
+turn. A running turn finishes where it started. In the chat menu, choose
+**Execution node…** to pick a machine or return to the host. Chats assigned to
+a paired machine also show a node badge in the header.
 
 States: `online`, `busy` (a turn is running there; a new one waits for a slot),
 `unavailable` (offline, agent execution off on that machine, or the agent's CLI

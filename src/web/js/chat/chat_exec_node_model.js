@@ -21,19 +21,18 @@
         return node && node.reason ? state + ': ' + node.reason : state;
     }
 
-    /** Header chip for a chat's binding; null while nothing is loaded. */
+    /** The header chip marks a chat bound to a remote node. */
     function chip(binding) {
-        if (!binding || !binding.node) return null;
+        if (!binding || !binding.node || binding.node.host) return null;
         const node = binding.node;
-        const remote = !node.host;
-        const down = remote && node.state === 'unavailable';
+        const down = node.state === 'unavailable';
+        const busy = node.state === 'busy';
         return {
-            text: remote ? String(node.label || node.id) : 'Host',
-            remote,
+            text: String(node.label || node.id),
+            compact: down ? '⚠ Node' : busy ? 'Node · busy' : 'Node',
             warn: down,
-            busy: remote && node.state === 'busy',
-            title: (remote ? 'Agent runs on ' + nodeName(node) + ' (' + stateLine(node) + ')'
-                : 'Agent runs on this Cuttle host (' + nodeName(node) + ')') + '. Click to change.',
+            busy,
+            title: 'Agent runs on ' + nodeName(node) + ' (' + stateLine(node) + '). Click to change.',
         };
     }
 

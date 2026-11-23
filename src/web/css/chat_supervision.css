@@ -18,7 +18,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font: 550 12px/1.5 inherit;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 550;
+    line-height: 1.5;
     color: var(--popup-text);
     background: var(--popup-field);
     border: 1px solid var(--popup-border);
@@ -44,6 +47,26 @@ body.light-mode .chat-supervision-pill {
 }
 body.light-mode .chat-supervision-pill.is-warn { color: #8a5200; background: rgba(255, 170, 40, 0.16); }
 
+@media (max-width: 520px) {
+    #chatSupervisionSlot,
+    #chatExecNodeSlot { flex: 0 0 auto; }
+
+    #chatSupervisionSlot { gap: 3px; }
+
+    .chat-supervision-pill[data-sup-compact] {
+        flex: 0 0 auto;
+        min-height: 24px;
+        padding-inline: 5px;
+    }
+
+    .chat-supervision-pill[data-sup-compact]::before {
+        content: attr(data-sup-compact);
+        font-variant-numeric: tabular-nums;
+    }
+
+    .chat-supervision-pill[data-sup-compact] > span { display: none; }
+}
+
 .chat-supervision-popover {
     position: fixed;
     z-index: 170;
@@ -57,6 +80,33 @@ body.light-mode .chat-supervision-pill.is-warn { color: #8a5200; background: rgb
     color: var(--popup-text);
     box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
     font: 13px/1.45 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+.chat-supervision-panel-content { display: contents; }
+
+.chat-supervision-picker:not([hidden]) {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    margin-bottom: 10px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.sup-studio-panel .chat-supervision-picker { margin-bottom: 0; }
+
+.chat-supervision-picker select {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    min-height: 32px;
+    padding: 3px 8px;
+    border: 1px solid var(--popup-border);
+    border-radius: 6px;
+    background: var(--popup-field);
+    color: var(--popup-text);
+    font: inherit;
 }
 
 .chat-supervision-title { font-weight: 600; margin-bottom: 4px; }

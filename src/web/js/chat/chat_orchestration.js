@@ -8,9 +8,8 @@
    agent turn. Display decisions live in CuttleChatOrchestrationModel;
    capabilities come in through `create(host)`. Hidden until the
    `orchestrator` flag resolves on.
-   Studio (L4): the same slot draws the header pill with a live dot and
-   Pause / Resume and Stop all inline (same routes). `setWorking(bool)` shows a
-   "Working" pill while a turn runs when no playbook is bound.
+   Studio (L4): the same slot draws the orchestration pill with a live dot
+   and Pause / Resume and Stop all inline (same routes).
    ================================================================ */
 (function (root) {
     'use strict';
@@ -59,15 +58,6 @@
             const el = slot();
             if (!el) return;
             const c = enabled ? M.chip(binding) : null;
-            if (!c && studioOn() && working) {
-                // Studio, not orchestrated: the turn is running. A live "Working" pill, no controls.
-                el.innerHTML = '<span class="chat-orch-studio-pill" role="status" aria-live="polite">'
-                    + '<span class="studio-live-dot" aria-hidden="true"></span>'
-                    + '<span class="chat-orch-working-label">Working</span></span>';
-                el.hidden = false;
-                closePopover();
-                return;
-            }
             if (!c) { el.hidden = true; el.innerHTML = ''; closePopover(); return; }
             if (studioOn()) {
                 el.innerHTML = studioPillHtml(c);
@@ -114,15 +104,6 @@
                     + '" data-orch-quick="' + a + '" title="' + esc(CONTROL[a].tip) + '">'
                     + esc(CONTROL[a].label) + '</button>').join('')
                 + '</span>';
-        }
-
-        /** The turn is running (Studio shows "Working" in the header while it is). */
-        let working = false;
-        function setWorking(on) {
-            const next = !!on;
-            if (next === working) return;
-            working = next;
-            render();
         }
 
         function agentsHtml(agents) {
@@ -398,7 +379,7 @@
         doc.addEventListener('visibilitychange', () => { if (doc.visibilityState === 'visible') refresh(); });
         syncFlag();
 
-        return { setSession, refresh, menuHtml, openDialog, isEnabled: () => enabled, setWorking };
+        return { setSession, refresh, menuHtml, openDialog, isEnabled: () => enabled };
     }
 
     root.CuttleChatOrchestration = { create };

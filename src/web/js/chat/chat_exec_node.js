@@ -1,7 +1,7 @@
 /* ================================================================
    Cuttle Chat — execution node controller (chat_exec_node.js).
-   Owner: the header chip that says which machine runs this chat's
-   agent, and its dialog (node, working directory on that node). The
+   Owner: the remote-node header chip, chat menu item, and dialog
+   (node, working directory on that node). The
    binding is host state: Save is a PUT, never an agent turn, and it
    applies from the chat's next turn. Display decisions live in
    CuttleChatExecNodeModel; capabilities come in through `create(host)`.
@@ -23,7 +23,10 @@
         let seq = 0;
 
         const slot = () => doc.getElementById(host.slotId || 'chatExecNodeSlot');
-        const numericSession = (sid) => (/^\d+$/.test(String(sid || '')) ? String(sid) : null);
+        const numericSession = (sessionId) => {
+            const sid = host.authSessionId(sessionId);
+            return /^\d+$/.test(sid) ? sid : null;
+        };
 
         async function call(method, path, body) {
             const r = await host.fetch(path, {
@@ -55,15 +58,24 @@
             const c = enabled ? M.chip(binding) : null;
             if (!c) { el.hidden = true; el.innerHTML = ''; return; }
             el.innerHTML = '<button type="button" class="chat-supervision-pill is-exec-node'
-                + (c.warn ? ' is-warn' : '') + (c.remote && !c.warn ? ' is-active' : '')
-                + '" data-exec-node-open="1" title="' + esc(c.title) + '" aria-haspopup="dialog">'
-                + (c.warn ? '⚠ ' : '') + '<span class="chat-supervision-pill-text">' + esc(c.text) + '</span>'
-                + (c.busy ? ' · busy' : '') + '</button>';
+                + (c.warn ? ' is-warn' : ' is-active')
+                + '" data-exec-node-open="1" data-sup-compact="' + esc(c.compact)
+                + '" title="' + esc(c.title) + '" aria-label="' + esc(c.title) + '" aria-haspopup="dialog">'
+                + '<span class="chat-supervision-pill-text">'
+                + (c.warn ? '⚠ ' : '') + esc(c.text) + (c.busy ? ' · busy' : '') + '</span></button>';
             el.hidden = false;
         }
 
-        async function openDialog() {
-            const sid = numericSession(session);
+        function menuHtml(sessionId, icon) {
+            const sid = numericSession(sessionId);
+            if (!enabled || !sid || !host.isOwner()) return '';
+            return '<button type="button" class="chat-chrome-menu-item" role="menuitem" aria-haspopup="dialog"'
+                + ' data-exec-node-menu="' + sid + '" title="Execution node…">' + (icon || '')
+                + '<span class="chat-chrome-menu-item-label">Execution node…</span></button>';
+        }
+
+        async function openDialog(sessionId = session) {
+            const sid = numericSession(sessionId);
             if (!enabled || !sid) return;
             let data;
             try {
@@ -135,10 +147,13 @@
                 submit.disabled = true;
                 try {
                     const saved = await call('PUT', '/api/workers/exec/chats/' + sid, plan.body);
-                    binding = saved.binding;
-                    render();
+                    if (sid === numericSession(session)) {
+                        seq += 1;
+                        binding = saved.binding;
+                        render();
+                    }
                     close();
-                    host.toast('Agent runs on ' + M.nodeName(binding.node) + ' from the next turn', 'success');
+                    host.toast('Agent runs on ' + M.nodeName(saved.binding.node) + ' from the next turn', 'success');
                 } catch (e) {
                     errBox.textContent = String(e.message || e);
                     submit.disabled = false;
@@ -149,6 +164,14 @@
         }
 
         function onClick(ev) {
+            const menu = ev.target.closest && ev.target.closest('[data-exec-node-menu]');
+            if (menu) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                host.closeMenus();
+                openDialog(menu.getAttribute('data-exec-node-menu'));
+                return;
+            }
             const open = ev.target.closest && ev.target.closest('[data-exec-node-open]');
             if (!open) return;
             ev.preventDefault();
@@ -181,7 +204,7 @@
             refresh();
         }
 
-        doc.addEventListener('click', onClick);
+        doc.addEventListener('click', onClick, true);
         root.addEventListener('message', (ev) => {
             if (ev.origin === root.location.origin && ev.data && ev.data.type === 'cuttle-experimental-flags-changed') {
                 syncFlag();
@@ -190,7 +213,7 @@
         doc.addEventListener('visibilitychange', () => { if (doc.visibilityState === 'visible') refresh(); });
         syncFlag();
 
-        return { setSession, refresh, openDialog, isEnabled: () => enabled };
+        return { setSession, refresh, menuHtml, openDialog, isEnabled: () => enabled };
     }
 
     root.CuttleChatExecNode = { create };

@@ -39,6 +39,33 @@ def _ctx(args) -> Optional[service.ResolvedContext]:
     return resolve(getattr(args, "path", None), checkout_uid=getattr(args, "checkout", None))
 
 
+_NO_REFRESH_HELP = "answer from the stored index even when the checkout has moved on"
+_READ_VERBS = ("query", "explain", "node-path", "notes", "note")
+
+
+def _fresh(ctx, args, provider_id) -> dict:
+    """Bring a stale index up to date before a read (``--no-refresh`` opts out)."""
+    if getattr(args, "refresh", False):
+        store = service.store_for(ctx, provider_id)
+        if service.provider_for(provider_id).is_indexed(store):
+            service.update(ctx, provider_id=provider_id)
+            return {"refreshed": True}
+    if getattr(args, "no_refresh", False):
+        return {}
+    return service.ensure_fresh(ctx, provider_id=provider_id)
+
+
+def _used(ctx, provider_id, verb: str, **fields) -> None:
+    from api.knowledge_graph import usage
+    from api.knowledge_graph.catalog import get_provider_info
+    from api.knowledge_graph.store import store_root_path
+
+    info = get_provider_info(provider_id)
+    if info is not None:
+        usage.record(store_root_path(info), verb, project=ctx.project.get("name"),
+                     checkout=ctx.checkout_uid, **fields)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m api.knowledge_graph")
     sub = parser.add_subparsers(dest="cmd")
@@ -60,17 +87,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_query.add_argument("question")
     _common(p_query)
     p_query.add_argument("--budget", type=int, default=1500)
-    p_query.add_argument("--refresh", action="store_true", help="incremental update first")
+    p_query.add_argument("--refresh", action="store_true",
+                         help="incremental update first, even when the index looks current")
+    p_query.add_argument("--no-refresh", action="store_true", help=_NO_REFRESH_HELP)
 
     p_explain = sub.add_parser("explain", help="explain a node and its neighbors")
     p_explain.add_argument("node")
     _common(p_explain)
     p_explain.add_argument("--all", action="store_true")
+    p_explain.add_argument("--no-refresh", action="store_true", help=_NO_REFRESH_HELP)
 
     p_path = sub.add_parser("node-path", help="shortest path between two nodes")
     p_path.add_argument("source")
     p_path.add_argument("target")
     _common(p_path)
+    p_path.add_argument("--no-refresh", action="store_true", help=_NO_REFRESH_HELP)
 
     _common(sub.add_parser("export", help="regenerate a project's curated Obsidian vault"))
 
@@ -98,6 +129,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_note.add_argument("subsystem")
     _common(p_note)
 
+    p_usage = sub.add_parser("usage", help="how often agents read the graph (query/explain/notes…)")
+    p_usage.add_argument("--provider")
+    p_usage.add_argument("--days", type=int, default=30)
+
     p_sync = sub.add_parser("sync", help="regenerate the vaults of all indexed projects")
     p_sync.add_argument("--provider")
     p_sync.add_argument("--index", action="store_true", help="index missing projects first")
@@ -114,6 +149,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.cmd == "vault":
         return _emit({"vault": str(service.vault_root(provider_id))})
+
+    if args.cmd == "usage":
+        try:
+            return _emit(service.usage_summary(provider_id, days=args.days))
+        except service.KnowledgeGraphError as exc:
+            return _emit({"ok": False, "error": str(exc)})
 
     if args.cmd == "sync":
         return _emit(service.sync_obsidian(index_missing=getattr(args, "index", False),
@@ -173,26 +214,27 @@ def main(argv: Optional[List[str]] = None) -> int:
                 force=args.force, dry_run=args.dry_run, show_prompt=args.show_prompt,
                 timeout=args.timeout, markdown=markdown, provider_id=provider_id))
         if args.cmd == "notes":
-            return _emit(service.list_notes(ctx, provider_id=provider_id))
+            out = service.list_notes(ctx, provider_id=provider_id)
+            _used(ctx, provider_id, "notes")
+            return _emit(out)
         if args.cmd == "note":
-            return _emit(service.retrieve_note(ctx, args.subsystem, provider_id=provider_id))
-        if args.cmd == "query":
-            if getattr(args, "refresh", False):
-                store = service.store_for(ctx, provider_id)
-                from api.knowledge_graph.catalog import get_provider
-
-                if get_provider(provider_id).is_indexed(store):
-                    service.update(ctx, provider_id=provider_id)
-            out = service.query(ctx, args.question, budget=args.budget, provider_id=provider_id)
-            return _emit({"ok": True, "project": ctx.project.get("name"), "result": out})
-        if args.cmd == "explain":
-            out = service.explain(ctx, args.node, all_connections=getattr(args, "all", False),
-                                  provider_id=provider_id)
-            return _emit({"ok": True, "result": out})
-        if args.cmd == "node-path":
-            out = service.node_path(ctx, args.source, args.target, provider_id=provider_id)
-            return _emit({"ok": True, "result": out})
+            out = service.retrieve_note(ctx, args.subsystem, provider_id=provider_id)
+            _used(ctx, provider_id, "note")
+            return _emit(out)
+        if args.cmd in ("query", "explain", "node-path"):
+            fresh = _fresh(ctx, args, provider_id)
+            if args.cmd == "query":
+                out = service.query(ctx, args.question, budget=args.budget, provider_id=provider_id)
+            elif args.cmd == "explain":
+                out = service.explain(ctx, args.node, all_connections=getattr(args, "all", False),
+                                      provider_id=provider_id)
+            else:
+                out = service.node_path(ctx, args.source, args.target, provider_id=provider_id)
+            _used(ctx, provider_id, args.cmd, **fresh)
+            return _emit({"ok": True, "project": ctx.project.get("name"), **fresh, "result": out})
     except service.KnowledgeGraphError as exc:
+        if args.cmd in _READ_VERBS:
+            _used(ctx, provider_id, args.cmd, ok=False)
         return _emit({"ok": False, "error": str(exc)})
 
     parser.print_help()

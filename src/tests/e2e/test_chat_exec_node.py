@@ -1,4 +1,4 @@
-"""Execution node header chip + dialog (chat_exec_node.js), against fake routes."""
+"""Execution node menu, remote badge and dialog, against fake routes."""
 
 from __future__ import annotations
 
@@ -48,6 +48,8 @@ def test_chip_is_hidden_while_the_flag_is_off(browser, static_server):
     try:
         page.wait_for_timeout(400)
         expect(frame.locator("#chatExecNodeSlot")).to_be_hidden()
+        frame.get_by_role("button", name="Chat menu", exact=True).click()
+        expect(frame.get_by_role("menuitem", name="Execution node…")).to_have_count(0)
         assert not errors, errors
     finally:
         page.context.close()
@@ -58,13 +60,18 @@ def test_pick_a_node_for_the_chat(browser, static_server):
     world = NodeWorld()
     page, frame, errors = _open_card_chat(browser, static_server, world)
     try:
-        chip = frame.locator("#chatExecNodeSlot [data-exec-node-open]")
-        expect(chip).to_have_text("Host")
-        chip.click()
+        slot = frame.locator("#chatExecNodeSlot")
+        chip = slot.locator("[data-exec-node-open]")
+        menu_button = frame.get_by_role("button", name="Chat menu", exact=True)
+        menu_item = frame.get_by_role("menuitem", name="Execution node…")
+        menu_button.click()
+        menu_item.click()
+        expect(menu_item).to_be_hidden()
         form = frame.locator(".chat-supervision-dialog")
         expect(form).to_be_visible()
         expect(form.locator("h3")).to_have_text("Execution node of CH-000042")
         expect(form.locator("[name=nodeId]")).to_have_value("host")
+        expect(slot).to_be_hidden()
         expect(form.locator("[data-exec-node-cwd]")).to_be_hidden()
         form.get_by_role("button", name="Execution node", exact=True).click()
         expect(frame.get_by_role("option", name="KCsTOWER — Windows · unavailable: offline")).to_be_visible()
@@ -84,13 +91,23 @@ def test_pick_a_node_for_the_chat(browser, static_server):
         if shot:
             page.screenshot(path=os.path.join(shot, "exec_node_chip.png"))
 
+        page.set_viewport_size({"width": 320, "height": 700})
+        frame.locator("#chatSessionTitleText").evaluate(
+            "el => { el.textContent = 'A long chat title that competes for room with the execution node'; }"
+        )
+        assert chip.evaluate("el => getComputedStyle(el, '::before').content") == '"Node"'
+        expect(chip).to_have_accessible_name("Agent runs on KCsLaptop — Windows (online). Click to change.")
+
         # Back to the host: the working directory is dropped with the node.
         chip.click()
         form.get_by_role("button", name="Execution node", exact=True).click()
         frame.get_by_role("option", name="KCsMainFrame — Linux · this Cuttle host", exact=True).click()
         form.locator("[type=submit]").click()
-        expect(chip).to_have_text("Host")
+        expect(slot).to_be_hidden()
         assert world.calls[-1] == {"node_id": "host", "cwd": ""}
+        menu_button.click()
+        menu_item.click()
+        expect(form.locator("[name=nodeId]")).to_have_value("host")
         assert not errors, errors
     finally:
         page.context.close()

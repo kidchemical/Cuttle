@@ -20,6 +20,10 @@ settings are still edited from its chat (the **Supervising** badge, or
   `supervision_defaults`, plus the existing `supervision_paused_alert_hours`),
   so only the owner saves them.
 
+In a chat header, the supervision chips show counts when there are multiple
+supervisors or supervised chats. Open a chip, choose a chat in its panel, and
+use **Edit…** to change that schedule.
+
 ## Precedence
 
 Most specific first: the value given for that supervision (dialog field or

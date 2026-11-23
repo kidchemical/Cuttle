@@ -592,9 +592,15 @@ def _owner_state(owner: Dict[str, Any]) -> str:
     return "scheduled"
 
 
+def _live(e: Dict[str, Any]) -> bool:
+    """Work that belongs under Running now: a paused schedule (owned or watching
+    this chat) wakes nothing, so a chat with only those is not listed."""
+    return _working(e) or any(r.get("status") != "paused" for k in ("schedules", "watchers") for r in e.get(k) or ())
+
+
 def work_tree() -> Dict[str, Any]:
     """Every chat with live work, parents above their sub-agent chats."""
-    idx = index()
+    idx = {chat: e for chat, e in index().items() if _live(e)}
     runs_by_chat: Dict[str, Dict[str, Any]] = {}
     for run in _active_runs():
         chat = _bare(run.get("chat_session_id"))

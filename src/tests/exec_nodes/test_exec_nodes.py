@@ -456,11 +456,13 @@ const lap = { id: 'laptop', label: 'KCsLaptop', os: 'Windows', host: false, stat
               reason: '1 agent turn running', default_cwd: 'C:\\Users\\me' };
 const off = { id: 'tower', label: 'Tower', os: 'Windows', host: false, state: 'unavailable', reason: 'offline' };
 assert.strictEqual(M.chip(null), null);
-assert.deepStrictEqual([M.chip({ node_id: 'host', node: host }).text, M.chip({ node_id: 'host', node: host }).remote], ['Host', false]);
+assert.strictEqual(M.chip({ node_id: 'host', node: host }), null);
 const c = M.chip({ node_id: 'laptop', node: lap });
-assert.deepStrictEqual([c.text, c.remote, c.warn, c.busy], ['KCsLaptop', true, false, true]);
+assert.deepStrictEqual([c.text, c.warn, c.busy], ['KCsLaptop', false, true]);
+assert.strictEqual(c.compact, 'Node · busy');
 assert.ok(c.title.includes('KCsLaptop — Windows (busy: 1 agent turn running)'));
 assert.strictEqual(M.chip({ node_id: 'tower', node: off }).warn, true);
+assert.strictEqual(M.chip({ node_id: 'tower', node: off }).compact, '⚠ Node');
 const rows = M.options([host, lap, off], { node_id: 'laptop', node: lap });
 assert.deepStrictEqual(rows.map((r) => r.label), ['KCsMainFrame — Linux · this Cuttle host',
   'KCsLaptop — Windows · busy: 1 agent turn running', 'Tower — Windows · unavailable: offline']);

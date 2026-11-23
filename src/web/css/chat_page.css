@@ -496,6 +496,23 @@ body {
         0 1px 2px rgba(0, 0, 0, 0.65);
 }
 
+@media (max-width: 520px) {
+    .chat-session-title {
+        gap: 4px;
+        padding-inline: 6px;
+    }
+
+    .chat-session-title-text {
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        min-width: min(30%, 8rem);
+        line-height: 1.15;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+}
+
 /* The shared history spinner is positioned over the history row's left slot.
    In the chat title all status indicators share a flex row, so restore it to
    normal flow to keep it beside unread / queued indicators. */
@@ -5655,25 +5672,21 @@ pre.has-code-copy:hover .code-copy-btn,
     overflow: hidden;
 }
 
-.chat-widget-header {
+.chat-widget-toggle {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 8px;
-}
-
-.chat-widget-toggle {
-    flex: 1 1 auto;
-    display: flex;
-    align-items: center;
-    gap: 8px;
+    width: 100%;
     border: none;
     background: transparent;
     color: var(--text-primary);
     cursor: pointer;
-    padding: 2px 4px;
+    padding: 5px 8px;
     text-align: left;
-    min-width: 0;
+}
+
+.chat-widget-toggle:focus-visible {
+    outline-offset: -2px;
 }
 
 .chat-widget-chevron {
@@ -5691,36 +5704,17 @@ pre.has-code-copy:hover .code-copy-btn,
 }
 
 .chat-widget-title {
+    flex: 1 1 auto;
+    min-width: 0;
     font-size: 0.78rem;
     font-weight: 600;
-    white-space: nowrap;
-}
-
-.chat-widget-info {
-    position: relative;
-    flex: 0 0 auto;
-    width: 16px;
-    height: 16px;
-    padding: 0;
-    border: 1px solid var(--border-color);
-    border-radius: 50%;
-    background: var(--bg-tertiary);
-    color: var(--text-secondary);
-    cursor: help;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    line-height: 1;
-}
-
-.chat-widget-info-mark {
-    font-size: 0.62rem;
-    font-weight: 700;
-    font-style: italic;
-    font-family: Georgia, "Times New Roman", serif;
+    line-height: 1.25;
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 .chat-widget-meta {
+    flex: 0 0 auto;
     font-size: 0.72rem;
     color: var(--text-secondary);
     white-space: nowrap;
@@ -5733,40 +5727,43 @@ pre.has-code-copy:hover .code-copy-btn,
     color: var(--text-secondary);
 }
 
-.chat-widget-scope {
-    border: 1px solid var(--border-color);
-    background: var(--bg-tertiary);
-    color: var(--text-secondary);
-    font-size: 0.68rem;
-    font-weight: 600;
+.chat-widget-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 6px;
+    margin: 0 0 6px;
+}
+
+.chat-widget-scope,
+.chat-widget-action {
+    min-height: 24px;
+    padding: 2px 6px;
     border-radius: 6px;
-    padding: 3px 7px;
-    cursor: pointer;
-    flex: 0 0 auto;
-}
-
-.chat-widget-scope:hover {
-    color: var(--text-primary);
-}
-
-.chat-widget-archive {
-    border: none;
-    background: transparent;
     color: var(--text-secondary);
     font-size: 0.72rem;
     cursor: pointer;
-    padding: 2px 6px;
-    border-radius: 4px;
-    flex: 0 0 auto;
 }
 
-.chat-widget-archive:hover {
+.chat-widget-scope {
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    font-weight: 600;
+}
+
+.chat-widget-action {
+    border: none;
+    background: transparent;
+}
+
+.chat-widget-scope:hover,
+.chat-widget-action:hover {
     color: var(--text-primary);
     background: var(--bg-tertiary);
 }
 
 .chat-widget-body {
-    padding: 0 10px 10px;
+    padding: 0 8px 8px;
     max-height: 240px;
     overflow: auto;
 }

@@ -67,7 +67,8 @@ gate in `voice_stt/routes.py`.
 
 **Execution nodes:** flag `exec_nodes` (default off). Runs a chat's agent CLI on
 another paired machine; the chat, history and context stay on this host. The
-node chip in the chat header picks the machine (and a working directory there);
+chat menu's **Execution node…** item picks the machine and working directory.
+The header badge appears for chats assigned to a paired machine.
 `python -m api.exec_nodes` does the same for agents, and a sub-agent child spec
 takes `"node"`. A machine takes agent turns only after it is paired, runs the
 client daemon and opts in locally (`CUTTLE_NODE_AGENT_EXEC=1`). Off, or with the
@@ -88,7 +89,7 @@ shape layer over the active theme: its colours derive from the theme's variables
 sets no font, so every theme, wallpaper and Text & fonts pref carries through
 (`css/studio/studio_tokens.css`; guarded by `src/tests/studio/test_studio_foundation.py`). Studio
 shows the in-bubble work panel (tasks and sub-agent cards), the push tray for
-peeked children, the Working pill, steer receipts in the reply thread and the
+peeked children, steer receipts in the reply thread and the
 open THINKING box, the supervision timeline, the composer prefix highlight and
 the Orchestrate chip in the sent bubble. The orchestrator playbook view uses it
 too. To turn it on, enable the flag (Settings → Experimental, or

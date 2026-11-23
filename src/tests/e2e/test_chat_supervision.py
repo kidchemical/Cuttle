@@ -299,6 +299,57 @@ def test_pills_hidden_until_flag_then_popover_pause_and_queue_cancel(browser, st
         page.close()
 
 
+def test_phone_header_groups_supervisors_and_edits_each_schedule(browser, static_server):
+    from playwright.sync_api import expect
+    world = SupervisionWorld(flag=True)
+    world.overview["supervised_by"].append(dict(
+        world.overview["supervised_by"][0], id="sup4", supervisor="CH-001582",
+        state="paused", violations=[], instructions="Second supervisor focus",
+    ))
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    try:
+        page.set_viewport_size({"width": 360, "height": 780})
+        badge = frame.locator("#chatSupervisionSlot [data-sup-open=badge]")
+        expect(badge).to_have_count(1)
+        expect(badge).to_have_accessible_name("⚠ 2 supervisors")
+        assert badge.evaluate("el => getComputedStyle(el, '::before').content") == '"↓2!"'
+        title = frame.locator("#chatSessionTitleText")
+        title.evaluate("el => { el.textContent = 'Discuss how to improve the chat header on a phone'; }")
+        assert title.evaluate("""el => {
+            const title = el.getBoundingClientRect();
+            const header = el.parentElement.getBoundingClientRect();
+            const slot = document.getElementById('chatSupervisionSlot').getBoundingClientRect();
+            return title.width >= 70 && title.height > 20 && title.right <= slot.left && slot.right < header.right;
+        }""")
+
+        badge.click()
+        panel = frame.get_by_role("dialog", name="Supervision", exact=True)
+        picker = panel.get_by_label("Supervisor", exact=True)
+        expect(picker.locator("option")).to_have_text(["CH-001581", "CH-001582 · Paused"])
+        expect(picker).to_be_focused()
+        picker.press("Escape")
+        expect(panel).to_have_count(0)
+        expect(badge).to_be_focused()
+
+        for op_id, handle, state in [
+            ("sup4", "CH-001582", "Paused"),
+            ("sup2", "CH-001581", "Active"),
+        ]:
+            badge.click()
+            picker.select_option(op_id)
+            expect(panel.locator(".chat-supervision-title")).to_have_text("Supervised by " + handle)
+            expect(panel.locator(".chat-supervision-state")).to_have_text(state)
+            panel.get_by_role("button", name="Edit…").click()
+            form = frame.locator(".chat-supervision-dialog")
+            expect(form).to_be_visible()
+            form.locator("[type=submit]").click()
+            expect(form).to_have_count(0)
+            assert world.posts[-1][0] == f"/api/chat-ops/operations/{op_id}/edit"
+        assert not errors
+    finally:
+        page.close()
+
+
 def test_flag_lookup_failure_keeps_ui_hidden(browser, static_server):
     from playwright.sync_api import expect
     world = SupervisionWorld(flag=True)

@@ -347,7 +347,7 @@
             archived: isChatSessionArchived(sid), canArchive: isAuthMode(),
             subagentGroup: historyPanel.historySubagentGroupOwnedBy(sid) }),
         extraItems: (sid, icons) => [gitPush.menuHtml(icons), supervision.menuHtml(sid, icons.subagents),
-            orchestration.menuHtml(sid, icons.subagents), composerLock.menuHtml(sid)],
+            orchestration.menuHtml(sid, icons.subagents), execNode.menuHtml(sid, icons.subagents), composerLock.menuHtml(sid)],
         currentSession: () => session.current(), closeHistoryMenu: () => historyPanel.closeMenu(),
         afterFill: (dropdown) => gitPush.refreshMenuMode(dropdown),
     });
@@ -373,6 +373,8 @@
     // Execution node chip + dialog: which machine runs this chat's agent (experimental `exec_nodes`).
     const execNode = CuttleChatExecNode.create({
         doc: document, fetch: (u, o) => fetch(u, o), escapeHtml: escapeHtmlInline, enabledFlags: fetchEnabledExperimentalFlags,
+        authSessionId: toAuthDbSessionId, isOwner: () => window.CuttleAuth?.getUser()?.role === 'owner',
+        closeMenus: () => closeAllSessionMenus(),
         agentId: () => contextGauge.stickyAgentId(), toast: (m, k) => (window.showToast || function () {})(m, k),
         setInterval: (f, ms) => window.setInterval(f, ms), clearInterval: (t) => window.clearInterval(t),
     });
@@ -502,6 +504,7 @@
             getProjectPath: function () {
                 return (currentProject && currentProject.path) ? String(currentProject.path) : '';
             },
+            getProjectName: function () { return currentProject && currentProject.name; },
         })
         : null;
 
@@ -11579,7 +11582,6 @@
     function addTypingIndicator(slashMeta) {
         const messagesContainer = document.getElementById('chatMessages');
         if (!messagesContainer) return;
-        orchestration.setWorking(true); // Studio pill: the turn is live
         const typingDiv = document.createElement('div');
         typingDiv.className = 'message assistant';
         typingDiv.id = 'typing-indicator';
@@ -11895,7 +11897,6 @@
     }
 
     function removeTypingIndicator() {
-        orchestration.setWorking(false);
         clearConnectingWatchdog();
         clearStreamStatusPoll();
         const indicator = document.getElementById('typing-indicator');

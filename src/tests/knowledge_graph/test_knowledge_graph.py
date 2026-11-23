@@ -179,6 +179,79 @@ def test_facade_delegates_to_selected_provider(tmp_path, monkeypatch):
         monkeypatch.delenv("CUTTLE_KG_PROVIDERS_DIR", raising=False)
 
 
+def _fake_repo(tmp_path, monkeypatch):
+    ext = tmp_path / "providers"
+    _write_fake_provider(ext)
+    monkeypatch.setenv("CUTTLE_KG_PROVIDERS_DIR", str(ext))
+    monkeypatch.setenv("CUTTLE_KG_PROVIDER", "fakekg")
+    catalog.reset_cache()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".git").mkdir()
+    _fake_projects(monkeypatch, [_project(7, "Demo", repo)])
+    return repo
+
+
+def test_read_refreshes_a_stale_index_once(tmp_path, monkeypatch, capsys):
+    import json
+
+    from api.knowledge_graph.__main__ import main
+
+    repo = _fake_repo(tmp_path, monkeypatch)
+    head = {"sha": "aaa"}
+    monkeypatch.setattr(service, "git_head", lambda path: head["sha"])
+    try:
+        ctx = resolve_mod.resolve(str(repo))
+        service.index(ctx)
+        assert service.ensure_fresh(ctx) == {"refreshed": False}
+
+        head["sha"] = "bbb"
+        assert main(["query", "hi", "--path", str(repo), "--no-refresh"]) == 0
+        assert "refreshed" not in json.loads(capsys.readouterr().out)
+        assert service.is_stale(service.store_for(ctx))
+
+        assert main(["explain", "X", "--path", str(repo)]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["refreshed"] is True and "fake explain X" in out["result"]
+        # The vault follows the graph.
+        assert (service.project_vault(ctx.project) / "Graph" / "fake.md").is_file()
+        assert not service.is_stale(service.store_for(ctx))
+
+        assert main(["usage"]) == 0
+        used = json.loads(capsys.readouterr().out)
+        assert used["calls"] == 2 and used["refreshes"] == 1
+        assert used["by_verb"] == {"query": 1, "explain": 1}
+    finally:
+        catalog.reset_cache()
+
+
+def test_refresh_fails_open(tmp_path, monkeypatch):
+    repo = _fake_repo(tmp_path, monkeypatch)
+    head = {"sha": "aaa"}
+    monkeypatch.setattr(service, "git_head", lambda path: head["sha"])
+    try:
+        ctx = resolve_mod.resolve(str(repo))
+        service.index(ctx)
+        head["sha"] = "bbb"
+        store = service.store_for(ctx)
+
+        # Another process holds the refresh: answer from the index we have.
+        (store.root / "refresh.lock").write_text("", encoding="utf-8")
+        assert service.ensure_fresh(ctx)["refresh_skipped"]
+        (store.root / "refresh.lock").unlink()
+
+        def boom(*a, **k):
+            raise service.KnowledgeGraphError("extract failed")
+
+        monkeypatch.setattr(service, "update", boom)
+        got = service.ensure_fresh(ctx)
+        assert got["refreshed"] is False and got["refresh_error"] == "extract failed"
+        assert not (store.root / "refresh.lock").exists()
+        assert "fake answer" in service.query(ctx, "hi")
+    finally:
+        catalog.reset_cache()
+
+
 def test_unknown_provider_raises(tmp_path, monkeypatch):
     _fake_projects(monkeypatch, [_project(7, "Demo", tmp_path)])
     with pytest.raises(service.KnowledgeGraphError):

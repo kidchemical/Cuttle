@@ -1,4 +1,4 @@
-"""Studio on the REAL chat page, integration 2: steer receipts, tray push, tray embed, Working pill.
+"""Studio on the REAL chat page, integration 2: steer receipts, tray push, tray embed, and title spinner.
 
 Loads ``src/web/chat_page.html`` itself, like integration 1 (test_studio_chat_page_integration.py),
 and reuses its fixtures. Only the network is mocked. Each test checks one gap the
@@ -11,7 +11,7 @@ integration step closes:
   sits under the tray, and a narrow pane still overlays;
 - tray embed: the tray iframe (``?peek=1``) drops the top bar, the sidebar and the
   header buttons, and keeps the transcript and composer;
-- Working pill: a turn in flight shows the header "Working" pill.
+- Title spinner: a turn in flight keeps the spinner beside the title, with room for the title on a phone.
 
 Screenshots go to ``temp/studio_shots/integrate2/``.
 """
@@ -228,18 +228,32 @@ def test_tray_frame_is_embedded_without_chrome(browser, static_server):  # noqa:
         page.context.close()
 
 
-def test_working_pill_shows_while_a_turn_runs(browser, static_server):  # noqa: F811
+def test_studio_title_uses_the_spinner_while_a_turn_runs(browser, static_server):  # noqa: F811
     # No live turn yet: a send into a running turn would be a steer (POST /api/chat-steer), not a new turn.
     world = SteerWorld(flag=True, history=False, hold_send=True)
     page, errors = _open(browser, static_server, world, pref="studio", cache="1")
     try:
+        page.set_viewport_size({"width": 390, "height": 844})
+        title = page.locator("#chatSessionTitle")
+        spinner = title.locator("#chatSessionRunningIcon")
+        expect(title).to_be_visible()
+        expect(spinner).to_be_hidden()
         box = page.locator("#chatInput")
         box.fill("Check the changelog entries")
         page.locator("#sendButton").click()
-        pill = page.locator("#chatOrchestrationSlot .chat-orch-studio-pill")
-        expect(pill).to_be_visible()
-        expect(pill.locator(".chat-orch-working-label")).to_have_text("Working")
-        _shot(page, "working-pill-studio.png")
+        expect(spinner).to_be_visible()
+        expect(title.locator("#chatOrchestrationSlot")).to_be_hidden()
+        expect(title.get_by_text("Working", exact=True)).to_have_count(0)
+        title.locator("#chatSessionTitleText").evaluate(
+            "el => { el.textContent = '🔥 Lit Torch Movement Animation Alignment'; }"
+        )
+        assert title.evaluate("""el => {
+            const name = el.querySelector('#chatSessionTitleText').getBoundingClientRect();
+            const spinner = el.querySelector('#chatSessionRunningIcon').getBoundingClientRect();
+            const menu = document.getElementById('chatChromeMenuBtn').getBoundingClientRect();
+            return name.height > 20 && spinner.right < name.left && name.right < menu.left;
+        }""")
+        _shot(page, "title-spinner-studio.png")
         assert not errors, errors
     finally:
         page.context.close()

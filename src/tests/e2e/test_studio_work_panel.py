@@ -506,7 +506,7 @@ def test_reduced_motion_stops_the_entrance_and_the_glow(browser, static_server):
         context.close()
 
 
-def test_orchestration_pill_is_live_with_inline_controls_and_a_working_state(browser, static_server):  # noqa: F811
+def test_orchestration_pill_is_live_with_inline_controls(browser, static_server):  # noqa: F811
     context, page, errors, store = _open(browser, static_server)
     try:
         page.evaluate("""async () => {
@@ -534,11 +534,9 @@ def test_orchestration_pill_is_live_with_inline_controls_and_a_working_state(bro
         assert json.loads(store["hold_calls"][0][1]) == {"stop": False}
         _shot(page, "pill-studio.png")
 
-        # Not orchestrated: a live "Working" pill while the turn runs, nothing to control.
+        # Removing the playbook clears the orchestration slot.
         store["binding"] = {"bound": False}
-        page.evaluate("async () => { await ORCH.refresh(); ORCH.setWorking(true); }")
-        expect(page.locator("#chatOrchestrationSlot .chat-orch-working-label")).to_have_text("Working")
-        page.evaluate("() => ORCH.setWorking(false)")
+        page.evaluate("() => ORCH.refresh()")
         expect(page.locator("#chatOrchestrationSlot")).to_be_hidden()
 
         # Bubble header: identity + working tag while the turn runs.

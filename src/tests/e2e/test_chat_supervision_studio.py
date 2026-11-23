@@ -264,10 +264,20 @@ def test_classic_chip_keeps_the_popover_and_no_timeline_call(browser, static_ser
 def test_worker_badge_opens_supervisor_timeline_for_this_chat_only(browser, static_server):  # noqa: F811
     from playwright.sync_api import expect
     world = StudioWorld()
+    world.overview["supervised_by"].append(dict(
+        world.overview["supervised_by"][0], id="sup4", supervisor="CH-001582", violations=[],
+    ))
+    now = time.time()
+    world.timelines["1582"] = [
+        _item(14, now - 20, "nudged", "CH-000042", "Second supervisor nudged this chat"),
+        _item(13, now - 45, "stalled", "CH-001548", "Second supervisor also watches another chat"),
+    ]
     page, frame, errors = _open(browser, static_server, world, studio=True)
     try:
         _load_studio_assets(page)
-        frame.locator("#chatSupervisionSlot [data-sup-open=badge]").click()
+        badge = frame.locator("#chatSupervisionSlot [data-sup-open=badge]")
+        expect(badge).to_have_count(1)
+        badge.click()
         panel = frame.locator(".sup-studio-panel")
         expect(panel).to_be_visible()
         expect(panel.locator(".sup-studio-title")).to_have_text("Supervised by CH-001581")
@@ -279,6 +289,12 @@ def test_worker_badge_opens_supervisor_timeline_for_this_chat_only(browser, stat
         assert "CH-001548" not in panel.inner_text()
         assert world.timeline_calls[-1][0] == "1581"
         expect(panel.locator(".sup-tl-more")).to_have_count(0)
+        panel.get_by_label("Supervisor", exact=True).select_option("sup4")
+        expect(panel.locator(".sup-studio-title")).to_have_text("Supervised by CH-001582")
+        expect(panel.locator(".sup-tl-row")).to_have_count(1)
+        expect(panel.locator(".sup-tl-row")).to_contain_text("Second supervisor nudged this chat")
+        expect(panel.locator("[data-sup-act=edit]")).to_have_attribute("data-sup-id", "sup4")
+        assert world.timeline_calls[-1][0] == "1582"
 
         # Narrow pane: the time moves above the headline (grid row 1), the icon sits beside the headline.
         page.set_viewport_size({"width": 520, "height": 800})

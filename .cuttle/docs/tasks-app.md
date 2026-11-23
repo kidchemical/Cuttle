@@ -25,8 +25,8 @@ reachable without a flag. Agent workflow and HTTP surface: `.cuttle_global/docs/
   changed); agent reads are hidden unless toggled on.
 - **New list** — pick a home chat, scope, editing mode, optional linked chats,
   and initial tasks. Deep links: `/tasks_page.html?list=<id>[&tab=chats]` opens
-  a list; `?chat=<id>` starts a new list for that chat. The composer strip's ↗
-  button opens its list here.
+  a list; `?chat=<id>` starts a new list for that chat. Expand a list in the
+  composer and select **Open in Tasks** to manage it here.
 - **Archive / Restore / Delete** — delete is permanent (confirmed) and is
   recorded in the audit log; archive keeps the list.
 
