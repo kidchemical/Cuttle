@@ -66,7 +66,7 @@
                 return;
             }
             el.innerHTML = '<button type="button" class="chat-supervision-pill is-orchestrator' + (c.missing ? ' is-warn' : '')
-                + (c.hold ? ' is-paused' : '')
+                + (c.hold || !c.working ? ' is-paused' : '')
                 + '" data-orch-open="1" title="' + esc(c.goal ? 'Goal: ' + c.goal : 'Orchestrator playbook')
                 + '" aria-haspopup="dialog">' + (c.missing ? '⚠ ' : '') + esc(c.text) + '</button>';
             el.hidden = false;
@@ -94,10 +94,10 @@
 
         /** Studio pill: live dot while running, the chip text, and Pause / Resume and Stop all inline. */
         function studioPillHtml(c) {
-            const dot = c.hold ? '' : '<span class="studio-live-dot" aria-hidden="true"></span>';
+            const dot = c.working ? '<span class="studio-live-dot" aria-hidden="true"></span>' : '';
             return '<span class="chat-orch-studio-pill">'
                 + '<button type="button" class="chat-supervision-pill is-orchestrator' + (c.missing ? ' is-warn' : '')
-                + (c.hold ? ' is-paused' : '') + '" data-orch-open="1" title="'
+                + (c.hold || !c.working ? ' is-paused' : '') + '" data-orch-open="1" title="'
                 + esc(c.goal ? 'Goal: ' + c.goal : 'Orchestrator playbook')
                 + '" aria-haspopup="dialog">' + dot + (c.missing ? '⚠ ' : '') + esc(c.text) + '</button>'
                 + c.actions.map((a) => '<button type="button" class="chat-orch-quick' + (a === 'halt' ? ' is-danger' : '')
@@ -124,9 +124,10 @@
                 + '<span class="chat-supervision-title">' + esc(c.playbookName) + '</span>'
                 + '<button type="button" class="cuttle-info" data-tooltip="' + esc(BRIEF_INFO)
                 + '" aria-label="About playbook changes">i</button>'
-                + '<span class="chat-supervision-state ' + (c.hold ? 'is-paused' : 'is-orchestrating') + '">'
+                + '<span class="chat-supervision-state ' + (c.working ? 'is-orchestrating' : 'is-paused') + '">'
                 + esc(c.stateLabel) + '</span></div>'
-                + (c.hold ? '<div class="chat-supervision-hint">' + esc(c.holdNote) + '</div>' : '')
+                + (c.holdNote ? '<div class="chat-supervision-hint">' + esc(c.holdNote) + '</div>' : '')
+                + (c.supervisionNote ? '<div class="chat-supervision-hint">' + esc(c.supervisionNote) + '</div>' : '')
                 + (c.missing ? '<div class="chat-supervision-violation">⚠ Playbook “' + esc(c.playbookId)
                     + '” no longer exists; pick another with Edit….</div>' : '')
                 + '<div class="chat-supervision-section">Goal</div>'
