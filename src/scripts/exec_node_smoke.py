@@ -10,6 +10,11 @@ this user's own CLI login.
 
     PYTHONPATH=src .venv/bin/python src/scripts/exec_node_smoke.py [--agent claude] [--model haiku]
 
+``--node-ssh HOST`` runs the node on another machine instead (Windows OpenSSH,
+``cmd.exe`` shell, a Cuttle checkout at ``--node-repo``). The node reaches the
+throwaway coordinator through an SSH reverse tunnel, so nothing listens on the
+LAN and the throwaway device token only travels inside SSH.
+
 What it proves, through the real harness kernel (context compile → remote
 adapter → mesh job → relay → reply):
   1. a turn runs in the node process, not the host's (a marker only the node has);
@@ -22,7 +27,9 @@ adapter → mesh job → relay → reply):
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import random
 import queue
 import shutil
 import subprocess
@@ -42,18 +49,132 @@ from api.device_workers.worker_loop import run_remote_worker_loop
 run_remote_worker_loop(should_continue=lambda: True)
 """
 
+# Turn prompts per node OS: the agent's own shell is bash on Linux, bash or
+# PowerShell on Windows; both run these. 296 s is the detached child, 297 s the
+# foreground wait: Stop must end both.
+POSIX_STOP = ("`(python3 -c 'import time; time.sleep(296)' &) ; python3 -c 'import time; time.sleep(297)'`")
+WINDOWS_STOP = ("`powershell -NoProfile -Command \"Start-Process powershell -WindowStyle Hidden -ArgumentList "
+                "'-NoProfile','-Command','Start-Sleep -Seconds 296'; Start-Sleep -Seconds 297\"`")
+
+
+class LocalNode:
+    """The node as a second process on this machine."""
+
+    windows = os.name == "nt"
+
+    def __init__(self, root: Path) -> None:
+        self.work = root / "node-work"
+        self.home = root / "node-home"
+        for path in (self.work, self.home):
+            path.mkdir(parents=True)
+        self.log_path = root / "node.log"
+        self.proc = None
+
+    def start(self, env: dict, base: str) -> None:
+        self.log = open(self.log_path, "w")
+        self.proc = subprocess.Popen([sys.executable, "-c", NODE_MAIN],
+                                     env={**os.environ, **env, "CUTTLE_HOME": str(self.home),
+                                          "SMOKE_SRC": str(SRC), "CUTTLE_DEVICE_WORKERS_COORDINATOR_URL": base},
+                                     cwd=str(self.work), stdout=self.log, stderr=subprocess.STDOUT)
+
+    def read(self, name: str) -> str:
+        path = self.work / name
+        return path.read_text().strip() if path.exists() else ""
+
+    def leftovers(self) -> list:
+        import psutil
+
+        return [p.pid for p in psutil.process_iter(["cmdline"])
+                if any("time.sleep(29" in part for part in (p.info.get("cmdline") or []))]
+
+    def stop(self) -> None:
+        if self.proc:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+            self.log.close()
+
+    def log_tail(self) -> str:
+        return self.log_path.read_text()[-3000:] if self.log_path.exists() else ""
+
+
+class SshNode:
+    """The node on another machine over the user's OpenSSH (Windows target)."""
+
+    windows = True
+
+    def __init__(self, root: Path, host: str, repo: str) -> None:
+        self.host, self.repo = host, repo.rstrip("\\")
+        tag = f"cuttle-exec-node-smoke-{os.getpid()}"
+        temp = self.ssh("echo %TEMP%").strip().splitlines()[-1]
+        self.dir = f"{temp}\\{tag}"
+        self.work, self.home = f"{self.dir}\\work", f"{self.dir}\\home"
+        self.ssh(f'mkdir "{self.work}" "{self.home}"')
+        self.log_path = root / "node.log"
+        self.proc = None
+
+    def ssh(self, command: str, timeout: float = 60) -> str:
+        out = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", self.host, command],
+                             capture_output=True, text=True, timeout=timeout)
+        return out.stdout
+
+    def start(self, env: dict, base: str) -> None:
+        port = int(base.rsplit(":", 1)[1])
+        remote_port = random.randint(18100, 18999)
+        node_env = {**env, "CUTTLE_HOME": self.home, "SMOKE_SRC": f"{self.repo}\\src",
+                    "CUTTLE_DEVICE_WORKERS_COORDINATOR_URL": f"http://127.0.0.1:{remote_port}"}
+        # Env and token go over SSH stdin, never onto a command line.
+        script = (f"import os, json, sys\nsys.stdout.reconfigure(encoding='utf-8', errors='replace')\n"
+                  f"os.environ.update(json.loads({json.dumps(json.dumps(node_env))}))\n"
+                  f"os.chdir({self.work!r})\nopen('node.pid', 'w').write(str(os.getpid()))\n" + NODE_MAIN)
+        self.log = open(self.log_path, "w")
+        self.proc = subprocess.Popen(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes",
+             "-R", f"{remote_port}:127.0.0.1:{port}", self.host, f'"{self.repo}\\.venv\\Scripts\\python.exe" -u -'],
+            stdin=subprocess.PIPE, stdout=self.log, stderr=subprocess.STDOUT, text=True)
+        self.proc.stdin.write(script)
+        self.proc.stdin.close()
+
+    def read(self, name: str) -> str:
+        return self.ssh(f'type "{self.work}\\{name}" 2>nul').strip()
+
+    def leftovers(self) -> list:
+        out = self.ssh('powershell -NoProfile -Command "Get-CimInstance Win32_Process | '
+                       "? { $_.CommandLine -match 'Start-Sleep -Seconds 29[67]' -and $_.CommandLine -notmatch 'CimInstance' } | "
+                       '% { $_.ProcessId }"')
+        return [int(x) for x in out.split() if x.isdigit()]
+
+    def stop(self) -> None:
+        pid = self.read("node.pid")
+        if pid.isdigit():
+            self.ssh(f"taskkill /pid {pid} /t /f >nul 2>&1")
+        if self.proc:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+            self.log.close()
+        self.ssh(f'rmdir /s /q "{self.dir}"')
+
+    def log_tail(self) -> str:
+        return self.log_path.read_text()[-3000:] if self.log_path.exists() else ""
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--agent", default="claude")
     ap.add_argument("--model", default="haiku", help="cheap model id for the turns")
     ap.add_argument("--keep", action="store_true", help="keep the temp directory")
+    ap.add_argument("--node-ssh", default="", help="run the node on this SSH host (Windows) instead of locally")
+    ap.add_argument("--node-repo", default=r"C:\Users\me\Dev\Cuttle", help="Cuttle checkout on the SSH node")
     args = ap.parse_args()
 
     root = Path(tempfile.mkdtemp(prefix="cuttle-exec-node-smoke-"))
-    host_home, node_home = root / "host-home", root / "node-home"
-    host_project, node_work = root / "host-project", root / "node-work"
-    for path in (host_home, node_home, host_project, node_work):
+    host_home, host_project = root / "host-home", root / "host-project"
+    for path in (host_home, host_project):
         path.mkdir(parents=True)
     # Isolate from whatever launched this (a live Cuttle turn exports its own state).
     for key in [k for k in os.environ if k.startswith(("CUTTLE_", "CLAUDE"))]:
@@ -85,21 +206,16 @@ def main() -> int:
     base = f"http://127.0.0.1:{server.server_port}"
     os.environ["CUTTLE_INTERNAL_API_BASE"] = base  # nothing here may reach a running Cuttle
 
+    node = SshNode(root, args.node_ssh, args.node_repo) if args.node_ssh else LocalNode(root)
     node_env = {
-        **os.environ,
-        "CUTTLE_HOME": str(node_home),
-        "SMOKE_SRC": str(SRC),
         "SMOKE_NODE_MARK": MARK,  # only the node process (and the CLI it starts) has this
         "CUTTLE_DEVICE_WORKERS_ENABLED": "1",
-        "CUTTLE_DEVICE_WORKERS_COORDINATOR_URL": base,
         "CUTTLE_DEVICE_WORKER_TOKEN": token,
         "CUTTLE_DEVICE_WORKER_ID": "smoke-node",
         "CUTTLE_DEVICE_WORKERS_POLL_SECONDS": "2",
         "CUTTLE_NODE_AGENT_EXEC": "1",
     }
-    node_log = open(root / "node.log", "w")
-    node_proc = subprocess.Popen([sys.executable, "-c", NODE_MAIN], env=node_env, cwd=str(node_work),
-                                 stdout=node_log, stderr=subprocess.STDOUT)
+    node.start(node_env, base)
     failures: list = []
 
     def check(name: str, ok: bool, detail: str = "") -> None:
@@ -108,8 +224,8 @@ def main() -> int:
             failures.append(name)
 
     try:
-        print(f"host home {host_home}\nnode pid {node_proc.pid}, coordinator {base}", flush=True)
-        deadline = time.time() + 40
+        print(f"host home {host_home}\nnode {args.node_ssh or 'local'} work {node.work}, coordinator {base}", flush=True)
+        deadline = time.time() + 60
         info = None
         while time.time() < deadline:
             info = service.node("smoke-node", args.agent)
@@ -124,7 +240,7 @@ def main() -> int:
         db = get_auth_db()
         user = db.create_user("smoke@local", "Smoke", "local", password="x")
         sid = db.create_chat_session(user, "exec node smoke")
-        service.set_binding(sid, "smoke-node", str(node_work))
+        service.set_binding(sid, "smoke-node", str(node.work))
 
         def turn(prompt: str, label: str, cancel_after: float = 0.0) -> tuple:
             statuses: queue.Queue = queue.Queue()
@@ -149,9 +265,10 @@ def main() -> int:
             return body, reply, lines
 
         body, reply, lines = turn(
-            "Run the shell command `printf %s \"$SMOKE_NODE_MARK\" > where.txt` in the current directory, "
-            "then reply with exactly the contents of where.txt and nothing else.", "turn 1 on the node")
-        written = (node_work / "where.txt").read_text() if (node_work / "where.txt").exists() else ""
+            "With one shell command, write the value of the environment variable SMOKE_NODE_MARK to a file "
+            "named where.txt in the current directory, then reply with exactly the contents of where.txt "
+            "and nothing else.", "turn 1 on the node")
+        written = node.read("where.txt")
         check("CLI ran in the node process", written == MARK, f"where.txt={written!r}")
         check("reply came back to the host chat", MARK in reply)
         check("status streamed from the node",
@@ -171,15 +288,12 @@ def main() -> int:
         body, reply, _ = turn(
             "Run this exact shell command in the foreground and wait for it to finish (it is a deliberate "
             "long wait for a test; allow a 10 minute timeout): "
-            "`(python3 -c 'import time; time.sleep(296)' &) ; python3 -c 'import time; time.sleep(297)'` "
-            "Then say done.", "turn 3 stopped mid-run", cancel_after=25.0)
+            + (WINDOWS_STOP if node.windows else POSIX_STOP) + " Then say done.",
+            "turn 3 stopped mid-run", cancel_after=25.0)
         took = time.time() - started
         check("Stop ended the turn mid-run", 24 <= took < 90, f"{took:.0f}s")
-        time.sleep(4)
-        import psutil
-
-        left = [p.pid for p in psutil.process_iter(["cmdline"])
-                if (p.info.get("cmdline") or [])[-1:] in (["import time; time.sleep(296)"], ["import time; time.sleep(297)"])]
+        time.sleep(8)
+        left = node.leftovers()
         check("Stop left nothing running on the node", not left, f"pids {left}")
 
         service.set_binding(sid, "host")
@@ -189,15 +303,10 @@ def main() -> int:
         check("host turn did not use the node", store.running_turns() == {} and
               mesh.list_jobs(limit=1)[0]["type"] == "agent_turn" and len(mesh.list_jobs(limit=20)) == 3)
     finally:
-        node_proc.terminate()
-        try:
-            node_proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            node_proc.kill()
-        node_log.close()
+        node.stop()
         server.shutdown()
         if failures:
-            print(f"\nnode log tail:\n{(root / 'node.log').read_text()[-3000:]}")
+            print(f"\nnode log tail:\n{node.log_tail()}")
         if args.keep or failures:
             print(f"kept {root}")
         else:

@@ -28,7 +28,7 @@ inspect the envelope. Day-to-day, Flask injects it — no extra round-trip.
 3. **Project rules** — `{project}/.cuttle/rules/*.md` (always-on guidelines for that project; for the Cuttle repo itself this is Cuttle-only rules, never guest etiquette).
 4. **Profile** — `standard` today; room for coordination / supervision later.
 5. **Runtime** — inventory of commands/docs/actions/skills (global + project); optional handoff delta; chat-store hint.
-6. **Ranked context (optional)** — one selected skill/doc named for this prompt as a pointer (title, one line, path; `jev/thresholds.py` `RANK_INJECT_MODE = "excerpt"` pastes the body instead). Judge: Jev by default (`python -m api.jev rank`), or the executor chosen for **Context ranking** in Settings → Background helpers (any model API, or a tool-less one-turn agent CLI; `api.background_helpers` task `context`). Always-on rules still win on conflict.
+6. **Ranked context (optional)** — one selected skill/doc named for this prompt as a pointer (title, one line, path; `jev/thresholds.py` `RANK_INJECT_MODE = "excerpt"` pastes the body instead). Judge: Jev by default (`python -m api.jev rank`), or the executor chosen for **Context ranking** in Settings → Background helpers (any model API, or a tool-less one-turn agent CLI; `api.background_helpers` task `context`). Always-on rules still win on conflict. The ranker only ever adds a skippable pointer; it does not decide which rules or inventory a turn receives. Graded on 54 live pointers (2026-11-22): 39% right, 44% harmless, 17% wrong, with confidence not separating right from wrong; a plain word-overlap picker scored about 9% right on the same requests.
 7. **User request** — the actual turn prompt (never truncated by the compiler).
 
 ## The envelope is a directory
