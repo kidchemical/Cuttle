@@ -33,11 +33,51 @@ def context(target, actor=None, *, db=None):
     return db, actor, row
 
 
+def _msg_meta(row):
+    meta = (row or {}).get('metadata') or {}
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except ValueError:
+            meta = {}
+    return meta if isinstance(meta, dict) else {}
+
+
 def _latest(db, sid):
     # A bounded transcript tail is enough for the newest reply; report absence
     # rather than loading an entire long chat.
     rows = db.get_messages(sid, limit=40)
     return next((r for r in reversed(rows) if r.get('role') == 'assistant'), None)
+
+
+def _recent_user_messages(rows, latest):
+    """Human user messages (including live steers) sent after ``latest`` assistant
+    reply, excluding Cuttle chat_ops supervisor/system deliveries."""
+    start = 0
+    if latest is not None:
+        latest_id = latest.get('id')
+        for idx in range(len(rows) - 1, -1, -1):
+            if rows[idx] is latest or (latest_id is not None and rows[idx].get('id') == latest_id):
+                start = idx + 1
+                break
+    out = []
+    for r in rows[start:]:
+        if r.get('role') != 'user':
+            continue
+        meta = _msg_meta(r)
+        if meta.get('origin') == 'chat_ops' or meta.get('chat_op_id'):
+            continue
+        text = str(r.get('content') or '').strip()
+        if not text:
+            continue
+        out.append({
+            'id': r.get('id'),
+            'timestamp': r.get('timestamp'),
+            'text': text[:600],
+            'truncated': len(text) > 600,
+            'steered': bool(meta.get('steered')),
+        })
+    return out[-5:]
 
 
 def _unit_waits(sid):
@@ -194,19 +234,16 @@ def status(target, actor=None, *, db=None, request=None, task_pick=None):
         progress.append({'id': task['id'], 'title': task['title'], 'done': done, 'total': total,
                          'items': task['payload']['items']})
     attention = db.get_attention(sid, uid) or {}
-    latest = _latest(db, sid)
+    tail = db.get_messages(sid, limit=40)
+    latest = next((r for r in reversed(tail) if r.get('role') == 'assistant'), None)
+    recent_user = _recent_user_messages(tail, latest)
     if latest:
         latest = dict(latest)
         content = latest.get('content') or ''
         latest['content'] = content[:6000]
         latest['content_truncated'] = len(content) > 6000
         latest['text'] = readable_reply(content)[:6000]
-        meta = latest.get('metadata') or {}
-        if isinstance(meta, str):
-            try:
-                meta = json.loads(meta)
-            except ValueError:
-                meta = {}
+        meta = _msg_meta(latest)
         if meta.get('completed_at'):
             # ``timestamp`` is the turn's start (api.chat_turn_row); this is when the reply landed.
             latest['completed'] = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(float(meta['completed_at'])))
@@ -243,6 +280,7 @@ def status(target, actor=None, *, db=None, request=None, task_pick=None):
             'followups': db.get_followup_state(sid, uid),
             'operations': [o for o in store.listing(actor) if o['target'] == sid and o['state'] in ('pending', 'dispatching', 'verifying')],
             'undelivered': undelivered(sid),
+            'recent_user_messages': recent_user,
             'latest_reply': latest}
 
 

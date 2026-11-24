@@ -1,8 +1,9 @@
 """Mid-turn steering: push a user follow-up into the agent turn that is already running.
 
 Codex (``codex app-server`` → ``turn/steer``), Muse Code (``muse serve`` →
-``turn/steer``) and Claude Code (``claude -p --input-format stream-json`` with
-stdin left open) accept extra input while a turn is live. Their turn runners
+``turn/steer``), Claude Code (``claude -p --input-format stream-json`` with
+stdin left open) and Antigravity (``agy acp`` → mid-turn ``session/prompt``)
+accept extra input while a turn is live. Their turn runners
 register a send callback here once the harness has the turn;
 ``POST /api/chat-steer`` looks the chat up and forwards the text.
 
@@ -14,9 +15,9 @@ Anything that cannot be steered (no live registration, a different slash
 command, the harness rejecting a turn that just finished) returns
 ``steered=False`` so the client falls back to its follow-up queue.
 
-Settings: ``agent_steer`` → ``{"codex": true, "muse": true, "claude": true}``
+Settings: ``agent_steer`` → ``{"codex": true, "muse": true, "claude": true, "antigravity": true}``
 (all default on). Turning an agent off also makes its adapter use the one-shot
-path (``exec`` / plain ``claude -p``).
+path (``exec`` / plain ``claude -p`` / ``agy -p``).
 ``CUTTLE_AGENT_STEER=0`` turns steering off for every agent.
 """
 
@@ -31,7 +32,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
-STEERABLE_AGENTS = ("codex", "muse", "claude")
+STEERABLE_AGENTS = ("codex", "muse", "claude", "antigravity")
 
 # The send callback receives the steer text and this send's ``steer_id`` (so the
 # runner's own echo matcher can report delivery of that exact send) and returns

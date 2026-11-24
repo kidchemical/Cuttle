@@ -105,3 +105,8 @@ def test_off_reads_nothing_and_a_finished_chat_is_not_an_episode(chats, monkeypa
 def test_focus_that_asks_for_the_display_points_at_the_setting():
     assert any("System care → display" in w for w in brief.focus_warnings("Keep the monitor awake all night."))
     assert not any("display" in w for w in brief.focus_warnings("Optimize the display list builder."))
+
+
+def test_display_off_section_respects_focus_and_recent_user_permission():
+    lines = "\n".join(display_care.section({"off": "off"}))
+    assert "Unless Focus or a recent user message to the chat allows it to wake the display itself" in lines

@@ -220,7 +220,7 @@ def test_agent_adapters_round_trip(tmp_path, monkeypatch):
     ctx["client"].set_cookie("session_token", ctx["token"])
 
     body = ctx["client"].get("/api/settings/agent-adapters", environ_base=LAN).get_json()
-    assert body["steer"] == {"codex": True, "muse": True, "claude": True}
+    assert body["steer"] == {"codex": True, "muse": True, "claude": True, "antigravity": True}
     assert body["allow_project_adapters"] is False
     assert body["steer_env_disabled"] is False
     assert {"claude", "codex"} <= set(body["defaults"])

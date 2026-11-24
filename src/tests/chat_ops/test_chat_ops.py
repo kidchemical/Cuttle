@@ -1008,6 +1008,26 @@ def test_checkin_text_is_markdown_without_raw_json():
     assert "(start)" in worker.checkin_text(cfg, snap, [])
 
 
+def test_checkin_includes_recent_user_steers_and_excludes_chat_ops_sends(chats):
+    db, _owner, sup, target, _foreign = chats
+    db.add_message(target, "user", "old prompt before reply")
+    db.add_message(target, "assistant", "previous reply")
+    db.add_message(target, "user", "/claude Btw you can wake the display", metadata={"steered": True})
+    db.add_message(target, "user", "Supervisor: skip GPU row", metadata={"origin": "chat_ops", "chat_op_id": "op1"})
+
+    st = service.status(f"CH-{target:06d}", f"CH-{sup:06d}", db=db, request=lambda *a, **k: {"generating": True})
+    msgs = st["recent_user_messages"]
+    assert len(msgs) == 1
+    assert "wake the display" in msgs[0]["text"]
+    assert msgs[0]["steered"] is True
+
+    text = worker.checkin_text({"instructions": ""}, st, [])
+    assert "**Recent user messages to" in text
+    assert "/claude Btw you can wake the display *(live steer)*" in text
+    assert "old prompt before reply" not in text
+    assert "Supervisor: skip GPU row" not in text
+
+
 # --- stall detection: what counts as progress, backoff, wording --------------
 
 

@@ -199,6 +199,9 @@ def undelivered_section(undelivered):
     return lines
 
 
+CHECKIN_USER_MSG_CHARS = 400
+
+
 def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None, changes=None, system=None):
     """The check-in turn as markdown: it renders as a readable Cuttle bubble in the
     supervisor chat and reads as a brief to the agent. Full data: `status --json`."""
@@ -255,6 +258,20 @@ def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None, chang
                   'with the Cuttle briefing and recent transcript instead.']
     for w in snap.get('warnings') or []:
         lines.append(f'Note: {w}')
+    user_msgs = snap.get('recent_user_messages') or []
+    if user_msgs:
+        rendered = []
+        for msg in user_msgs[-5:]:
+            u_text = ' '.join(str(msg.get('text') or msg.get('content') or '').split())
+            if not u_text:
+                continue
+            if len(u_text) > CHECKIN_USER_MSG_CHARS:
+                u_text = u_text[:CHECKIN_USER_MSG_CHARS].rstrip() + '…'
+            tag = ' *(live steer)*' if msg.get('steered') else ''
+            rendered.append(f'- {u_text}{tag}')
+        if rendered:
+            lines += ['', f'**Recent user messages to {handle} (since its last reply — do not contradict these):**']
+            lines += rendered
     reply = (snap.get('latest_reply') or {})
     text = reply.get('text') or ''
     if text:

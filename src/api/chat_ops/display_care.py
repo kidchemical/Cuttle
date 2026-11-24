@@ -74,8 +74,9 @@ def section(picture: Optional[Mapping[str, Any]]) -> List[str]:
     if picture.get('off'):
         lines += ['', f"**Display is off** ({_OFF_TEXT[picture['off']]}): work that needs a visible display "
                   '(a game or app window, GPU captures, UI tests) can hang or measure wrong until it is back. '
-                  'The host cannot wake it. If the chat is on such work, have it switch to work that needs no '
-                  'display, and tell the user the display has to be turned on for the rest.']
+                  'The host cannot wake it. Unless Focus or a recent user message to the chat allows it to wake '
+                  'the display itself, have it switch to work that needs no display, and tell the user the '
+                  'display has to be turned on for the rest.']
     if picture.get('unheld'):
         lines += ['', f"**Display not kept awake:** the host could not take an idle inhibitor "
                   f"({picture['unheld']}), so the screen may turn off when the machine idles. Tell the user if "

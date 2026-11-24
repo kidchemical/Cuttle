@@ -5,19 +5,20 @@ Claude badge-gated palette controls and map to ``--model <family>`` /
 ``--effort <level>``. Refresh re-reads ``agy models`` (no turn runs). Quota is
 ``/antigravity usage`` (headless ``/usage`` + ``/credits`` JSON, no turn).
 
-Transport: the prompt goes over stdin as one ``--input-format stream-json``
-user event (lossless; no argv limits), and stdin closes so the CLI exits after
-that turn. Headless runs have no approval prompt, so — like Codex
+Transport: when mid-turn steering is enabled (default), turns run on
+``agy acp --stdio --dangerously-skip-permissions`` so a follow-up sent while
+the turn is live steers via ``session/prompt``. When steering is disabled or
+ACP setup fails, the adapter falls back to ``agy -p --input-format stream-json``
+(lossless stdin prompt, closed immediately so the CLI exits after one turn).
+Headless runs have no approval prompt, so — like Codex
 (``--dangerously-bypass-approvals-and-sandbox``) and Claude
 (``bypassPermissions``) — turns run with ``--dangerously-skip-permissions``;
 otherwise every edit or command needing approval is soft-denied while the run
 still exits 0.
 
-Not wired, on purpose: steering (stdin messages sent mid-turn queue as the next
-turn, which Cuttle's follow-up queue already does), native question recovery
-(``ask_question`` is exported as ``step_type: unknown`` without arguments) and
-background text helpers (agy has no way to disable its tools, which the
-restricted helper contract requires).
+Not wired, on purpose: native question recovery (``ask_question`` is exported as
+``step_type: unknown`` without arguments) and background text helpers (agy has
+no way to disable its tools, which the restricted helper contract requires).
 """
 
 from __future__ import annotations
@@ -545,6 +546,106 @@ class Adapter:
         auth_error = await _authentication_preflight(exe, cwd)
         if auth_error:
             return AgentResult(success=False, error=auth_error, output="", model=mid, meta=meta_base)
+
+        from api.agent_harness.steer import steer_enabled
+
+        if steer_enabled("antigravity"):
+            from api.agent_harness.agents.antigravity.acp_turn import run_antigravity_turn_acp
+
+            acp_raw = await run_antigravity_turn_acp(
+                prompt,
+                exe=exe,
+                cwd=cwd,
+                resume=resume,
+                model=mid or None,
+                effort=plan["flag_effort"] or None,
+                status_queue=status_queue,
+                chat_session_id=chat_session_id,
+                timeout=timeout,
+                cancel_event=cancel_event,
+            )
+            if acp_raw.get("fallback"):
+                print(
+                    f"[ANTIGRAVITY] acp unavailable, using print mode: {acp_raw.get('error')}",
+                    flush=True,
+                )
+            else:
+                sid = str(acp_raw.get("session_id") or "").strip() or (
+                    str(resume).strip() if resume else None
+                )
+                usage = normalize_antigravity_usage(acp_raw.get("usage"))
+                fill = int(acp_raw.get("context_tokens") or 0)
+                if fill > 0:
+                    usage["context_tokens"] = fill
+                    if chat_session_id:
+                        try:
+                            save_antigravity_context(chat_session_id, {
+                                "context_tokens": fill,
+                                "ts": time.time(),
+                                "conversation_id": sid,
+                                "model": mid,
+                            })
+                        except Exception:
+                            pass
+                resolved_model = str(acp_raw.get("resolved_model") or "").strip()
+                if usage:
+                    usage["model"] = mid or "antigravity"
+                    try:
+                        from api.model_pricing import attach_estimated_cost
+
+                        attach_estimated_cost(
+                            usage, _pricing_model(mid or resolved_model or ""), cache_inclusive=False
+                        )
+                    except Exception:
+                        pass
+                meta = dict(meta_base)
+                if resolved_model and not mid:
+                    meta["agent_model_resolved"] = resolved_model
+                if resume and sid and sid != str(resume).strip():
+                    meta["resume_lost"] = True
+                if acp_raw.get("steered"):
+                    meta["steered"] = int(acp_raw["steered"])
+                if acp_raw.get("undelivered_steers"):
+                    meta["undelivered_steers"] = list(acp_raw["undelivered_steers"])
+                if acp_raw.get("timed_out") or acp_raw.get("cancelled"):
+                    if chat_session_id and sid:
+                        try:
+                            save_antigravity_resume_id(cwd, chat_session_id, sid)
+                        except Exception:
+                            pass
+                    return AgentResult(
+                        success=False,
+                        output=str(acp_raw.get("output") or ""),
+                        error=str(acp_raw.get("error") or "Antigravity interrupted"),
+                        usage=usage,
+                        session_id=sid,
+                        model=mid,
+                        meta={
+                            **meta,
+                            "status": "INTERRUPTED",
+                            "timed_out": bool(acp_raw.get("timed_out")),
+                            "cancelled": bool(acp_raw.get("cancelled")),
+                        },
+                    )
+                if not acp_raw.get("success"):
+                    raw_error = str(acp_raw.get("error") or acp_raw.get("stderr") or "Antigravity CLI failed")
+                    return AgentResult(
+                        success=False,
+                        output=str(acp_raw.get("output") or ""),
+                        error=summarize_antigravity_error(raw_error, acp_raw.get("returncode"), model=mid),
+                        usage=usage,
+                        session_id=sid,
+                        model=mid,
+                        meta={**meta, "status": "ERROR"},
+                    )
+                return AgentResult(
+                    success=True,
+                    output=str(acp_raw.get("output") or "Done."),
+                    usage=usage,
+                    session_id=sid,
+                    model=mid,
+                    meta={**meta, "status": "SUCCESS"},
+                )
 
         cmd = [
             exe, "-p", "",
