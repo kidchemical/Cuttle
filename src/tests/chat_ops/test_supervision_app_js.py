@@ -39,7 +39,7 @@ assert.deepEqual(d.system, { processes: true, memory: false, display: false });
 assert.deepEqual(S.dialogDefaults({ handle: 'CH-000007' }).system, { processes: true, memory: false, display: false });
 
 // Defaults form.
-const builtin = { every: 900, agent: '', involve_user: 'blocked', nudge: 'agent',
+const builtin = { every: 900, involve_user: 'blocked', nudge: 'agent',
                   system: { processes: true, memory: false, display: false }, paused_alert_hours: 6 };
 assert.deepEqual(A.fields(null, builtin), builtin);
 assert.equal(A.fields({ every: 42 }, builtin).every, 900);
@@ -57,7 +57,7 @@ let r = A.row({ id: 'a', state: 'pending', target: 'CH-000002', target_id: 2, ta
     supervisor: 'CH-000001', supervisor_id: 1, supervisor_name: 'Supervisor', agent: 'claude', every: 900,
     next_check: 900, system: { processes: true, display: true },
     last_seen: { state: 'busy', display_off: 'locked' }, violations: ['x'] }, now);
-assert.equal(r.title, 'Game <opt>'); assert.equal(r.by, 'Supervisor · claude');
+assert.equal(r.title, 'Game <opt>'); assert.equal(r.by, 'Supervisor');
 assert.equal(r.status, 'Chat working · checking…'); assert.equal(r.every, 'every 15m');
 assert.deepEqual(r.care, ['processes', 'display']);
 assert.deepEqual(r.alerts, ['1 rule violation', 'display is off']);

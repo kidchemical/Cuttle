@@ -115,8 +115,7 @@ def test_model_view_rows_and_payload():
     assert chip["title"] == "Supervising CH-000002"
     d = chip["details"]
     assert d["status"].startswith("Next check ") and d["status"].endswith(" · every 15m") and d["hint"] == ""
-    assert d["facts"] == [{"label": "Check-ins", "value": "/cursor"},
-                          {"label": "Branch rules", "value": "stay on dev/x · never main"},
+    assert d["facts"] == [{"label": "Branch rules", "value": "stay on dev/x · never main"},
                           {"label": "Last seen", "value": "working · 2/5 tasks done"}]
     assert chip["rules"] == "stay on dev/x · never main" and chip["tasks"] == "2/5 tasks done"
     assert [h["text"] for h in chip["history"]] == [
@@ -137,7 +136,7 @@ def test_model_view_rows_and_payload():
     assert r["pauseChoices"] == ["1h", "4h", "tomorrow", "indefinite"]
     assert r["pins"] == {"models": [{"id": "a", "label": "a"}, {"id": "b", "label": "B"}], "efforts": ["x", "y"]}
     assert r["noPins"] == {"models": [], "efforts": []}
-    assert r["picked"]["model"] == "b" and r["picked"]["effort"] == "x"
+    assert "model" not in r["picked"] and "effort" not in r["picked"] and "agent" not in r["picked"]
     assert r["picked"]["task_ids"] == ["proj"]  # unknown ids dropped
     assert "task_ids" not in r["good"]["body"]  # no lists offered: follow whatever appears
     e = r["edit"]
@@ -156,7 +155,7 @@ def test_model_view_rows_and_payload():
     assert r["queued"]["preview"] == "next step"
     assert r["warn"] is True and r["empty"] is False and r["emptyView"]["empty"] is True
     assert r["due"] == "checking…"
-    assert r["bad"]["ok"] is False and len(r["bad"]["errors"]) == 3  # Focus is optional
+    assert r["bad"]["ok"] is False and len(r["bad"]["errors"]) == 2  # Focus and agent are optional
     # Settings, not prose: policy fields default, round-trip, and reach the body.
     pol = r["policy"]
     assert pol["instructions"] == "" and pol["involveUser"] == "blocked" and pol["nudge"] == "agent"
@@ -171,7 +170,7 @@ def test_model_view_rows_and_payload():
     assert r["picker"][2]["searchable"] is False
     assert r["branchOpts"] == ["dev", "main", "gone"]
     body = r["good"]["body"]
-    assert r["good"]["ok"] and body["agent"] == "codex" and body["every"] == 900
+    assert r["good"]["ok"] and "agent" not in body and body["every"] == 900
     assert body["required_branch"] == "dev/x" and body["forbidden_branches"] == ["main", "master"]
     assert body["model_tiers"] == {"worker": ["cursor auto", "codex terra"]}
 
@@ -408,15 +407,14 @@ def test_menu_opens_dialog_and_posts_supervise(browser, static_server):
         expect(focus).not_to_be_editable()
         form.locator("[data-sup-focus-edit]").click()
         focus.fill("Animation first.")
-        form.get_by_role('button', name='Supervisor agent', exact=True).click()
-        frame.get_by_role('option', name='Codex', exact=True).click()
+        assert form.locator("[name=agent]").count() == 0
         form.get_by_role('button', name='Check every', exact=True).click()
         frame.get_by_role('option', name='10m', exact=True).click()
         form.locator("[type=submit]").click()
         expect(form).to_have_count(0)
         path, body = world.posts[-1]
         assert path == "/api/chat-ops/supervise"
-        assert body["target"] == "CH-000042" and body["agent"] == "codex" and body["every"] == 600
+        assert body["target"] == "CH-000042" and "agent" not in body and body["every"] == 600
         assert body["forbidden_branches"] == ["main", "feature"] and body["required_branch"] == "dev/x"
         assert body["task_ids"] == ["t0", "t4"] and body["instructions"] == "Animation first."
         assert body["involve_user"] == "blocked" and body["nudge"] == "agent"

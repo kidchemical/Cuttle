@@ -129,8 +129,9 @@ def test_defaults_save_discard_reset_and_rejected_save(page_ctx, static_server):
     form.locator('[name=paused_alert_hours]').fill('2')
     page.click('#supSave')
     page.wait_for_function("document.getElementById('supSavebar').hidden")
-    assert _puts(api)[-1] == {**BUILTIN, 'paused_alert_hours': 2,
-                             'system': {'processes': True, 'memory': False, 'display': True}}
+    expected = {k: v for k, v in BUILTIN.items() if k != 'agent'}
+    assert _puts(api)[-1] == {**expected, 'paused_alert_hours': 2,
+                              'system': {'processes': True, 'memory': False, 'display': True}}
     # An invalid value never leaves the page; a server refusal is shown, not swallowed.
     form.locator('[name=paused_alert_hours]').fill('')
     page.click('#supSave')

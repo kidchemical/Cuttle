@@ -148,7 +148,6 @@
                 : 'No check-ins or wake-ups until then.')
             : '';
         const facts = [];
-        if (side === 'chip') facts.push({ label: 'Check-ins', value: pinText(s) });
         const wakes = wakesText(s.checkpoints);
         if (wakes) facts.push({ label: 'Also wakes on', value: wakes });
         const rules = rulesText(s);
@@ -470,7 +469,6 @@
         const every = Number(f.every);
         const errors = [];
         if (!f.target) errors.push('No chat to supervise.');
-        if (!f.agent) errors.push('Pick an agent for the supervisor.');
         if (INTERVALS.indexOf(every) < 0) errors.push('Pick a check interval.');
         if (String(f.instructions || '').trim().length > 2000) errors.push('Focus is limited to 2000 characters.');
         const forbidden = splitList(f.forbidden);
@@ -488,9 +486,6 @@
             body: {
                 schema_version: SCHEMA_VERSION,
                 target: f.target,
-                agent: f.agent,
-                model: String(f.model || '').trim(),
-                effort: String(f.effort || '').trim(),
                 every,
                 instructions: String(f.instructions || '').trim(),
                 involve_user: f.involveUser || 'blocked',

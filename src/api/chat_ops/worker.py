@@ -203,9 +203,9 @@ def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None, chang
     """The check-in turn as markdown: it renders as a readable Cuttle bubble in the
     supervisor chat and reads as a brief to the agent. Full data: `status --json`."""
     handle = snap['handle']
-    # A UI-made supervisor chat has no history to pin its agent; the prefix does.
-    lines = [(f"/{cfg['agent']} " if cfg.get('agent') else '')
-             + f"**Supervision check-in for {handle}**: {_STATE_TEXT.get(snap['state'], snap['state'])}."]
+    # Check-ins never force a schedule-stored agent: dispatch pins them to the
+    # supervisor chat's own current agent via service.pin_to_chat_agent.
+    lines = [f"**Supervision check-in for {handle}**: {_STATE_TEXT.get(snap['state'], snap['state'])}."]
     where = [f"branch `{snap['branch']}`" if snap.get('branch') else '',
              f"checkout `{snap['execution_path']}`" if snap.get('execution_path') else '']
     if any(where):
@@ -481,7 +481,7 @@ def _incident_supervisor(profile_id, db, row, cfg, snap, violations, checkpoint=
     if row.get('project_path'):
         db.set_session_project(chat, uid, project_id=row.get('project_id'),
                                project_name=row.get('project_name'), project_path=row.get('project_path'))
-    text = checkin_text({**cfg, 'agent': agent}, snap, violations, checkpoint=checkpoint)
+    text = f'/{agent} ' + checkin_text(cfg, snap, violations, checkpoint=checkpoint)
     payload = {'text': text}
     if model or effort:
         payload['agent_pins'] = {agent: {'model': model, 'effort': effort}}

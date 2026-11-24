@@ -490,25 +490,20 @@ def cmd_hook(args: argparse.Namespace) -> int:
 _OPERATION_VERBS = ('operations', 'operation', 'cancel-operation', 'pause-operation', 'resume-operation',
                     'edit-operation')
 _SUPERVISE_EPILOG = """\
-Supervisor model / effort / harness:
-  A new schedule's check-ins run on the acting (supervisor) chat's own agent;
-  `supervise --agent` picks another harness. To change the model, effort,
-  harness or interval of an existing schedule (yours or one you were asked to
-  fix), edit it in place; never ask the user to do it in the dialog:
+Editing a supervision schedule:
+  Check-ins always run on the supervisor chat's own current agent (never
+  overridden by the schedule). To change the interval or worker rules of an
+  existing schedule, edit it in place; never ask the user to do it in the dialog:
 
     python -m api.chat_cli operations --as CH-…            # find the schedule id
-    python -m api.chat_cli edit-operation ID --model opus --effort high --as CH-…
-
-  --model '' / --effort '' go back to the CLI default; --agent without --model
-  drops the old harness's model. Model names are validated against the
-  harness catalog; on a rejection, read the error and pick a listed model.
+    python -m api.chat_cli edit-operation ID --every 3600 --as CH-…
 """
 
 _CHAT_OP_VERBS = ('send', 'status', 'snapshot', 'stop', 'supervise', 'context', 'compact', 'timeline') + _OPERATION_VERBS
 
 
 FOCUS_NOTICE = ('Note: --instructions sets the Focus note, the user’s own free text in the Supervise dialog. '
-                'Settings are flags (--every, --agent/--model/--effort, --require-branch/--forbid-branch, '
+                'Settings are flags (--every, --require-branch/--forbid-branch, '
                 '--involve, --nudge, --system, --checkpoints, --model-tiers) and always win over Focus; set Focus only '
                 'with job-specific notes the user asked for.')
 
@@ -544,7 +539,7 @@ def cmd_operation(args: argparse.Namespace) -> int:
                 if not store.get(args.id, actor):
                     raise SystemExit(f'Operation {args.id} not found for this chat')
                 changes = {k: v for k, v in {
-                    'every': args.every, 'agent': args.agent, 'model': args.model, 'effort': args.effort,
+                    'every': args.every,
                     'instructions': args.instructions, 'required_branch': args.require_branch,
                     'required_path': args.require_path, 'forbidden_branches': args.forbid_branch,
                     'model_tiers': json.loads(args.model_tiers) if args.model_tiers is not None else None,
@@ -555,7 +550,8 @@ def cmd_operation(args: argparse.Namespace) -> int:
                     changes['task_ids'] = [t for t in args.tasks.split(',') if t.strip()]
                 if args.all_tasks:
                     changes['task_ids'] = None
-                result = service.update_supervision(args.id, int(acting['user_id']), changes, db=db)
+                result = service.update_supervision(args.id, int(acting['user_id']), changes,
+                                                    source='the supervisor', db=db)
                 op, payload_extra = result['operation'], {'updated': result['updated'],
                                                           'warnings': result.get('warnings') or []}
             elif verb == 'cancel-operation':
@@ -785,9 +781,6 @@ def build_parser() -> argparse.ArgumentParser:
             op.add_argument('--usage', action='append', default=[], help='Include plan usage for this agent (repeatable)')
         if verb == 'edit-operation':
             op.add_argument('--every', type=int, default=None, help='Seconds between checks, minimum 60')
-            op.add_argument('--agent', default=None, help='Supervisor harness (re-pins the supervisor chat)')
-            op.add_argument('--model', default=None, help="Supervisor model ('' = CLI default)")
-            op.add_argument('--effort', default=None, help="Supervisor effort ('' = CLI default)")
             op.add_argument('--instructions', default=None,
                             help="Focus: the user's job-specific notes ('' clears). Settings have their own flags")
             op.add_argument('--involve', choices=('never', 'blocked', 'questions'), default=None,

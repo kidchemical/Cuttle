@@ -1806,7 +1806,7 @@ class AuthDatabase:
                 cursor.execute(
                     'UPDATE chat_sessions SET composer_selection = ?, '
                     'composer_revision = composer_revision + 1 WHERE id = ?',
-                    (json.dumps(selection), chat_session_id),
+                    (json.dumps({**selection, 'after_message_id': int(message_id or 0)}), chat_session_id),
                 )
         from api.chat_attention import refresh
         refresh(conn, chat_session_id)
@@ -1914,18 +1914,23 @@ class AuthDatabase:
         selection = normalize_selection(value)
         conn = self._get_connection()
         try:
+            max_row = conn.execute(
+                'SELECT COALESCE(MAX(id), 0) AS max_id FROM chat_messages WHERE chat_session_id = ?',
+                (session_id,),
+            ).fetchone()
+            stored = {**selection, 'after_message_id': int(max_row['max_id'] or 0) if max_row else 0}
             row = conn.execute(
                 'UPDATE chat_sessions SET composer_selection = ?, '
                 'composer_revision = composer_revision + 1 '
                 'WHERE id = ? AND user_id = ? AND is_active = 1 '
                 'RETURNING composer_revision',
-                (json.dumps(selection), session_id, user_id),
+                (json.dumps(stored), session_id, user_id),
             ).fetchone()
             conn.commit()
             if row:
                 from api.chat_live_status import notify_changed
                 notify_changed()
-            return {**selection, 'revision': row['composer_revision']} if row else None
+            return {**stored, 'revision': row['composer_revision']} if row else None
         finally:
             conn.close()
 

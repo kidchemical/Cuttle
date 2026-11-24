@@ -457,12 +457,8 @@
             const sid = numericSession(sessionId);
             if (!enabled || !sid) return;
             let defaults;
-            let agents;
             try {
-                [defaults, agents] = await Promise.all([
-                    call('GET', '/api/chat-ops/sessions/' + sid + '/defaults'),
-                    host.fetch('/api/agents', { credentials: 'include' }).then((r) => r.json()),
-                ]);
+                defaults = await call('GET', '/api/chat-ops/sessions/' + sid + '/defaults');
             } catch (e) {
                 host.toast(String(e.message || e), 'error');
                 return;
@@ -494,7 +490,6 @@
                     + '" aria-label="What happens">'
                     + doOptions(f.do) + '</select></div></div>';
             };
-            const list = ((agents && agents.agents) || []).filter((a) => a && a.id && a.sticky !== false);
             const wrap = doc.createElement('div');
             wrap.className = 'chat-supervision-dialog-backdrop';
             wrap.innerHTML = '<form class="auth-modal chat-supervision-dialog" role="dialog" aria-modal="true" aria-label="'
@@ -502,17 +497,12 @@
                 + '<header class="chat-supervision-dialog-header"><button type="button" class="auth-modal-close" data-sup-dismiss aria-label="Close">×</button>'
                 + '<h3>' + (editing ? 'Edit supervision of ' : 'Supervise ') + esc(d.target) + '</h3>'
                 + (editing ? '<p class="chat-supervision-meta">Changes apply to the running schedule (a paused one stays'
-                    + ' paused). The supervisor gets one check-in saying what changed.</p>'
+                    + ' paused). Check-ins always use the supervisor chat’s current agent.</p>'
                     : (d.playbookName ? '<p class="chat-supervision-meta">Defaults from playbook <strong>' + esc(d.playbookName)
                         + '</strong>, which this chat runs.</p>' : '')
                     + '<p class="chat-supervision-meta">Creates a supervisor chat. The host checks ' + esc(d.target)
                 + ' on the interval and wakes the supervisor only when this chat stops, errors, needs input,'
                 + ' makes progress, or breaks a branch rule.</p>') + '</header><div class="chat-supervision-dialog-body"><div class="chat-supervision-fields">'
-                + '<label>Supervisor agent<select name="agent">' + list.map((a) => '<option value="' + esc(a.id) + '"'
-                    + (a.id === (d.agent || 'cursor') ? ' selected' : '') + '>' + esc(a.label || a.id) + '</option>').join('')
-                + '</select></label>'
-                + '<label>Model<select name="model"></select></label>'
-                + '<label>Effort<select name="effort"></select></label>'
                 + '<label>Check every<select name="every">' + M.INTERVALS.map((s) => '<option value="' + s + '"'
                     + (s === d.every ? ' selected' : '') + '>' + M.fmtInterval(s) + '</option>').join('') + '</select></label>'
                 + '<label>Involve me<select name="involveUser">' + choiceOptions(M.INVOLVE_CHOICES, d.involveUser) + '</select></label>'
@@ -569,21 +559,6 @@
                 wrap.remove();
                 if (returnFocus && returnFocus.isConnected) returnFocus.focus({ preventScroll: true });
             };
-            const rowFor = (id) => list.find((a) => a.id === id) || null;
-            const fillSelect = (sel, items, keep) => {
-                sel.innerHTML = '<option value="">CLI default</option>' + items.map((it) => '<option value="'
-                    + esc(it.id) + '"' + (it.id === keep ? ' selected' : '') + '>' + esc(it.label) + '</option>').join('');
-                sel.closest('label').hidden = !items.length;
-            };
-            const fillEffort = () => {
-                const choices = M.pinChoices(rowFor(form.agent.value), form.model.value);
-                fillSelect(form.effort, choices.efforts.map((e) => ({ id: e, label: e })), form.effort.value);
-            };
-            const fillPins = () => {
-                const row = rowFor(form.agent.value);
-                fillSelect(form.model, M.pinChoices(row, '').models, form.agent.value === d.agent ? d.model : '');
-                fillEffort();
-            };
             // Never-touch branches: picked from the repo's branches, shown as removable chips.
             const forbidden = (d.forbidden || []).slice();
             const chipsBox = form.querySelector('[data-sup-forbid]');
@@ -623,16 +598,12 @@
                 form.instructions.readOnly = false;
                 form.instructions.focus();
             });
-            form.agent.addEventListener('change', fillPins);
-            form.model.addEventListener('change', fillEffort);
-            fillPins();
-            if (d.effort && form.agent.value === d.agent) { form.effort.value = d.effort; }
             form.querySelectorAll('select').forEach((select) => {
                 select.classList.add('chip-config-select');
                 if (root.CuttleSearchableSelect) combos.push(root.CuttleSearchableSelect.enhance(select, {
                     label: (select.closest('label') ? select.closest('label').firstChild.textContent : '')
                         || select.getAttribute('aria-label') || '',
-                    floating: true, searchable: ['agent', 'model', 'requiredBranch', 'forbiddenAdd'].indexOf(select.name) >= 0,
+                    floating: true, searchable: ['requiredBranch', 'forbiddenAdd'].indexOf(select.name) >= 0,
                 }));
             });
             // Capture phase: a closed dropdown's trigger stops Escape from bubbling, so the
@@ -656,7 +627,7 @@
                 ev.preventDefault();
                 const fd = new root.FormData(form);
                 const payload = M.supervisePayload(Object.assign({}, d, {
-                    agent: fd.get('agent'), model: fd.get('model'), effort: fd.get('effort'), every: Number(fd.get('every')), instructions: fd.get('instructions'),
+                    every: Number(fd.get('every')), instructions: fd.get('instructions'),
                     requiredBranch: fd.get('requiredBranch'), forbidden: forbidden.slice(),
                     involveUser: fd.get('involveUser'), nudge: fd.get('nudge'),
                     system: Object.fromEntries(M.SYSTEM_CARE.map((c) => [c.id, fd.get('sys_' + c.id) != null])),

@@ -23,7 +23,6 @@
         const every = Number(d.every);
         return {
             every: S.INTERVALS.indexOf(every) >= 0 ? every : (Number(b.every) || 900),
-            agent: String(d.agent || ''),
             involve_user: d.involve_user || b.involve_user || 'blocked',
             nudge: d.nudge || b.nudge || 'agent',
             system: S.systemFields(d.system || b.system || null),
@@ -43,7 +42,7 @@
         return {
             ok: !errors.length, errors,
             body: {
-                every, agent: String(f.agent || ''), involve_user: f.involve_user, nudge: f.nudge,
+                every, involve_user: f.involve_user, nudge: f.nudge,
                 system: S.systemFields(f.system), paused_alert_hours: hours,
             },
         };
@@ -72,7 +71,7 @@
             targetId: s.target_id, supervisorId: s.supervisor_id,
             title: s.target_name || s.target,
             handle: s.target,
-            by: (s.supervisor_name || s.supervisor) + (s.agent ? ' · ' + s.agent : ''),
+            by: s.supervisor_name || s.supervisor,
             project: s.project_name || '',
             status: paused ? S.pausedText(s, now, opts)
                 : [SEEN[seen] ? 'Chat ' + SEEN[seen] : 'First check pending', S.nextLabel(s, now, opts)].filter(Boolean).join(' · '),

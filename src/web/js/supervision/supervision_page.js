@@ -22,7 +22,7 @@
     const stateEl = $('supSaveState');
     const POLL_MS = 8000;
 
-    const state = { rows: [], display: null, saved: null, builtin: null, agents: [], pauseFor: '', busy: false };
+    const state = { rows: [], display: null, saved: null, builtin: null, pauseFor: '', busy: false };
     let pollTimer = null;
 
     function toast(message, kind) {
@@ -142,9 +142,6 @@
     function fillForm(defaults) {
         const f = A.fields(defaults, state.builtin);
         form.every.innerHTML = S.INTERVALS.map((s) => `<option value="${s}"${s === f.every ? ' selected' : ''}>${A.esc(S.fmtInterval(s))}</option>`).join('');
-        const agents = state.agents.slice();
-        if (f.agent && !agents.some((a) => a.id === f.agent)) agents.push({ id: f.agent, label: f.agent + ' (not installed)' });
-        form.agent.innerHTML = '<option value="">No preference</option>' + options(agents.map((a) => ({ id: a.id, label: a.label || a.id })), f.agent);
         form.involve_user.innerHTML = options(S.INVOLVE_CHOICES, f.involve_user);
         form.nudge.innerHTML = options(S.NUDGE_CHOICES, f.nudge);
         $('supCare').innerHTML = S.SYSTEM_CARE.map((c) => `<label class="sup-care"><span class="sup-care-text"><strong>${A.esc(c.label)}</strong><small>${A.esc(c.hint)}</small></span>
@@ -158,7 +155,7 @@
     function readForm() {
         const fd = new FormData(form);
         return {
-            every: Number(fd.get('every')), agent: fd.get('agent') || '', involve_user: fd.get('involve_user'),
+            every: Number(fd.get('every')), involve_user: fd.get('involve_user'),
             nudge: fd.get('nudge'), paused_alert_hours: fd.get('paused_alert_hours'),
             system: Object.fromEntries(S.SYSTEM_CARE.map((c) => [c.id, fd.get('sys_' + c.id) != null])),
         };
@@ -203,14 +200,12 @@
 
     async function load() {
         try {
-            const [defaults, agents] = await Promise.all([
+            const [defaults] = await Promise.all([
                 call('/api/chat-ops/defaults'),
-                call('/api/agents').catch(() => ({ agents: [] })),
                 loadList(false),
             ]);
             state.saved = defaults.defaults;
             state.builtin = defaults.builtin;
-            state.agents = ((agents && agents.agents) || []).filter((a) => a && a.id && a.sticky !== false);
             fillForm(state.saved);
             notice.hidden = true;
             content.hidden = false;
