@@ -2780,9 +2780,7 @@ def _resolve_auth_chat_session(chat_session_id):
 
         _db_sid = _parse_auth_db_session_id(chat_session_id)
         if _db_sid is not None:
-            chat_session = db.get_chat_session(_db_sid, user['id'])
-            if chat_session:
-                return user, _db_sid, False
+            db.get_chat_session(_db_sid, user['id'])  # revives an owned chat deleted while empty
             return user, _db_sid, False
         return user, chat_session_id, False
     except Exception as e:
@@ -3597,6 +3595,8 @@ def chat_endpoint():
             except Exception as _pin_err:
                 print(f"[CHAT] apply agent_pins failed: {_pin_err}", flush=True)
         if _auth_user and _created_new_session:
+            from api.exec_nodes.service import bind_new_chat
+            bind_new_chat(chat_session_id, data, owner=is_owner_user(_auth_user))
             try:
                 _preview = ' '.join((message_content or '').split())
                 if _preview:

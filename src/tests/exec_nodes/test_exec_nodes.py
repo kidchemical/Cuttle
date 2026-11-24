@@ -233,6 +233,24 @@ def test_binding_and_node_switch_resets_the_agents_context_once(mesh, monkeypatc
     assert len(moved) == 2 and service.binding(41)["node_id"] == "host"
 
 
+def test_new_chat_is_bound_by_its_first_message(mesh):
+    pick = {"exec_node": {"node_id": NODE, "cwd": " C:\\work "}}
+    service.bind_new_chat(51, pick, owner=False)
+    service.bind_new_chat(51, {"exec_node": {"node_id": "host"}}, owner=True)
+    service.bind_new_chat(51, {"message": "hi"}, owner=True)
+    assert store.get_chat_node(51) is None
+    service.bind_new_chat(51, pick, owner=True)
+    got = service.binding(51)
+    assert (got["node_id"], got["cwd"]) == (NODE, "C:\\work")
+    assert isinstance(service.adapter_for_turn(MANIFEST, _FakeAdapter(), 51), remote.RemoteAdapter)
+    # Unpaired since the pick: kept, so the turn refuses instead of running on the host.
+    service.bind_new_chat(52, {"exec_node": {"node_id": "ghost"}}, owner=True)
+    assert service.binding(52)["node"]["state"] == "unavailable"
+    flags.set_enabled("exec_nodes", False)
+    service.bind_new_chat(53, pick, owner=True)
+    assert store.get_chat_node(53) is None
+
+
 def test_resume_ids_are_kept_per_node(mesh):
     here = remote.RemoteAdapter(_FakeAdapter(), MANIFEST, NODE)
     there = remote.RemoteAdapter(_FakeAdapter(), MANIFEST, "tower")
@@ -446,6 +464,9 @@ def test_chat_chip_model_and_page_wiring():
     assert 'id="chatExecNodeSlot"' in page
     root = (web / "js" / "chat" / "chat_page.js").read_text(encoding="utf-8")
     assert "CuttleChatExecNode.create(" in root and "execNode.setSession(sessionId)" in root
+    assert "execNode.attachToRequest(requestBody)" in root
+    api = (web.parent / "api" / "web_chat_api.py").read_text(encoding="utf-8")
+    assert "bind_new_chat(chat_session_id, data, owner=is_owner_user(_auth_user))" in api
     if not shutil.which("node"):
         pytest.skip("node not installed")
     script = r"""
@@ -477,6 +498,8 @@ assert.deepStrictEqual(M.plan({ node_id: 'laptop', cwd: 'C:\\w' }, { nodeId: 'la
 assert.deepStrictEqual(M.plan({ node_id: 'laptop', cwd: 'C:\\w' }, { nodeId: 'host', cwd: 'C:\\w' }),
   { kind: 'save', body: { node_id: 'host', cwd: '' } });
 assert.deepStrictEqual(M.plan(null, { nodeId: 'laptop', cwd: '' }), { kind: 'save', body: { node_id: 'laptop', cwd: '' } });
+assert.deepStrictEqual(M.draft([host, lap], 'laptop', ' C:\\w '), { node_id: 'laptop', cwd: 'C:\\w', node: lap });
+assert.deepStrictEqual(M.draft([host, lap], '', 'C:\\w'), { node_id: 'host', cwd: '', node: host });
 """ % json.dumps(str(web / "js" / "chat" / "chat_exec_node_model.js"))
     done = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=60)
     assert done.returncode == 0, done.stderr

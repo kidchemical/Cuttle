@@ -23,6 +23,7 @@ class NodeWorld(CardWorld):
         self.flag = flag
         self.binding = {"node_id": "host", "cwd": "", "node": HOST}
         self.calls = []
+        self.sent = []
 
     def handle(self, route):
         req = route.request
@@ -39,6 +40,13 @@ class NodeWorld(CardWorld):
                 self.binding = {"node_id": node["id"], "cwd": body.get("cwd", ""), "node": node}
                 return reply({"success": True, "binding": self.binding})
             return reply({"success": True, "binding": self.binding, "nodes": [HOST, LAPTOP, TOWER]})
+        if path == "/api/workers/exec/nodes":
+            return reply({"success": True, "nodes": [HOST, LAPTOP, TOWER]})
+        if req.method == "POST" and path == "/api/chat":
+            pick = json.loads(req.post_data or "{}").get("exec_node")
+            self.sent.append(pick)
+            if pick:  # the server binds the chat it mints
+                self.binding = {"node_id": pick["node_id"], "cwd": pick["cwd"], "node": LAPTOP}
         return super().handle(route)
 
 
@@ -108,6 +116,58 @@ def test_pick_a_node_for_the_chat(browser, static_server):
         menu_button.click()
         menu_item.click()
         expect(form.locator("[name=nodeId]")).to_have_value("host")
+        assert not errors, errors
+    finally:
+        page.context.close()
+
+
+def test_pick_a_node_before_the_first_message(browser, static_server):
+    from playwright.sync_api import expect
+    world = NodeWorld()
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    try:
+        frame.locator(".new-chat-corner-button").click()
+        title = frame.locator("#chatSessionTitle")
+        expect(title).to_be_hidden()
+        chip = frame.locator("#chatExecNodeSlot [data-exec-node-open]")
+        frame.get_by_role("button", name="Chat menu", exact=True).click()
+        frame.get_by_role("menuitem", name="Execution node…").click()
+        form = frame.locator(".chat-supervision-dialog")
+        expect(form.locator("h3")).to_have_text("Execution node of the new chat")
+        expect(form.locator("[name=nodeId]")).to_have_value("host")
+        form.get_by_role("button", name="Execution node", exact=True).click()
+        frame.get_by_role("option", name="KCsLaptop — Windows · online", exact=True).click()
+        form.locator("[name=cwd]").fill("C:\\work")
+        form.locator("[type=submit]").click()
+        expect(form).to_have_count(0)
+        expect(chip).to_have_text("KCsLaptop")
+        shot = os.environ.get("CUTTLE_E2E_SHOT_DIR")
+        if shot:
+            page.screenshot(path=os.path.join(shot, "exec_node_new_chat.png"))
+        assert world.calls == []  # nothing to PUT to before the chat exists
+
+        # The chip reopens the pick; it is still the new chat's.
+        chip.click()
+        expect(form.locator("[name=nodeId]")).to_have_value("kcslaptop")
+        expect(form.locator("[name=cwd]")).to_have_value("C:\\work")
+        form.get_by_role("button", name="Cancel").click()
+
+        frame.locator("#welcomeChatInput").fill("hello from a new chat")
+        frame.locator("#welcomeSendButton").click()
+        frame.locator("#chatMessages .message.assistant").last.wait_for(state="visible")
+        assert world.sent == [{"node_id": "kcslaptop", "cwd": "C:\\work"}]
+        expect(chip).to_have_text("KCsLaptop")
+        expect(frame.locator("#chatSessionTitleText")).not_to_be_empty()
+
+        # A later message of the same chat sends no pick.
+        frame.locator("#chatInput").fill("again")
+        frame.locator("#sendButton").click()
+        expect(frame.locator("#chatMessages .message.user")).to_have_count(3)
+        assert world.sent[1:] == [None]
+
+        # Leaving the new chat drops an unsent pick.
+        frame.locator(".new-chat-corner-button").click()
+        expect(title).to_be_hidden()
         assert not errors, errors
     finally:
         page.context.close()

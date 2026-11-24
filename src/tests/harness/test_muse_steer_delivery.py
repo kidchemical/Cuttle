@@ -170,6 +170,20 @@ def test_history_echo_cannot_confirm_a_future_identical_send():
     assert delivery.undelivered == ["potato"]
 
 
+def test_completed_request_claims_its_echo_not_an_identical_siblings():
+    from api.agent_harness.steer_delivery import SteerDelivery
+
+    delivery = SteerDelivery()
+    first, second = delivery.begin("potato"), delivery.begin("potato")
+    for receipt in (first, second):
+        delivery.acknowledge(receipt, succeeded=True)
+    assert delivery.receive("potato") == []  # one echo, two candidates: ambiguous
+    assert delivery.confirm(first) is True
+    assert delivery.confirm(first) is False
+    assert delivery.received_count == 1
+    assert delivery.undelivered == ["potato"]
+
+
 def test_muse_adapter_preserves_unconfirmed_delivery_metadata(tmp_path, monkeypatch):
     from unittest.mock import AsyncMock
     from api.agent_harness.agents.muse.adapter import build_adapter

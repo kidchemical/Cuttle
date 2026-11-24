@@ -87,6 +87,9 @@ Nothing is stored on the node except what the vendor CLI keeps for itself.
 ## Safety
 
 - A switch is read when a turn starts. It never interrupts a running turn.
+- A new chat has no id until its first message, so a pick made before it rides
+  that message (`exec_node` in the `/api/chat` body) and `service.bind_new_chat`
+  stores it as the chat is minted, ahead of the turn. Owner-only, like the PUT.
 - Node offline, agent execution off there, or CLI missing: the turn does not run
   and the reply says why.
 - Node never claims (busy or gone): the host cancels the job after 90 s.
@@ -151,7 +154,7 @@ PYTHONPATH=src .venv/bin/python -m api.exec_nodes node kcslaptop \
 ## Removal
 
 Delete the `exec_nodes` flag row, `.cuttle_global/features/exec_nodes/`, `src/api/exec_nodes/`, the `adapter_for_turn`
-call in `agent_harness/kernel.py`, the `agent_turn` branches in
+call in `agent_harness/kernel.py`, the `bind_new_chat` call in `web_chat_api.py`, the `agent_turn` branches in
 `device_workers` (`executor`, `worker_loop`, `capabilities`, `config`,
 `job_policy`, `client`, the nested blueprint in `routes`), `ChildSpec.node`,
 `handoff.mark_workspace_moved`, the two `chat_exec_node*.js` files with their

@@ -1,7 +1,8 @@
 """Turn-local follow-up receipts, independent of transport and vendor events.
 
 The runner calls this owner only on its event loop. An RPC acknowledgment
-means accepted; a matching user-item echo means received. Neither proves the
+means accepted; a matching user-item echo — or, where each send is its own
+request, that request's normal completion (``confirm``) — means received. Neither proves the
 model addressed the request. Repeated text is tracked per send, not as a set.
 
 This is the **one** echo matcher per run: both the runner's own
@@ -90,6 +91,27 @@ class SteerDelivery:
             # One candidate fewer: a held echo may now be unambiguous.
             self._resolve(receipt.text.strip())
         return receipt.accepted
+
+    def confirm(self, receipt: SteerReceipt) -> bool:
+        """The vendor finished this send's own request: it was read. True when newly confirmed.
+
+        For transports where each send is its own request (an ACP mid-turn
+        ``session/prompt``) a normal completion is the receipt; ``agy acp`` never
+        echoes live user input. A held echo in scope is consumed as this send's
+        own, so it cannot later confirm an identical sibling.
+        """
+        if receipt.received:
+            return False
+        key = receipt.text.strip()
+        for held in self._held:
+            if held["key"] == key and id(receipt) in held["scope"]:
+                self._held.remove(held)
+                break
+        receipt.received = True
+        receipt.accepted = True
+        receipt.rejected = False
+        self._notify([receipt])
+        return True
 
     # ── matching ───────────────────────────────────────────────────────────
     def _candidates(self, key: str) -> List[SteerReceipt]:

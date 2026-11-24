@@ -80,7 +80,14 @@
         return { kind: 'save', body: { node_id: nodeId, cwd } };
     }
 
-    const api = { chip, options, hint, cwdPlaceholder, plan, nodeName, stateLine };
+    /** A new chat's pick, shaped like a server binding (it is sent with the first message). */
+    function draft(nodes, nodeId, cwd) {
+        const id = String(nodeId || 'host');
+        const node = (nodes || []).find((n) => String(n.id) === id) || null;
+        return { node_id: id, cwd: node && !node.host ? String(cwd || '').trim() : '', node };
+    }
+
+    const api = { chip, options, hint, cwdPlaceholder, plan, draft, nodeName, stateLine };
     root.CuttleChatExecNodeModel = api;
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

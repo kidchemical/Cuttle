@@ -126,15 +126,16 @@ def _write_fake_acp_agy(tmp_path, conversations, *, mode: str = "normal"):
         "            emit({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': {\n"
         "                'sessionUpdate': 'tool_call_update', 'toolCallId': 'call_1', 'name': 'run_command',\n"
         "                'status': 'completed', 'rawOutput': 'READY'}}})\n"
-        "            if MODE != 'no_echo':\n"
+        "            if not MODE.startswith('no_echo'):\n"
         "                emit({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': {\n"
         "                    'sessionUpdate': 'user_message_chunk', 'content': {'type': 'text', 'text': text}}}})\n"
-        "            reply = 'READY MARIGOLD' if MODE != 'no_echo' else 'READY'\n"
+        "            reply = 'READY' if MODE == 'no_echo_cancelled' else 'READY MARIGOLD'\n"
+        "            stop = 'cancelled' if MODE == 'no_echo_cancelled' else 'end_turn'\n"
         "            emit({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': {\n"
         "                'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': reply}}}})\n"
         "            emit({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': {\n"
         "                'sessionUpdate': 'usage_update', 'used': 7500, 'size': 1048576}}})\n"
-        "            emit({'jsonrpc': '2.0', 'id': mid, 'result': {'stopReason': 'end_turn', 'usage': {\n"
+        "            emit({'jsonrpc': '2.0', 'id': mid, 'result': {'stopReason': stop, 'usage': {\n"
         "                'inputTokens': 1200, 'outputTokens': 30, 'cachedReadTokens': 3800,\n"
         "                'thoughtTokens': 15, 'totalTokens': 1230}}})\n"
         "            active_prompt_id = None\n",
@@ -250,32 +251,49 @@ def test_acp_mid_turn_steer_delivers_echo_and_accumulates_usage(agy_acp_env, tmp
     assert res.usage["context_tokens"] == 7500
 
 
-@pytest.mark.skipif(os.name == "nt", reason="fake CLI uses a shebang")
-def test_acp_undelivered_steer_adds_closing_notice(agy_acp_env, tmp_path, monkeypatch):
-    exe, _calls = _write_fake_acp_agy(tmp_path, agy_acp_env, mode="no_echo")
+def _run_with_one_steer(tmp_path, monkeypatch, conversations, mode, chat, text):
+    exe, _calls = _write_fake_acp_agy(tmp_path, conversations, mode=mode)
     monkeypatch.setattr(agy, "antigravity_executable", lambda: exe)
-    chat = "8803"
     steer_result = {}
 
     def _send_steer_once_live():
         deadline = time.monotonic() + 10.0
         while time.monotonic() < deadline:
             if steer.active_agent(chat) == "antigravity":
-                steer_result.update(steer.steer(chat, "unconfirmed follow-up"))
+                steer_result.update(steer.steer(chat, text))
                 return
             time.sleep(0.02)
 
     t = threading.Thread(target=_send_steer_once_live, daemon=True)
     t.start()
-
     res = asyncio.run(agy.Adapter().execute(
         "run sleep", cwd=str(tmp_path), resume=None, model=None,
         status_queue=queue.Queue(), chat_session_id=chat, timeout=15,
     ))
     t.join(timeout=5.0)
+    return steer_result, res
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fake CLI uses a shebang")
+def test_acp_steer_without_echo_is_confirmed_by_its_own_prompt_reply(agy_acp_env, tmp_path, monkeypatch):
+    # Real agy acp never echoes a live session/prompt (probed 2026-11-24).
+    steer_result, res = _run_with_one_steer(
+        tmp_path, monkeypatch, agy_acp_env, "no_echo", "8803", "Also include MARIGOLD")
 
     assert steer_result.get("steered") is True
     assert res.success is True
+    assert "READY MARIGOLD" in res.output
+    assert res.meta.get("steered") == 1
+    assert not res.meta.get("undelivered_steers")
+    assert "without confirming it read" not in res.output
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fake CLI uses a shebang")
+def test_acp_steer_prompt_cancelled_adds_closing_notice(agy_acp_env, tmp_path, monkeypatch):
+    steer_result, res = _run_with_one_steer(
+        tmp_path, monkeypatch, agy_acp_env, "no_echo_cancelled", "8805", "unconfirmed follow-up")
+
+    assert steer_result.get("steered") is True
     assert res.meta.get("undelivered_steers") == ["unconfirmed follow-up"]
     assert "without confirming it read" in res.output
 

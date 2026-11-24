@@ -215,7 +215,7 @@
         execNode.setSession(sessionId);
         composerLock.setSession(sessionId);
         if (sessionId == null || sessionId === '') {
-            wrap.hidden = true;
+            wrap.hidden = !execNode.draftNode();
             text.textContent = '';
             wrap.removeAttribute('title');
             updateChatSessionStarButton(null);
@@ -374,7 +374,7 @@
     const execNode = CuttleChatExecNode.create({
         doc: document, fetch: (u, o) => fetch(u, o), escapeHtml: escapeHtmlInline, enabledFlags: fetchEnabledExperimentalFlags,
         authSessionId: toAuthDbSessionId, isOwner: () => window.CuttleAuth?.getUser()?.role === 'owner',
-        closeMenus: () => closeAllSessionMenus(),
+        closeMenus: () => closeAllSessionMenus(), refreshHeader: () => updateChatSessionTitle(session.current()),
         agentId: () => contextGauge.stickyAgentId(), toast: (m, k) => (window.showToast || function () {})(m, k),
         setInterval: (f, ms) => window.setInterval(f, ms), clearInterval: (t) => window.clearInterval(t),
     });
@@ -3727,6 +3727,7 @@
      */
     function attachAgentIdentityToRequest(requestBody) {
         agentBilling.attachToRequest(requestBody);
+        execNode.attachToRequest(requestBody);
         return agentControls.attachAgentIdentityToRequest(requestBody);
     }
 

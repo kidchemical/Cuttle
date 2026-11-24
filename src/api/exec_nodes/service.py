@@ -119,6 +119,22 @@ def set_binding(session_id: Any, node_id: Any, cwd: str = "") -> Dict[str, Any]:
     return binding(sid)
 
 
+def bind_new_chat(session_id: Any, data: Any, *, owner: bool) -> None:
+    """Bind a chat the POST just minted to the node picked before it had an id.
+
+    The pick rides the first message (``exec_node`` in the chat body) because the
+    binding is read when that turn starts. A node that is no longer paired is
+    stored all the same: the turn then refuses and says so, never the host instead.
+    """
+    pick = data.get("exec_node") if isinstance(data, dict) else None
+    sid = session_number(session_id)
+    if not isinstance(pick, dict) or sid is None or not owner or not enabled():
+        return
+    nid = model.normalize_node_id(pick.get("node_id"))
+    if nid != model.HOST:
+        store.set_chat_node(sid, nid[:200], str(pick.get("cwd") or "").strip()[:1000])
+
+
 def set_node_prefs(node_id: str, *, label: Any = None, default_cwd: Any = None, paths: Any = None) -> Dict[str, Any]:
     nid = model.normalize_node_id(node_id)
     if nid == model.HOST or node(nid) is None:

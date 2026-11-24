@@ -3,7 +3,9 @@
    Owner: the remote-node header chip, chat menu item, and dialog
    (node, working directory on that node). The
    binding is host state: Save is a PUT, never an agent turn, and it
-   applies from the chat's next turn. Display decisions live in
+   applies from the chat's next turn. A new chat has no id yet: its
+   pick is held here and sent with the first message
+   (`attachToRequest`). Display decisions live in
    CuttleChatExecNodeModel; capabilities come in through `create(host)`.
    Hidden until the `exec_nodes` flag resolves on.
    ================================================================ */
@@ -19,6 +21,7 @@
         let enabled = false;
         let session = null;
         let binding = null;
+        let pending = null; // a new chat's pick, until its first message mints the chat
         let timer = null;
         let seq = 0;
 
@@ -26,6 +29,12 @@
         const numericSession = (sessionId) => {
             const sid = host.authSessionId(sessionId);
             return /^\d+$/.test(sid) ? sid : null;
+        };
+        const isDraft = (sessionId) => sessionId == null || sessionId === '';
+        const setPending = (next) => {
+            pending = next;
+            render();
+            if (typeof host.refreshHeader === 'function') host.refreshHeader();
         };
 
         async function call(method, path, body) {
@@ -55,7 +64,7 @@
         function render() {
             const el = slot();
             if (!el) return;
-            const c = enabled ? M.chip(binding) : null;
+            const c = enabled ? M.chip(isDraft(session) ? pending : binding) : null;
             if (!c) { el.hidden = true; el.innerHTML = ''; return; }
             el.innerHTML = '<button type="button" class="chat-supervision-pill is-exec-node'
                 + (c.warn ? ' is-warn' : ' is-active')
@@ -68,27 +77,29 @@
 
         function menuHtml(sessionId, icon) {
             const sid = numericSession(sessionId);
-            if (!enabled || !sid || !host.isOwner()) return '';
+            if (!enabled || !(sid || isDraft(sessionId)) || !host.isOwner()) return '';
             return '<button type="button" class="chat-chrome-menu-item" role="menuitem" aria-haspopup="dialog"'
-                + ' data-exec-node-menu="' + sid + '" title="Execution node…">' + (icon || '')
+                + ' data-exec-node-menu="' + (sid || '') + '" title="Execution node…">' + (icon || '')
                 + '<span class="chat-chrome-menu-item-label">Execution node…</span></button>';
         }
 
         async function openDialog(sessionId = session) {
             const sid = numericSession(sessionId);
-            if (!enabled || !sid) return;
+            const draft = isDraft(sessionId);
+            if (!enabled || !(sid || draft)) return;
             let data;
             try {
                 const agent = typeof host.agentId === 'function' ? String(host.agentId() || '') : '';
-                data = await call('GET', '/api/workers/exec/chats/' + sid + (agent ? '?agent=' + encodeURIComponent(agent) : ''));
+                data = await call('GET', (draft ? '/api/workers/exec/nodes' : '/api/workers/exec/chats/' + sid)
+                    + (agent ? '?agent=' + encodeURIComponent(agent) : ''));
             } catch (e) {
                 host.toast(String(e.message || e), 'error');
                 return;
             }
-            const current = data.binding;
             const nodes = data.nodes || [];
+            const current = draft ? (pending || M.draft(nodes, 'host', '')) : data.binding;
             const byId = (id) => nodes.find((n) => String(n.id) === String(id)) || (current && current.node) || null;
-            const title = 'Execution node of CH-' + sid.padStart(6, '0');
+            const title = draft ? 'Execution node of the new chat' : 'Execution node of CH-' + sid.padStart(6, '0');
             const returnFocus = doc.activeElement;
             const wrap = doc.createElement('div');
             wrap.className = 'chat-supervision-dialog-backdrop';
@@ -142,6 +153,14 @@
                 ev.preventDefault();
                 const plan = M.plan(current, { nodeId: select.value, cwd: form.cwd.value });
                 if (plan.kind === 'none') { close(); return; }
+                if (draft) {
+                    // No chat to PUT to yet: the pick rides the first message.
+                    const picked = M.draft(nodes, plan.body.node_id, plan.body.cwd);
+                    if (isDraft(session)) setPending(picked.node && !picked.node.host ? picked : null);
+                    close();
+                    host.toast('Agent runs on ' + M.nodeName(picked.node) + ' from the first message', 'success');
+                    return;
+                }
                 const submit = form.querySelector('[type=submit]');
                 const errBox = form.querySelector('.chat-supervision-errors');
                 submit.disabled = true;
@@ -169,7 +188,7 @@
                 ev.preventDefault();
                 ev.stopPropagation();
                 host.closeMenus();
-                openDialog(menu.getAttribute('data-exec-node-menu'));
+                openDialog(menu.getAttribute('data-exec-node-menu') || null);
                 return;
             }
             const open = ev.target.closest && ev.target.closest('[data-exec-node-open]');
@@ -185,6 +204,13 @@
             if (timer) host.clearInterval(timer);
             timer = enabled ? host.setInterval(() => { if (doc.visibilityState !== 'hidden') refresh(); }, POLL_MS) : null;
             refresh();
+            if (pending && typeof host.refreshHeader === 'function') host.refreshHeader();
+        }
+
+        /** First send of a new chat carries its pick: the server binds it as it mints the chat. */
+        function attachToRequest(body) {
+            if (!enabled || !pending || !isDraft(session) || !body || typeof body !== 'object') return;
+            body.exec_node = { node_id: pending.node_id, cwd: pending.cwd };
         }
 
         async function syncFlag() {
@@ -200,6 +226,7 @@
             if (String(sid || '') === String(session || '')) return;
             session = sid;
             binding = null;
+            pending = null;
             render();
             refresh();
         }
@@ -213,7 +240,8 @@
         doc.addEventListener('visibilitychange', () => { if (doc.visibilityState === 'visible') refresh(); });
         syncFlag();
 
-        return { setSession, refresh, menuHtml, openDialog, isEnabled: () => enabled };
+        return { setSession, refresh, menuHtml, openDialog, attachToRequest,
+            draftNode: () => (enabled && isDraft(session) ? pending : null), isEnabled: () => enabled };
     }
 
     root.CuttleChatExecNode = { create };

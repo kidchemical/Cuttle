@@ -3,9 +3,10 @@
 ``agy -p --input-format stream-json`` queues extra stdin lines as separate turns,
 whereas ``agy acp`` accepts a mid-turn ``session/prompt`` while a turn is running:
 the server immediately resolves the superseded ``session/prompt`` with its partial
-usage, injects the follow-up into the live turn (echoing it as a
-``user_message_chunk``), and resolves the new ``session/prompt`` when the turn
-finishes.
+usage, injects the follow-up into the live turn, and resolves the new
+``session/prompt`` when the turn finishes. It does not echo live input as a
+``user_message_chunk`` (probed 2026-11-24), so that completion is the steer's
+receipt; an echo, if a later ``agy`` sends one, still confirms it first.
 
 Returns ``{"fallback": True, ...}`` when the server could not start the turn
 (spawn error, handshake/session failure, unknown resume id), so the adapter
@@ -216,6 +217,7 @@ async def run_antigravity_turn_acp(
         "resolved_model": None,
         "prompt_started": False,
         "inflight_prompts": set(),
+        "steer_prompts": {},
         "terminal": None,
         "turn_error": None,
         "setup_error": None,
@@ -285,6 +287,14 @@ async def run_antigravity_turn_acp(
         st["inflight_prompts"].discard(req_id)
         if isinstance(result, dict):
             _accumulate_usage(st["usage_totals"], result.get("usage"))
+        # agy acp never echoes a live session/prompt as user_message_chunk, so a
+        # steer's own prompt ending normally (end_turn, or superseded by a later
+        # steer — agy has then taken it into the session) is its receipt.
+        steer_receipt = st["steer_prompts"].pop(req_id, None)
+        stop = str((result or {}).get("stopReason") or "end_turn")
+        if steer_receipt is not None and error is None and stop in ("end_turn", "max_tokens"):
+            if delivery.confirm(steer_receipt):
+                activity.emit(f"steer received: {_first_line(steer_receipt.text, 100)}", force=True)
         if error is not None:
             st["turn_error"] = rpc_error_text(error)
         # When a steer session/prompt took over, the superseded prompt resolves
@@ -327,7 +337,7 @@ async def run_antigravity_turn_acp(
                 return
             receipt = delivery.begin(text, steer_id)
             try:
-                _send_prompt_request(text)
+                st["steer_prompts"][_send_prompt_request(text)] = receipt
             except Exception as exc:
                 accepted = delivery.acknowledge(receipt, succeeded=False, refused=False)
                 out.set_result((True, None) if accepted else (False, str(exc)))
