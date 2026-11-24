@@ -337,3 +337,22 @@ def test_claude_catalog_appends_unlisted_manifest_models(monkeypatch):
     assert ids[0] == "fable"
     assert "claude-fable-5-2" in ids and "opus" in ids
     assert "claude-fable-5-1" not in ids  # the alias already resolves to it
+
+
+def test_cursor_palette_keeps_saved_models_when_cli_is_signed_out(tmp_path, monkeypatch):
+    """A signed-out `agent models` must not blank the Cursor picker."""
+    import subprocess
+
+    from api import cursor_agent_commands as cac
+    from api import web_chat_api as w
+    from scripts.utilities import cursor_cli_tool
+
+    _saved_catalogs(tmp_path, monkeypatch, "cursor", [{"id": "auto"}, {"id": "gpt-x"}])
+    monkeypatch.setattr(cursor_cli_tool, "_resolve_cursor_agent_argv", lambda: ["agent"])
+    monkeypatch.setattr(cac.subprocess, "run", lambda argv, **k: subprocess.CompletedProcess(
+        argv, 1, stdout="", stderr="Error: Authentication required. Run 'agent login'"))
+    cac.clear_cursor_agent_models_cache()
+    body = w.app.test_client().get("/api/cursor-agent/models").get_json()
+    assert [m["id"] for m in body["models"]] == ["auto", "gpt-x"]
+    assert body["source"] == "last_successful_cache"
+    assert "agent login" in body["error"]

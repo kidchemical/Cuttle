@@ -43,6 +43,22 @@ def api_cursor_agent_models():
             catalog_source = 'cache_or_cli'
             catalog_error = None
             catalog_count = len(models or [])
+        if not models:
+            # Signed out / CLI down: keep the last saved live list, then the
+            # manifest, like every other picker (`agent_models`), and say why.
+            from api.agent_harness.agent_models import saved_catalog_rows
+            from api.agent_harness.catalog import get_agent
+            from api.cursor_agent_commands import last_cursor_models_error
+
+            catalog_error = catalog_error or last_cursor_models_error()
+            saved = saved_catalog_rows('cursor')
+            if saved:
+                models, catalog_source = saved['models'], 'last_successful_cache'
+            else:
+                pair = get_agent('cursor')
+                models = [{'id': m, 'label': m} for m in (pair[0].models if pair else [])]
+                catalog_source = 'manifest'
+            catalog_count = len(models)
         path = (request.args.get('path') or '').strip()
         session = (request.args.get('session') or '').strip()
         preferred = None

@@ -39,6 +39,8 @@ _NEW_SESSION_ALIASES = frozenset(
 # on every keystroke. Cleared by `/model refresh` / `?refresh=1`.
 _MODELS_CACHE: Optional[Tuple[float, List[Dict[str, str]]]] = None
 _MODELS_CACHE_TTL_SEC = 60.0
+# Why the last `agent models` run listed nothing (sign-in, missing CLI, …).
+_LAST_FETCH_ERROR: Optional[str] = None
 
 
 def parse_cursor_agent_slash(prompt: str) -> Optional[Tuple[str, str]]:
@@ -85,10 +87,13 @@ def clear_cursor_agent_models_cache() -> None:
 
 def _fetch_cursor_agent_models() -> List[Dict[str, str]]:
     """Run `agent models` and parse into [{id, label, current}, …]."""
+    global _LAST_FETCH_ERROR
     from scripts.utilities.cursor_cli_tool import _resolve_cursor_agent_argv, _cursor_agent_subprocess_env
 
+    _LAST_FETCH_ERROR = None
     agent_argv = _resolve_cursor_agent_argv()
     if not agent_argv:
+        _LAST_FETCH_ERROR = "Cursor Agent CLI not found"
         return []
     try:
         r = subprocess.run(
@@ -99,9 +104,13 @@ def _fetch_cursor_agent_models() -> List[Dict[str, str]]:
             env=_cursor_agent_subprocess_env(),
             encoding="utf-8", errors="replace",
         )
-    except Exception:
+    except Exception as exc:
+        _LAST_FETCH_ERROR = str(exc)[:200]
         return []
     out = (r.stdout or "") + ("\n" + r.stderr if r.stderr else "")
+    if "authentication required" in out.lower():
+        _LAST_FETCH_ERROR = "Cursor CLI is signed out: run `agent login`"
+        return []
     models: List[Dict[str, str]] = []
     for line in out.splitlines():
         s = line.strip()
@@ -119,7 +128,14 @@ def _fetch_cursor_agent_models() -> List[Dict[str, str]]:
         label = re.sub(r"\s*\([^)]*current[^)]*\)\s*", "", rest, flags=re.I).strip()
         label = re.sub(r"\s*\([^)]*default[^)]*\)\s*", "", label, flags=re.I).strip() or mid
         models.append({"id": mid, "label": label, "current": current})
+    if not models:
+        _LAST_FETCH_ERROR = "agent models returned nothing"
     return models
+
+
+def last_cursor_models_error() -> Optional[str]:
+    """Why the most recent `agent models` run listed nothing, if it did."""
+    return _LAST_FETCH_ERROR
 
 
 def list_cursor_agent_models() -> List[Dict[str, str]]:
@@ -148,7 +164,7 @@ def refresh_cursor_agent_models() -> Dict[str, Any]:
         "models": models,
         "count": len(models),
         "source": "cli_refresh" if models else "cli_empty",
-        "error": None if models else "agent models returned nothing",
+        "error": None if models else (_LAST_FETCH_ERROR or "agent models returned nothing"),
     }
 
 
