@@ -26,7 +26,7 @@ The user talks to **Cuttle**. Cuttle (orchestrator + Brain) decides when work sh
 | SQLite store (workers + jobs) | `src/api/device_workers/store.py` → `<home>/db/device_workers.db` |
 | Coordinator HTTP API | `/api/workers/*` (`routes.py`), registered from Flask |
 | Local host worker loop | Daemon thread `run_device_workers_loop` in `cuttle_daemon.py` |
-| Client sidecar | `electron/device-worker/cuttle_device_worker.py` (stdlib; shipped in Client asar) + Electron `startWorkerSidecar()` |
+| Client sidecar | Electron `startWorkerSidecar()` runs the full worker (`src/scripts/cuttle_device_worker.py`, the app's bundled backend), falling back to the stdlib `electron/device-worker/cuttle_device_worker.py` when that tree is missing or fails on start. An installed (packaged) Client advertises `install: packaged`: judged by version, updated by the release installer, never offered a git self-update |
 | Sidecar log (Client) | `%APPDATA%/cuttle-desktop/device-worker.log` (Electron console on exit) |
 | Job types | `ping`, `file_copy`, `blender_render`, `shell`, `cuttle_self_update`, `agent_turn` (a chat turn on an execution node; created only by the host's chat path, opt-in per machine — [`EXECUTION_NODES.md`](EXECUTION_NODES.md)) |
 | Platform verbs | `.cuttle_global/actions/workers-*.yaml` + `python -m api.device_workers.cli` |

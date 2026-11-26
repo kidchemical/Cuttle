@@ -495,14 +495,18 @@ function candidateUrls(pathname) {
 }
 
 /** Worker coordinator endpoints from the candidate owner: primary is the
- *  first candidate; https/http are the known candidates of that scheme
- *  (http is '' when no HTTP endpoint is known — never a guessed default).
+ *  HTTPS candidate when one is known, else the first; https/http are the
+ *  known candidates of that scheme (http is '' when no HTTP endpoint is
+ *  known — never a guessed default). The UI's HTTP-first order is for the
+ *  Chromium TLS/SSE pool wedge, which a Python worker does not have, and a
+ *  remote Host binds HTTP to loopback unless LAN HTTP is opted in — so the
+ *  worker leads with HTTPS, like cuttle_client_daemon.coordinator_bases.
  *  single mirrors the persisted single-endpoint policy for the sidecar. */
 function workerCoordinatorEnv() {
     const cands = endpointCandidates();
-    const primary = endpointUrl(cands[0]);
     const httpsCand = cands.find((c) => c.scheme === 'https');
     const httpCand = cands.find((c) => c.scheme === 'http');
+    const primary = endpointUrl(httpsCand || cands[0]);
     return {
         primary,
         https: httpsCand ? endpointUrl(httpsCand) : primary,
@@ -1164,7 +1168,7 @@ async function enrollWorkerWithHost() {
     throw lastErr || new Error('Worker enroll failed.');
 }
 
-async function startWorkerSidecar() {
+async function startWorkerSidecar({ stdlibOnly = false } = {}) {
     if (!CLIENT_MODE) return;
     const cfg = loadDesktopConfig();
     if (cfg.workerMode === false) {
@@ -1239,13 +1243,25 @@ async function startWorkerSidecar() {
         return;
     }
 
-    const materialized = materializeDeviceWorkerScript();
-    if (!materialized.ok) {
-        console.error('Device worker script missing:', materialized.error);
-        return;
+    // The backend tree this app ships (packaged resources/app, or the
+    // checkout in dev) runs the full worker: execution-node agent turns and
+    // the client daemon's capability ads. The stdlib sidecar is the fallback
+    // for a build without that tree, or when the full worker fails to start.
+    const packageScript = path.join(projectRoot, 'src', 'scripts', 'cuttle_device_worker.py');
+    let scriptPath = '';
+    const fullWorker = !stdlibOnly && fs.existsSync(packageScript);
+    if (fullWorker) {
+        scriptPath = packageScript;
+        console.log('Device worker script:', scriptPath, '(full worker)');
+    } else {
+        const materialized = materializeDeviceWorkerScript();
+        if (!materialized.ok) {
+            console.error('Device worker script missing:', materialized.error);
+            return;
+        }
+        scriptPath = materialized.scriptPath;
+        console.log('Device worker script:', scriptPath, '(from', materialized.source + ')');
     }
-    const scriptPath = materialized.scriptPath;
-    console.log('Device worker script:', scriptPath, '(from', materialized.source + ')');
 
     // Coordinator URLs come from the endpoint owner (workerCoordinatorEnv):
     // the selected endpoint only in single mode. CUTTLE_ENDPOINT_SINGLE
@@ -1263,8 +1279,8 @@ async function startWorkerSidecar() {
         desktopVersion = String(publicDesktopConfig().packageVersion || '');
     } catch (_) {}
     const env = {
-        // The sidecar is a standalone script: no src/ on its path.
-        ...pythonChildEnv(projectRoot, {}, { srcPath: false }),
+        // The stdlib sidecar is a standalone script: no src/ on its path.
+        ...pythonChildEnv(projectRoot, {}, { srcPath: fullWorker }),
         PYTHONUTF8: '1',
         PYTHONIOENCODING: 'utf-8',
         CUTTLE_DEVICE_WORKERS_ENABLED: '1',
@@ -1292,7 +1308,8 @@ async function startWorkerSidecar() {
         logFd = fs.openSync(logPath, 'a');
         fs.writeSync(
             logFd,
-            `\n---- sidecar spawn ${new Date().toISOString()} python=${pythonExe} ----\n`
+            `\n---- sidecar spawn ${new Date().toISOString()} python=${pythonExe} ` +
+            `script=${scriptPath} ----\n`
         );
         workerSidecarProcess = spawn(pythonExe, [scriptPath], {
             cwd: path.dirname(scriptPath),
@@ -1309,7 +1326,9 @@ async function startWorkerSidecar() {
         return;
     }
 
-    workerSidecarProcess.on('exit', (code, signal) => {
+    const spawnedAt = Date.now();
+    const child = workerSidecarProcess;
+    child.on('exit', (code, signal) => {
         console.log(`Device worker sidecar exited code=${code} signal=${signal}`);
         if (code && code !== 0) {
             console.error(`See worker log: ${logPath}`);
@@ -1318,7 +1337,17 @@ async function startWorkerSidecar() {
             try { fs.closeSync(logFd); } catch (_) {}
             logFd = null;
         }
-        workerSidecarProcess = null;
+        // stopWorkerSidecar / a restart clear the handle before killing.
+        const stoppedByUs = workerSidecarProcess !== child;
+        if (!stoppedByUs) workerSidecarProcess = null;
+        // A full worker that dies on start (import error, broken tree) must
+        // not leave the Client off the mesh: run the stdlib sidecar instead.
+        if (fullWorker && !stoppedByUs && code && Date.now() - spawnedAt < 60 * 1000) {
+            console.warn('Full device worker failed on start; using the stdlib sidecar.');
+            startWorkerSidecar({ stdlibOnly: true }).catch((err) => {
+                console.error('Device worker sidecar fallback failed:', err.message || err);
+            });
+        }
     });
     workerSidecarProcess.on('error', (err) => {
         console.error('Device worker sidecar spawn error:', err);

@@ -942,6 +942,15 @@ def submit_self_update(
     ``update_source`` selects the channel: ``official`` (configured upstream /
     git remote) or ``host`` (this Host's served git bundle — Scenario B).
     """
+    target = get_store().get_worker(target_worker_id) or {}
+    caps = target.get("capabilities") if isinstance(target.get("capabilities"), dict) else {}
+    if caps.get("install") == "packaged":
+        # No worker can claim it (no cuttle_self_update): say what works instead.
+        return {
+            "success": False,
+            "error": f"{target_worker_id} runs the installed Cuttle app, which has no git "
+                     "checkout to update: run the release installer (Cuttle-X.Y.Z-x64.exe) there.",
+        }
     source = str(update_source or "official").strip().lower()
     if source not in ("official", "host"):
         source = "official"

@@ -109,6 +109,9 @@ def _find_blender() -> Optional[str]:
 def collect_ads(interactive_priority: str = "low") -> Dict[str, Any]:
     load = _cpu_ram()
     blender_bin = _find_blender()
+    # No checkout rev = a packaged install: it updates by the release
+    # installer, not cuttle_self_update (api.device_workers.capabilities).
+    rev = _cuttle_git_rev()
     caps = {
         "shell": True,
         "filesystem": True,
@@ -123,7 +126,8 @@ def collect_ads(interactive_priority: str = "low") -> Dict[str, Any]:
         ),
         "ollama": _which("ollama"),
         "agent_cursor": _which("agent") or _which("cursor-agent"),
-        "cuttle_self_update": True,
+        "cuttle_self_update": bool(rev),
+        "install": "checkout" if rev else "packaged",
     }
     return {
         "hostname": socket.gethostname(),
@@ -134,7 +138,7 @@ def collect_ads(interactive_priority: str = "low") -> Dict[str, Any]:
         "storage": {},
         "load": load,
         "cuttle_version": _cuttle_version(),
-        "cuttle_git_rev": _cuttle_git_rev(),
+        "cuttle_git_rev": rev,
     }
 
 
@@ -229,6 +233,10 @@ def _worker_payload(wid: str, ads: Dict[str, Any]) -> Dict[str, Any]:
         meta["cuttle_git_rev"] = rev
     if boot:
         meta["boot_git_rev"] = boot
+    if (ads.get("capabilities") or {}).get("install") == "packaged":
+        # Clear a rev an earlier checkout run left in the host's merged meta.
+        meta["cuttle_git_rev"] = ""
+        meta["boot_git_rev"] = ""
     return {
         "worker_id": wid,
         "hostname": ads.get("hostname"),

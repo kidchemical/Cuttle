@@ -873,10 +873,24 @@ resetCfg({ endpoint: { kind: 'paired', scheme: 'http', host: '127.0.0.1', port: 
 __portsUp = { 8001: true, 8443: true };
 ui = await resolveUiBaseUrl();
 check('ui-paired-http-first', ui === 'http://127.0.0.1:8001/app_shell.html', ui);
+// The worker leads with HTTPS even when the UI is HTTP-first: the pool
+// wedge is Chromium-only, and a remote Host binds HTTP to loopback.
 w = workerCoordinatorEnv();
-check('worker-paired', w.primary === 'http://127.0.0.1:8001'
+check('worker-paired', w.primary === 'https://127.0.0.1:8443'
     && w.http === 'http://127.0.0.1:8001'
     && w.https === 'https://127.0.0.1:8443' && w.single === false, JSON.stringify(w));
+
+// Remote paired Host (kcslaptop 2026-11-25): never an HTTP-only coordinator.
+FLASK_HOST = '192.168.4.26'; FLASK_HTTP_PORT = 8000; FLASK_HTTPS_PORT = 8080;
+resetCfg({});
+w = workerCoordinatorEnv();
+check('worker-remote-https-first', w.primary === 'https://192.168.4.26:8080'
+    && w.http === 'http://192.168.4.26:8000', JSON.stringify(w));
+
+// Single HTTP selection stays HTTP.
+resetCfg({ endpoint: { kind: 'single', scheme: 'http', host: '192.168.4.26', port: 8000 } });
+w = workerCoordinatorEnv();
+check('worker-single-http', w.primary === 'http://192.168.4.26:8000', JSON.stringify(w));
 
 if (__failures.length) { console.error(__failures.join('\\n')); process.exit(1); }
 console.log('ok');

@@ -474,7 +474,9 @@ function renderDevices() {
         const slot = (w.slot != null && isFinite(Number(w.slot)))
             ? String(Math.trunc(Number(w.slot)))
             : '—';
-        const canUpdate = !!(w.needs_update || (mismatch && w.online && caps.cuttle_self_update && !w.is_self));
+        // An installed (packaged) Client updates by the release installer only.
+        const canUpdate = caps.install !== 'packaged' &&
+            !!(w.needs_update || (mismatch && w.online && caps.cuttle_self_update && !w.is_self));
         const canRemove = !w.is_self && !!wid;
         const menuBtn = wid
             ? '<button type="button" class="device-menu-btn" data-worker-id="' +

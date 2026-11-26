@@ -109,14 +109,17 @@ Nothing is stored on the node except what the vendor CLI keeps for itself.
 
 ## Setting up a node
 
-On the machine (Windows or Linux), with a Cuttle source checkout at the host's revision:
+On the machine (Windows or Linux), with the installed Cuttle app or a source
+checkout at the host's version:
 
 1. Pair it: connect the Cuttle Client to the host once and approve the code in
    Jobs → Devices.
-2. Run the client daemon (`src/scripts/cuttle_client_daemon.py`); the Electron
-   sidecar alone cannot run agent turns.
+2. Keep a full worker running: the installed app's Client runs one from its
+   bundled backend, and a checkout runs it through the client daemon
+   (`src/scripts/cuttle_client_daemon.py`). The stdlib fallback sidecar, used
+   only when that backend is missing or fails to start, cannot run agent turns.
 3. Opt in: add `CUTTLE_NODE_AGENT_EXEC=1` to that machine's `<home>/.env`
-   (`%LOCALAPPDATA%\Cuttle\.env` on Windows) and restart the daemon.
+   (`%LOCALAPPDATA%\Cuttle\.env` on Windows) and restart the Client (or daemon).
 4. Install and log in the agent CLIs you want there.
 
 On the host: enable **Execution nodes** in Settings → Experimental, then tell

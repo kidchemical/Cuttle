@@ -21,9 +21,24 @@ if (-not (Test-Path -LiteralPath $launcher)) {
 }
 $shell = New-Object -ComObject WScript.Shell
 
+# Existing launchers of this checkout, by mode: a user-renamed shortcut
+# ("Cuttle Host (repo)") is repaired in place, never duplicated.
+# Legacy names are removed below, so they are never reused.
+$legacyNames = @('Cuttle.lnk', 'Start Cuttle.lnk', 'Start-Cuttle-Client.cmd', 'Cuttle.cmd')
+$existing = @{}
+foreach ($lnk in Get-ChildItem -LiteralPath $desktop -Filter '*.lnk' -ErrorAction SilentlyContinue) {
+    if ($legacyNames -contains $lnk.Name) { continue }
+    $sc = $shell.CreateShortcut($lnk.FullName)
+    if ($sc.TargetPath -and $sc.TargetPath.StartsWith($repo, [StringComparison]::OrdinalIgnoreCase)) {
+        $mode = ($sc.Arguments.Trim() -split '\s+')[0].TrimStart('-').ToLowerInvariant()
+        if ($mode -and -not $existing.ContainsKey($mode)) { $existing[$mode] = $lnk.FullName }
+    }
+}
+
 function New-CuttleShortcut {
     param([string]$Name, [string]$Arguments, [string]$Icon, [string]$Description)
     $path = Join-Path $desktop "$Name.lnk"
+    if ($existing.ContainsKey($Arguments)) { $path = $existing[$Arguments] }
     $sc = $shell.CreateShortcut($path)
     $sc.TargetPath = $launcher
     $sc.Arguments = $Arguments
@@ -43,7 +58,7 @@ New-CuttleShortcut -Name 'Cuttle Daemon' -Arguments 'daemon' -Icon $iconClient `
     -Description 'Start the Cuttle daemon only (no app)'
 
 # Remove legacy shortcut names this replaces (never touch unrelated files).
-foreach ($name in @('Cuttle.lnk', 'Start Cuttle.lnk', 'Start-Cuttle-Client.cmd', 'Cuttle.cmd')) {
+foreach ($name in $legacyNames) {
     $legacy = Join-Path $desktop $name
     # The release installer owns its own Desktop\Cuttle.lnk (installed build);
     # only a .lnk that launches this checkout is ours to replace.
