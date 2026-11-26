@@ -14,9 +14,9 @@ in the Cuttle install.
 ```bash
 PYTHONPATH=src .venv/bin/python -m api.exec_nodes list [--agent claude]      # host + paired machines, state
 PYTHONPATH=src .venv/bin/python -m api.exec_nodes show [--session CH-900008]  # where a chat runs
-PYTHONPATH=src .venv/bin/python -m api.exec_nodes set kcslaptop [--cwd 'C:\Users\me\Dev\proj'] [--session CH-900008]
+PYTHONPATH=src .venv/bin/python -m api.exec_nodes set my-laptop [--cwd 'C:\Users\me\Dev\proj'] [--session CH-900008]
 PYTHONPATH=src .venv/bin/python -m api.exec_nodes set host                     # back to the host
-PYTHONPATH=src .venv/bin/python -m api.exec_nodes node kcslaptop --default-cwd 'C:\Users\me' \
+PYTHONPATH=src .venv/bin/python -m api.exec_nodes node my-laptop --default-cwd 'C:\Users\me' \
   --map '/mnt/dev/Proj=C:\Users\me\Dev\Proj'                                   # where host projects live there
 ```
 
@@ -36,7 +36,7 @@ says so.
 Give a child its machine in the spawn spec; unset means the host:
 
 ```bash
---child "{\"title\":\"GPU bake\",\"agent\":\"codex\",\"node\":\"kcslaptop\",\"message\":\"…\"}"
+--child "{\"title\":\"GPU bake\",\"agent\":\"codex\",\"node\":\"my-laptop\",\"message\":\"…\"}"
 ```
 
 Spawn from a chat that runs on the host: a child on a node cannot spawn its own

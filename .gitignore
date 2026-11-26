@@ -27,7 +27,6 @@ _personal/
 !electron/package-lock.json
 !electron/python-runtime.json
 !apps/mobile/**/*.json
-!src/pipelines/*.json
 !src/api/agent_router/suites/*.json
 
 # Python cache
@@ -119,10 +118,7 @@ node_modules/
 electron/dist/
 electron/out/
 
-# Cuttle install-local overlay
-.cuttle/personal/
-
-# Cuttle agent scratch
+# Cuttle agent scratch (no trailing slash: also matches a symlinked temp)
 /temp
 
 # Generated YouTube/promo renders (rebuild via src/scripts/utilities/promo_video.py)
@@ -154,6 +150,9 @@ src/tests/results/
 src/tests/test-results/
 src/test-results/
 src/scripts/output/
+
+# Cuttle install-local overlay
+.cuttle/personal/
 
 # Cuttle agent scratch
 /temp/

@@ -85,7 +85,7 @@ Markdown title string (standard `![alt](url "description")`):
 
 ```xml
 <media type="video" src="/output/shared/demo.mp4" title="Walkthrough"
-  description="30s clip of the lightbox on Galaxy S22 after the safe-area patch."/>
+  description="30s clip of the lightbox on a phone after the safe-area patch."/>
 ```
 
 Or body text (better for longer copy):

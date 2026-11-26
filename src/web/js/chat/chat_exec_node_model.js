@@ -9,7 +9,7 @@
 
     const STATE_TEXT = { online: 'online', busy: 'busy', unavailable: 'unavailable' };
 
-    /** "KCsLaptop — Windows" (the OS is left out when unknown). */
+    /** "My Laptop — Windows" (the OS is left out when unknown). */
     function nodeName(node) {
         const label = String((node && node.label) || (node && node.id) || '');
         return node && node.os ? label + ' — ' + node.os : label;

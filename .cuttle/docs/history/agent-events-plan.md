@@ -13,7 +13,7 @@ sizes and resets for every Cuttle store visible and editable.
 Status: **mixed historical/current.** The 2026-10-07 "initial implementation"
 phase text below is superseded by the later delivery notes (2026-10-08 onward,
 near the end of this file); read those for current behavior. Runbook:
-[agent-events.md](../../.cuttle_global/docs/agent-events.md).
+[agent-events.md](../../../.cuttle_global/docs/agent-events.md).
 
 The initial implementation includes the shared store, full payload capture,
 turn/step snapshots, native patches for supported streams, journal storage
@@ -166,7 +166,7 @@ New owned slice **`src/api/agent_events/`**:
 | `routes.py` | `/api/agent-events*` blueprint (self-registering, like `chat_tts`) |
 | `cli.py` / `__main__.py` | `python -m api.agent_events tail\|get\|search\|diff\|stats` |
 
-Location: `runtime_state_path("agent_events")` → `<home>/agent_events/` (`agent_events.sqlite3` + `blobs/`) in the per-user Cuttle home, never the checkout ([cuttle-home.md](../../docs/architecture/cuttle-home.md)).
+Location: `runtime_state_path("agent_events")` → `<home>/agent_events/` (`agent_events.sqlite3` + `blobs/`) in the per-user Cuttle home, never the checkout ([cuttle-home.md](../../../docs/architecture/cuttle-home.md)).
 
 ### Schema (sketch)
 

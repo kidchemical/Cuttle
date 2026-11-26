@@ -15,7 +15,7 @@ Cuttle is an **AI harness harness**: a control layer above agent harnesses such 
 
 The router should not merely select the nominally cheapest model. It should select the workflow most likely to produce an acceptable result at the lowest **total** cost, accounting for money, latency, retries, intervention, and user satisfaction.
 
-The long-term advantage is project-specific evidence. Generic routers know model names and advertised prices. Cuttle can learn which complete backends work well for Ian's actual projects and tasks.
+The long-term advantage is project-specific evidence. Generic routers know model names and advertised prices. Cuttle can learn which complete backends work well for the owner's actual projects and tasks.
 
 ## 2. Core Operating Assumption: Backends Are Mutable Black Boxes
 

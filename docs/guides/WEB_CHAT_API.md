@@ -19,9 +19,8 @@ When you add a backend feature:
 
 Related: [`MODULARITY.md`](MODULARITY.md), [`docs/ROADMAP.md`](../ROADMAP.md), and [extension boundaries](../architecture/extension-boundaries.md).
 
-Tracked (historical references, not verified current status — do not
-implement in the same breath as product features; #3 predates the
-BYO-CLI installer retirement):
+Tracked (historical references: all six issues are closed as of 2026-11-26;
+#3 predates the BYO-CLI installer retirement):
 
 | Issue | Topic |
 |---|---|

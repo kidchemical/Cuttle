@@ -8,6 +8,7 @@ See [GLOBAL.ini](../.cuttle/GLOBAL.ini) for the selection keys.
 ```text
 .cuttle_global/
   rules/    docs/    actions/    scripts/    skills/    agents/
+  features/<flag>/{rules,docs,commands}/   # guidance that ships with an experimental feature
 ```
 
 The install-local global overlay is **not** in this tree; it lives in the Cuttle

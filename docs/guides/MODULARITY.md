@@ -7,9 +7,10 @@
 
 This file is the home for *what Cuttle is*, *how plugins/sockets should feel*, and *what to steal from DeepSeek Harness without becoming it*. Day-to-day how-to for adding a CLI still lives in [`src/api/agent_harness/ADDING_AN_AGENT.md`](../../src/api/agent_harness/ADDING_AN_AGENT.md).
 
-> **Note:** the product thesis is stable; implementation-state claims (e.g. "what
-> is still a privileged core") are a 2026-08 snapshot — verify against
-> [`docs/architecture/repository-map.md`](../architecture/repository-map.md) before acting.
+> **Note:** the product thesis is stable (2026-08). Implementation-state claims
+> (the socket table, "what is still a privileged core", first steps) were
+> re-checked against the code on 2026-11-26; current owners are in
+> [`docs/architecture/repository-map.md`](../architecture/repository-map.md).
 
 ---
 
@@ -65,13 +66,13 @@ A **socket** is that definition plus discovery (“what is plugged in?”) plus 
 | Socket | Today | Target |
 |---|---|---|
 | **Agent / tentacle** | Folder-per-CLI: `manifest.yaml` + `adapter.py`; catalog + shared kernel | Done for chat slash. All chat execution uses catalog adapters or the router. |
-| **Router** | `api` / `local` / `agent` modes; runners still late-bind Flask | A socket: task + available tentacles in; chosen tentacle + reason out. Plug = cheap LLM, local LLM, preference table, or another harness as brain. See [`.cuttle/docs/agent-router-todo.md`](../../.cuttle/docs/agent-router-todo.md). |
-| **LLM (API calling)** | `api.llm_complete.complete` for titles/commits/enhance/router brain; Jev separate; TTS/vision own clients | Same shape as agents: `llm_providers/<id>/`. Router brain and cheap jobs consume the helper. |
+| **Router** | `api` / `local` / `agent` modes; runners late-bind `api.agent_harness.runners`, never the Flask entry module | A socket: task + available tentacles in; chosen tentacle + reason out. Plug = cheap LLM, local LLM, preference table, or another harness as brain. See [`.cuttle/docs/agent-router-todo.md`](../../.cuttle/docs/agent-router-todo.md). |
+| **LLM (API calling)** | Manifest-driven catalog `src/api/model_providers/<provider>/` (text/vision, speech, transcription, Jev decisions); `api.background_helpers` picks executors and `api.llm_complete` returns cleaned text | Done as a catalog (contract: `src/api/model_providers/ADDING_A_PROVIDER.md`). Image/video generation would extend the same owner. |
 | **Brain / context** | Context Compiler layers are a function with a fixed order | Layers become registered plugs (contract, rules, profile, inventory, handoff, later retrieval). Kernel stays the consumer. |
-| **Knowledge / memory** | Chat transcript (SQLite) + Context Compiler; guest CLIs own native resume | Future Brain retrieval plug (`.cuttle/memory/`). Not a separate OpenClaw memory store. |
+| **Knowledge / memory** | Chat transcript (SQLite) + Context Compiler; guest CLIs own native resume; per-project knowledge graphs behind a provider socket (`src/api/knowledge_graph/providers/`, Graphify bundled), queried on demand rather than injected | Future Brain retrieval plug (`.cuttle/memory/`). Not a separate OpenClaw memory store. |
 | **Reasoning / coordination** | Supervised coordinator as a routing *strategy*, not a fake agent | Keep it a strategy plug on the router socket. Do not invent a second router. |
 
-**Rule:** if adding a vendor still requires an `elif` in `web_chat_api.py` or `_execute_remote_agent_tool`, that socket is not real yet.
+**Rule:** if adding a vendor still requires an `elif` in `web_chat_api.py`, that socket is not real yet.
 
 ---
 
@@ -106,14 +107,15 @@ The agent harness rewrite is the correct **hub** slice:
 
 ## What is still a privileged core
 
-Agents are plugins. Almost nothing else is.
+Agents, model API providers and knowledge-graph engines are plugins. Three of
+the four gaps recorded in 2026-08 are closed:
 
-| Gap | Why it hurts the goals |
+| Gap (2026-08) | State (2026-11) |
 |---|---|
-| Router `_default_runners` imports `web_chat_api` | The router socket is not extractable. Goal 5 stalls. |
-| No Cuttle-owned event log | Query JSON sidecars, `chat_messages`, and compiler envelopes are three stories. You cannot replay what the model saw. Self-calibration and anti-dogfood (goal 3) stay blind. |
-| LLM providers are not a catalog | Gemini-as-API vs Gemini-as-CLI stays a Flask special case. |
-| Brain layers are hardcoded | Knowledge/retrieval cannot plug in without editing the compiler (goal 6). |
+| Router `_default_runners` imports `web_chat_api` | **Closed.** Runners come from `api.agent_harness.runners`; `test_architecture_boundaries.py` allows only `api.doctor` and the dev shadow bootstrap to import the entry module. |
+| No Cuttle-owned event log | **Partly closed.** `api.agent_events` is the durable store for what a turn did (steps, full payloads, patches). Context briefings and router decisions are still recorded separately (Brain bookkeeping, router log lines), so "replay exactly what the model saw" from one stream is still open. |
+| LLM providers are not a catalog | **Closed.** `src/api/model_providers/<provider>/` manifests + adapters. |
+| Brain layers are hardcoded | **Open.** The Context Compiler is still a function with a fixed order; knowledge/retrieval cannot plug in as a layer without editing it (goal 6). Feature guidance does ship as bundles (`.cuttle_global/features/<flag>/`). |
 
 ---
 
@@ -121,7 +123,7 @@ Agents are plugins. Almost nothing else is.
 
 A newcomer should be able to:
 
-1. Copy `agents/<id>/` (or the future `llm_providers/<id>/`, `brain/layers/<id>/`).
+1. Copy `agents/<id>/` or `model_providers/<provider>/` (or the future `brain/layers/<id>/`).
 2. Fill a manifest + a small adapter.
 3. Pass the contract test **and** a gated live smoke on the cheap model they chose.
 4. Never edit `web_chat_api.py`.
@@ -139,19 +141,19 @@ Security in [`docs/ROADMAP.md`](../ROADMAP.md) still comes first when it conflic
 **Close the tentacle socket**
 
 1. Chat selects catalog adapters explicitly or through Cuttle Router; provider configuration belongs to the selected CLI.
-2. Point router runners at `kernel.run_agent_web_command` directly — no Flask import.
+2. Done: router runners go through `api.agent_harness.runners` → `kernel.run_agent_web_command`, with no Flask import.
 
 **Then copy the pattern**
 
 3. Keep this file as the seam map. Add sockets only when a second provider is real (do not invent empty registries).
-4. Cuttle-owned session events next to chat messages: `user/message`, `context/inject`, `handoff`, `assistant/message`, `tool/call`, `tool/result`, `router/decision`. Compiler layers become events, not a blob that vanishes into the CLI. Query reports become a projection. **Model-visible means logged.**
-5. `src/api/llm_providers/<id>/` for API calling. Completion helpers and the router brain consume it.
+4. Partly done (`api.agent_events` stores turn steps; the event kinds below are not one stream yet). Cuttle-owned session events next to chat messages: `user/message`, `context/inject`, `handoff`, `assistant/message`, `tool/call`, `tool/result`, `router/decision`. Compiler layers become events, not a blob that vanishes into the CLI. Query reports become a projection. **Model-visible means logged.**
+5. Done as `src/api/model_providers/<provider>/`. Completion helpers and the router brain consume it.
 6. Register Context Compiler layers the same way. Knowledge retrieval is a new layer provider.
 
 **Router after the catalog is honest**
 
 7. Phase 0 preference table + CuttleRouter as a pin-able harness agent ([`.cuttle/docs/agent-router-todo.md`](../../.cuttle/docs/agent-router-todo.md)). Include DeepSeek Flash as a cheap tentacle in OOB discovery once the CLI is installed and keyed.
-8. Do not extract a standalone router package until runners do not touch Flask.
+8. Runners no longer touch Flask, so that blocker to a standalone router package is gone; extraction is still not planned.
 9. Prefer growing **agent ops** `python -m api.<module>` verbs (chat, workers, brain) over a product `cuttle` shell. See `.cuttle_global/docs/agent-ops-cli.md`.
 
 ---
@@ -160,11 +162,11 @@ Security in [`docs/ROADMAP.md`](../ROADMAP.md) still comes first when it conflic
 
 | Item | State |
 |---|---|
-| Bundled adapter | `src/api/agent_harness/agents/deepseek/` — `/deepseek`, auto-install `@deepseek-ai/dsh` |
+| Bundled adapter | `src/api/agent_harness/agents/deepseek/` — `/deepseek`; you install `@deepseek-ai/dsh` yourself (Cuttle only shows the install hint) |
 | Default / smoke model | `deepseek-v4-flash` (do not smoke Pro by accident) |
 | Auth | `DEEPSEEK_API_KEY` in `<home>/.env`; optional `DEEPSEEK_BASE_URL` |
 | Resume | **No** — headless one-shot; Cuttle handoff still applies on sticky switch |
-| Router | Not yet a first-class OOB / preference-table target — that is remaining work |
+| Router | Registered router target (`agent_router/registry.py`); out-of-box preference-table defaults are remaining work |
 | Kernel ideas | This file — independent of the adapter |
 
 When dsh grows native resume or a stable non-preview CLI, upgrade the adapter in place. Do not block the socket work on preview churn.
