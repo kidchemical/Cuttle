@@ -19,9 +19,11 @@ from core.agent_cli_env import agent_cli_env
 
 import asyncio
 import concurrent.futures
+import contextvars
 import json
 import os
 from pathlib import Path
+import threading
 from typing import Any, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
 
 from api.agent_harness.activity import (
@@ -45,11 +47,52 @@ if TYPE_CHECKING:
 
 _STDOUT_LINE_LIMIT = 16 * 1024 * 1024
 _REAP_GRACE_SEC = 10.0
+_DETACH_SETTLE_SEC = 0.25
 
 
 def _first_line(text: str, limit: int = 100) -> str:
     line = " ".join(str(text or "").split())
     return line[:limit]
+
+
+def _tool_label(name: str, args: Any) -> str:
+    if isinstance(args, dict):
+        for key in ("toolSummary", "Role", "CommandLine", "title", "Description"):
+            val = args.get(key)
+            if isinstance(val, str) and val.strip():
+                return _first_line(val, 80)
+    return _first_line(name or "background task", 80)
+
+
+class _Detach:
+    """Hand-off between a turn and an Antigravity ACP run that may outlive it."""
+
+    def __init__(self, wait: Any):
+        self.wait = wait
+        self.turn: "concurrent.futures.Future" = concurrent.futures.Future()
+        self.detached = False
+
+    async def run(self, coro: Any) -> Dict[str, Any]:
+        ctx = contextvars.copy_context()
+
+        def _main() -> None:
+            try:
+                res = ctx.run(asyncio.run, coro)
+            except BaseException as exc:  # noqa: BLE001
+                if not self.turn.done():
+                    self.turn.set_exception(exc)
+                elif self.detached:
+                    self.wait.finish("failed", f"Antigravity background run failed: {exc}")
+                return
+            if not self.turn.done():
+                self.turn.set_result(res)
+
+        threading.Thread(target=_main, name="antigravity-background-run", daemon=True).start()
+        return await asyncio.wrap_future(self.turn)
+
+    def hand_off(self, reply: Dict[str, Any]) -> None:
+        self.detached = True
+        self.turn.set_result(reply)
 
 
 def _fallback(error: str) -> Dict[str, Any]:
@@ -171,7 +214,18 @@ async def run_antigravity_turn_acp(
     chat_session_id: Optional[str] = None,
     timeout: float = 3600.0,
     cancel_event: Any = None,
+    background: Any = None,
+    _ctl: Optional[_Detach] = None,
 ) -> Dict[str, Any]:
+    if background is not None and _ctl is None:
+        ctl = _Detach(background)
+        return await ctl.run(run_antigravity_turn_acp(
+            prompt, exe=exe, cwd=cwd, resume=resume, model=model, effort=effort,
+            status_queue=status_queue, chat_session_id=chat_session_id,
+            timeout=timeout, cancel_event=cancel_event,
+            background=background, _ctl=ctl,
+        ))
+    ctl = _ctl
     if not (prompt or "").strip():
         return {"success": False, "error": "No prompt provided", "output": ""}
     workdir = cwd or os.getcwd()
@@ -230,9 +284,70 @@ async def run_antigravity_turn_acp(
         "cur_msg_buf": "",
         "thought_seq": 0,
         "cur_thought_id": None,
+        "active_tools": {},
+        "posted": 0,
     }
     messages: List[str] = []
     reap_handle: List[Optional[asyncio.TimerHandle]] = [None]
+    detach_handle: List[Optional[asyncio.TimerHandle]] = [None]
+
+    def _cancel_detach_timer() -> None:
+        if detach_handle[0] is not None:
+            detach_handle[0].cancel()
+            detach_handle[0] = None
+
+    def _has_unposted_output() -> bool:
+        return bool(st["cur_msg_buf"].strip()) or len(messages) > st["posted"]
+
+    def _on_idle_with_background() -> None:
+        detach_handle[0] = None
+        if ctl is None or st["terminal"] is not None or not st["active_tools"]:
+            return
+        _close_assistant_segment()
+        if len(messages) <= st["posted"]:
+            return
+        body = "\n\n".join(messages[st["posted"]:]).strip()
+        st["posted"] = len(messages)
+        if not body:
+            return
+        task_labels = list(st["active_tools"].values())
+        if not ctl.detached:
+            try:
+                card = ctl.wait.start(task_labels, pid=proc.pid)
+            except Exception as exc:
+                print(f"[antigravity] background detach unavailable: {exc}", flush=True)
+                st["posted"] = 0
+                return
+            ctl.wait.claim_steer(st["steer_token"])
+            activity.status_queue = ctl.wait.status_sink()
+            ctl.hand_off({
+                "success": True,
+                "output": f"{body}\n\n{card}".strip(),
+                "error": None,
+                "usage": dict(st["usage_totals"]),
+                "context_tokens": int(st["context_tokens"] or 0),
+                "session_id": st["session_id"],
+                "resolved_model": st["resolved_model"],
+                "steered": delivery.received_count,
+                "undelivered_steers": [],
+                "transport": "acp",
+                "stderr": "",
+                "returncode": None,
+                "background_job": ctl.wait.job_id,
+            })
+            return
+        from api.agent_harness.background_wait import waiting_label
+
+        ctl.wait.followup(body)
+        ctl.wait.waiting(waiting_label(task_labels))
+
+    def _schedule_detach_settle() -> None:
+        if ctl is None or st["terminal"] is not None or not st["active_tools"]:
+            return
+        if not _has_unposted_output():
+            return
+        _cancel_detach_timer()
+        detach_handle[0] = loop.call_later(_DETACH_SETTLE_SEC, _on_idle_with_background)
 
     def _note(fn: Any, *args: Any) -> None:
         if st["steer_token"] is None:
@@ -265,7 +380,10 @@ async def run_antigravity_turn_acp(
     def _finish_connection() -> None:
         nonlocal accepting_steers
         accepting_steers = False
+        _cancel_detach_timer()
         _close_assistant_segment()
+        if ctl is not None:
+            ctl.wait.claim_steer(None)
         if st["steer_token"] is not None:
             steer_registry.unregister(chat_session_id, st["steer_token"])
             st["steer_token"] = None
@@ -289,11 +407,15 @@ async def run_antigravity_turn_acp(
             _accumulate_usage(st["usage_totals"], result.get("usage"))
         # agy acp never echoes a live session/prompt as user_message_chunk, so a
         # steer's own prompt ending normally (end_turn, or superseded by a later
-        # steer — agy has then taken it into the session) is its receipt.
+        # steer — agy has then taken it into the session) is its receipt. Confirm
+        # retroactively (note_delivered, not note_echo) so it never claims a later
+        # steer's output item as its own reply excerpt.
         steer_receipt = st["steer_prompts"].pop(req_id, None)
         stop = str((result or {}).get("stopReason") or "end_turn")
         if steer_receipt is not None and error is None and stop in ("end_turn", "max_tokens"):
-            if delivery.confirm(steer_receipt):
+            if delivery.confirm(steer_receipt, notify=False):
+                if steer_receipt.steer_id:
+                    _note(steer_registry.note_delivered, steer_receipt.steer_id)
                 activity.emit(f"steer received: {_first_line(steer_receipt.text, 100)}", force=True)
         if error is not None:
             st["turn_error"] = rpc_error_text(error)
@@ -469,6 +591,9 @@ async def run_antigravity_turn_acp(
             delta = _extract_chunk_text(update.get("content"))
             if not delta:
                 return
+            _cancel_detach_timer()
+            if ctl is not None and ctl.detached:
+                ctl.wait.working("Antigravity is answering…")
             st["cur_thought_id"] = None
             if st["cur_msg_id"] is None:
                 st["msg_seq"] += 1
@@ -487,6 +612,9 @@ async def run_antigravity_turn_acp(
             delta = _extract_chunk_text(update.get("content"))
             if not delta:
                 return
+            _cancel_detach_timer()
+            if ctl is not None and ctl.detached:
+                ctl.wait.working("Antigravity is thinking…")
             _close_assistant_segment()
             if st["cur_thought_id"] is None:
                 st["thought_seq"] += 1
@@ -505,6 +633,13 @@ async def run_antigravity_turn_acp(
             status = str(update.get("status") or "").lower()
             failed = status in ("failed", "error", "cancelled", "denied")
             done = status in ("completed", "done") or failed
+            if done:
+                st["active_tools"].pop(call_id, None)
+                if ctl is not None and ctl.detached:
+                    ctl.wait.working("Antigravity is following up…")
+            else:
+                _cancel_detach_timer()
+                st["active_tools"][call_id] = _tool_label(name, args)
             result_payload = update.get("rawOutput") if done else None
             if done and result_payload is None and update.get("content") is not None:
                 result_payload = update.get("content")
@@ -524,6 +659,7 @@ async def run_antigravity_turn_acp(
                 used = 0
             if used > 0:
                 st["context_tokens"] = used
+            _schedule_detach_settle()
             return
 
     def _on_line(raw: bytes) -> None:
@@ -587,6 +723,40 @@ async def run_antigravity_turn_acp(
             await kill_process_tree(proc)
 
     session_id = st["session_id"]
+    if ctl is not None and ctl.detached:
+        rem = "\n\n".join(messages[st["posted"]:]).strip()
+        if rem:
+            ctl.wait.followup(rem)
+        closing = delivery.closing_notice("Antigravity") or ""
+        if run is not None and run.cancelled:
+            ctl.wait.finish("failed", "Stopped")
+        elif run is not None and run.timed_out:
+            reason = run.reason or f"timed out after {timeout:.0f}s"
+            notice = format_interrupt_notice(
+                "Antigravity",
+                f"Antigravity {reason}" if "Antigravity" not in reason else reason,
+                elapsed_sec=run.elapsed_sec,
+                session_saved=bool(session_id),
+                resume_slash="antigravity",
+            )
+            ctl.wait.finish(
+                "failed",
+                f"Antigravity {reason}",
+                notice="\n\n".join(p for p in (closing, notice) if p),
+            )
+        elif st["terminal"] in ("end_turn", "max_tokens") and not st["turn_error"]:
+            ctl.wait.finish("done", "Background work finished", notice=closing)
+        else:
+            stderr_tail = (run.stderr if run is not None else b"").decode("utf-8", errors="replace").strip()
+            err_msg = (
+                st["turn_error"]
+                or (f"turn {st['terminal']}" if st["terminal"] else "")
+                or _first_line(stderr_tail, 300)
+                or "Antigravity ended before its background work finished"
+            )
+            ctl.wait.finish("failed", err_msg[:300], notice=closing)
+        return {"success": True, "output": "", "error": None, "session_id": session_id}
+
     if delivery.accepted_count:
         display = "\n\n".join(messages).strip()
     else:

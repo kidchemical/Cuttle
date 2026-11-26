@@ -1,7 +1,8 @@
 /* ================================================================
    Cuttle Chat — media thumbs, lightbox and image menu (chat_media.js).
    Owner: markdown/attachment media thumb HTML, the poster fallback, the
-   shared lightbox (gallery, fit/actual/zoom/pan/pinch, captions from the
+   shared lightbox (opened by thumbs and by links to image/video files;
+   gallery, fit/actual/zoom/pan/pinch, captions from the
    staging sidecar `/api/shared-media/meta`, download) and the image
    right-click Copy / Save menu, plus all of their state.
 
@@ -28,6 +29,14 @@
         const path = String(url || '').split('?')[0].split('#')[0].toLowerCase();
         if (/\.(mp4|webm|mov|m4v|ogg|ogv)$/i.test(path)) return 'video';
         return 'image';
+    }
+
+    /** 'image' / 'video' when a link's path names a media file, else ''. */
+    function mediaLinkKind(url) {
+        const path = String(url || '').split('?')[0].split('#')[0].toLowerCase();
+        if (/\.(mp4|webm|mov|m4v|ogv)$/.test(path)) return 'video';
+        if (/\.(png|jpe?g|gif|webp|avif|bmp|svg)$/.test(path)) return 'image';
+        return '';
     }
 
     /** Conventional mid-frame poster for staged videos: foo.mp4 → foo.poster.jpg */
@@ -848,13 +857,44 @@
             return null;
         }
 
+        /** A link in a chat bubble whose href is a viewable image/video, else null. */
+        function mediaLinkFromTarget(target) {
+            const a = target && target.closest && target.closest('.message a[href]');
+            if (!a || a.closest('.cuttle-media-thumb')) return null;
+            const href = a.getAttribute('href') || '';
+            return isSafeMediaSrc(href) && mediaLinkKind(href) ? a : null;
+        }
+
+        function mediaLinkItem(a) {
+            let src = a.getAttribute('href') || '';
+            // Rendered chips carry absolute URLs; same-origin ones go back to the
+            // site path so `/output/shared/` captions and downloads still apply.
+            try {
+                const u = new URL(src, frameWin.location.href);
+                if (u.origin === frameWin.location.origin) src = u.pathname + u.search;
+            } catch (_) {}
+            return {
+                src: src,
+                kind: mediaLinkKind(src),
+                title: mediaBasenameFromSrc(src),
+                description: '',
+                download: mediaDownloadUrl(src),
+                originalPath: '',
+            };
+        }
+
+        /** Bubble gallery in DOM order: media thumbs plus links to media files. */
         function collectBubbleMediaItems(fromEl) {
             const bubble = fromEl && fromEl.closest && fromEl.closest('.message');
             const root = bubble || fromEl;
             if (!root) return [];
-            const nodes = root.querySelectorAll('.cuttle-media-thumb[data-src]');
+            const nodes = root.querySelectorAll('.cuttle-media-thumb[data-src], a[href]');
             const items = [];
             nodes.forEach(function (node) {
+                if (node.matches('a[href]')) {
+                    if (mediaLinkFromTarget(node) === node) items.push(mediaLinkItem(node));
+                    return;
+                }
                 const src = node.getAttribute('data-src') || '';
                 if (!src || !isSafeMediaSrc(src)) return;
                 items.push({
@@ -1274,10 +1314,20 @@
                 function (e) {
                     const thumb =
                         e.target && e.target.closest && e.target.closest('.cuttle-media-thumb[data-src]');
-                    if (!thumb) return;
+                    const link = thumb ? null : mediaLinkFromTarget(e.target);
+                    if (!thumb && !link) return;
                     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
                     e.preventDefault();
                     e.stopPropagation();
+                    if (link) {
+                        // Image/video links open in the lightbox, not a _blank window
+                        // that replaces the app view with no way back.
+                        const linkItems = collectBubbleMediaItems(link);
+                        const linkSrc = mediaLinkItem(link).src;
+                        const linkIdx = linkItems.findIndex(function (it) { return it.src === linkSrc; });
+                        openCuttleLightbox(linkItems, Math.max(0, linkIdx));
+                        return;
+                    }
                     const picked = galleryFor ? galleryFor(thumb) : null;
                     if (picked && Array.isArray(picked.items) && picked.items.length) {
                         openCuttleLightbox(picked.items, picked.index || 0);
@@ -1338,6 +1388,7 @@
     const api = {
         mediaKindFromUrl,
         mediaPosterUrl,
+        mediaLinkKind,
         isSafeMediaSrc,
         mediaDownloadUrl,
         mediaDownloadFilename,

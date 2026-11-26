@@ -153,8 +153,18 @@ def test_windows_client_launcher_prefers_checkout_over_stale_unpacked_build():
 def test_shortcut_script_keeps_the_installed_builds_cuttle_lnk():
     """Desktop\\Cuttle.lnk from the release installer is not a legacy launcher."""
     text = (REPO / "src" / "scripts" / "create_desktop_shortcuts.ps1").read_text(encoding="utf-8")
-    loop = text[text.index("foreach ($name in @('Cuttle.lnk'"):]
+    assert "$legacyNames = @('Cuttle.lnk'" in text
+    loop = text[text.index("foreach ($name in $legacyNames)"):]
     assert loop.index("StartsWith($repo") < loop.index("Remove-Item")
+
+
+def test_shortcut_script_repairs_renamed_repo_shortcuts_in_place():
+    """kcslaptop: "Cuttle Host (repo)" must be updated, not joined by a new "Cuttle Host"."""
+    text = (REPO / "src" / "scripts" / "create_desktop_shortcuts.ps1").read_text(encoding="utf-8")
+    scan = text[text.index("$existing = @{}"):text.index("function New-CuttleShortcut")]
+    assert "$legacyNames -contains $lnk.Name" in scan  # legacy names are deleted later
+    assert "StartsWith($repo" in scan
+    assert "if ($existing.ContainsKey($Arguments)) { $path = $existing[$Arguments] }" in text
 
 
 def test_windows_launcher_runs_the_daemon_in_one_console():

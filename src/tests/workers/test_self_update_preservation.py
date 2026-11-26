@@ -189,7 +189,7 @@ def test_coordinator_embeds_preservation_owner(monkeypatch):
 
 def test_host_channel_embeds_heads_it_already_delivered(monkeypatch):
     monkeypatch.setattr(platform, 'submit_job', lambda **kwargs: kwargs)
-    monkeypatch.setattr(platform, 'get_store', lambda: SimpleNamespace(host_delivered_heads=lambda wid: ['0fc771cba']))
+    monkeypatch.setattr(platform, 'get_store', lambda: SimpleNamespace(host_delivered_heads=lambda wid: ['0fc771cba'], get_worker=lambda wid: None))
     job = platform.submit_self_update(target_worker_id='fixture', update_source='host')
     assert "EMBEDDED_HOST_DELIVERED_HEADS: tuple = ('0fc771cba',)" in job['params']['checkout_helper_text']
 

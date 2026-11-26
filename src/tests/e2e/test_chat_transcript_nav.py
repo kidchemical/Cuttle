@@ -110,7 +110,7 @@ def test_jump_to_message_and_back_to_latest(browser, static_server):
         page.close()
 
 
-def test_pins_move_to_top_and_persist_across_reload(browser, static_server):
+def test_pins_copy_to_top_and_persist_across_reload(browser, static_server):
     world = _world()
     page, frame, errors = _open(browser, static_server, world)
     try:
@@ -118,11 +118,14 @@ def test_pins_move_to_top_and_persist_across_reload(browser, static_server):
         item.hover()  # the pin control shows on hover
         item.locator("[data-pin-toggle]").click()
         pinned = frame.locator("#messageNav .message-nav-item.is-pinned")
-        expect(pinned).to_have_count(1)
-        expect(pinned.locator(".message-nav-num")).to_have_text("5")
-        # Pinned items lead the rail, then a separator, then the rest.
+        expect(pinned).to_have_count(2)
+        expect(pinned.locator(".message-nav-num")).to_have_text(["5", "5"])
+        # A pinned copy leads the rail, then a separator, then every message in
+        # order — the pinned one stays in its own slot too.
         expect(frame.locator("#messageNav > :first-child .message-nav-num")).to_have_text("5")
         expect(frame.locator("#messageNav .message-nav-sep")).to_have_count(1)
+        expect(frame.locator("#messageNav .message-nav-sep ~ .message-nav-item .message-nav-num")).to_have_text(
+            [str(i) for i in range(1, frame.locator("#messageNav .message-nav-sep ~ .message-nav-item").count() + 1)])
         expect(frame.locator('.message[data-message-index="5"]')).to_have_class(
             re.compile(r"\bis-pinned-message\b"))
         stored = frame.locator("body").evaluate(
@@ -131,10 +134,10 @@ def test_pins_move_to_top_and_persist_across_reload(browser, static_server):
         page.reload(wait_until="domcontentloaded")
         frame = page.frame_locator("iframe")
         frame.locator("#chatMessages .message.assistant").last.wait_for(state="visible")
-        expect(frame.locator("#messageNav .message-nav-item.is-pinned .message-nav-num")).to_have_text("5")
-        # Unpin restores plain order.
-        frame.locator("#messageNav .message-nav-item.is-pinned").hover()
-        frame.locator("#messageNav .message-nav-item.is-pinned [data-pin-toggle]").click()
+        expect(frame.locator("#messageNav .message-nav-item.is-pinned .message-nav-num")).to_have_text(["5", "5"])
+        # Unpinning either copy removes the top shortcut and the separator.
+        frame.locator("#messageNav .message-nav-item.is-pinned").first.hover()
+        frame.locator("#messageNav .message-nav-item.is-pinned [data-pin-toggle]").first.click()
         expect(frame.locator("#messageNav .message-nav-item.is-pinned")).to_have_count(0)
         expect(frame.locator("#messageNav .message-nav-sep")).to_have_count(0)
         assert not errors

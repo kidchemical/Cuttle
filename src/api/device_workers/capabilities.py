@@ -221,6 +221,13 @@ def _repo_root() -> Path:
     return Path(env_root) if env_root else root
 
 
+def is_checkout() -> bool:
+    """A git checkout updates by ``cuttle_self_update``; a packaged install
+    (the release installer's ``resources/app``) has no ``.git`` and updates
+    only by installing the next release."""
+    return (_repo_root() / ".git").exists()
+
+
 def _git_stdout(*args: str) -> str:
     try:
         completed = subprocess.run(
@@ -368,7 +375,8 @@ def collect_capabilities(
         ),
         "ollama": _which("ollama"),
         "agent_cursor": _which("agent") or _which("cursor-agent"),
-        "cuttle_self_update": True,
+        "cuttle_self_update": is_checkout(),
+        "install": "checkout" if is_checkout() else "packaged",
         "client_daemon": bool(os.environ.get("CUTTLE_CLIENT_DAEMON")),
         "features": sorted(RUNNING_FEATURES),
         "blender_python_expr": True,

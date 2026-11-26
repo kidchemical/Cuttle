@@ -92,13 +92,15 @@ class SteerDelivery:
             self._resolve(receipt.text.strip())
         return receipt.accepted
 
-    def confirm(self, receipt: SteerReceipt) -> bool:
+    def confirm(self, receipt: SteerReceipt, *, notify: bool = True) -> bool:
         """The vendor finished this send's own request: it was read. True when newly confirmed.
 
         For transports where each send is its own request (an ACP mid-turn
         ``session/prompt``) a normal completion is the receipt; ``agy acp`` never
         echoes live user input. A held echo in scope is consumed as this send's
-        own, so it cannot later confirm an identical sibling.
+        own, so it cannot later confirm an identical sibling. Pass ``notify=False``
+        when the caller reports retroactive delivery itself (without claiming
+        subsequent output as this send's reply).
         """
         if receipt.received:
             return False
@@ -110,7 +112,8 @@ class SteerDelivery:
         receipt.received = True
         receipt.accepted = True
         receipt.rejected = False
-        self._notify([receipt])
+        if notify:
+            self._notify([receipt])
         return True
 
     # ── matching ───────────────────────────────────────────────────────────

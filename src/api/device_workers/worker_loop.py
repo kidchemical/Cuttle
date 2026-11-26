@@ -40,6 +40,12 @@ def _meta_from_ads(ads: dict) -> dict:
         meta["cuttle_git_rev"] = rev
     if boot:
         meta["boot_git_rev"] = boot
+    caps = ads.get("capabilities") if isinstance(ads.get("capabilities"), dict) else {}
+    if caps.get("install") == "packaged":
+        # The host merges meta: clear a rev left by an earlier checkout run of
+        # this worker id, or the host keeps comparing it (needs_update forever).
+        meta["cuttle_git_rev"] = ""
+        meta["boot_git_rev"] = ""
     if ads.get("boot_at"):
         try:
             meta["boot_at"] = float(ads["boot_at"])

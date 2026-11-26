@@ -43,7 +43,7 @@ import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-DETACHABLE_AGENTS = ("claude",)
+DETACHABLE_AGENTS = ("claude", "antigravity")
 # Keys that describe one bubble only; follow-ups never inherit them.
 _PER_BUBBLE = frozenset({
     "response", "output", "usage", "cost", "success", "type", "error", "steered",
