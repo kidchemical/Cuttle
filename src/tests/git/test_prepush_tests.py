@@ -83,6 +83,24 @@ def test_fast_selection_maps_script_changes_to_tests_that_read_them(repo):
     assert "src/tests/runtime/test_launchers.py" in paths
 
 
+def test_fast_selection_skips_conftest_collect_ignore(repo):
+    """v0.13.3 push: `platform` (device_workers/platform.py) matched `platform.openai.com`
+    in a paid diagnostics script that conftest never collects."""
+    _write(repo, "src/tests/conftest.py", 'collect_ignore = ["e2e", "diagnostics/test_api_key.py"]\n')
+    _write(repo, "src/tests/diagnostics/test_api_key.py", "# widget_board\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "seed")
+    base = _git(repo, "rev-parse", "HEAD")
+    _write(repo, "src/api/widget_board.py", "X = 4\n")
+    _git(repo, "commit", "-am", "change")
+    head = _git(repo, "rev-parse", "HEAD")
+
+    paths, _ = pt.select_fast_tests(pt.changed_files(base, head, repo), head, repo)
+
+    assert "src/tests/widgets/test_widget_board.py" in paths
+    assert "src/tests/diagnostics/test_api_key.py" not in paths
+
+
 def test_fast_selection_over_budget_keeps_only_changed_tests(repo, monkeypatch):
     base = _git(repo, "rev-parse", "HEAD")
     _write(repo, "src/api/widget_board.py", "X = 3\n")

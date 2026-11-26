@@ -137,6 +137,7 @@ step, fix. Keep entries short; the theme sections hold the explanation.
 
 | Date | Job | Theme | Failure | Fix |
 |---|---|---|---|---|
+| 2026-11-25 | pre-push fast tier (v0.13.3) | 4 | ran `diagnostics/test_api_key.py` (async, paid API): the `platform` stem matched `platform.openai.com`, and pytest ignores `collect_ignore` for files named on the command line | fast tier filters conftest `collect_ignore` itself |
 | 2026-11-25 | local release-check (v0.13.3) | 4 | `test_shortcut_script_keeps_the_installed_builds_cuttle_lnk` anchored on a list a `.ps1` refactor moved; the push tier never ran it because only `.py/.js/.css/.html` changes selected related tests | test anchor updated; `.ps1/.sh/.cmd` now select tests that name the script |
 | 2026-11-25 | Quality / python (ubuntu, PR) | 5 | `test_snapshot_records_lines_and_preserves_index`: `-wal` vanished before the size/binary probe | probe skips a vanished file too |
 | 2026-11-25 | Quality / python (ubuntu, PR) | 5 | `test_accepted_but_unread_followup_is_visible[duplicate_echo]`: second identical steer began before the first echo was read (ambiguous by design) | fake echoes before the first ack |

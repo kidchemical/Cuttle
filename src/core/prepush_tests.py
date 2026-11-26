@@ -101,10 +101,35 @@ def changed_files(base: Optional[str], head: str, repo: Path = REPO) -> List[str
     return [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
 
 
+def _collect_ignored(head: str, repo: Path) -> Tuple[str, ...]:
+    """``collect_ignore`` of ``src/tests/conftest.py`` as repo paths.
+
+    pytest applies that list only while collecting a directory: a file named on
+    the command line is collected anyway, so the fast tier filters it itself
+    (a paid-API diagnostics script once ran because it mentioned
+    ``platform.openai.com``).
+    """
+    import ast
+
+    source = _git("show", f"{head}:src/tests/conftest.py", cwd=repo).stdout or ""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return ()
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "collect_ignore" for t in node.targets)
+                and isinstance(node.value, (ast.List, ast.Tuple))):
+            return tuple(f"src/tests/{e.value}" for e in node.value.elts
+                         if isinstance(e, ast.Constant) and isinstance(e.value, str))
+    return ()
+
+
 def _tracked_tests(head: str, repo: Path) -> List[str]:
     proc = _git("ls-tree", "-r", "--name-only", head, "--", "src/tests", cwd=repo)
+    ignored = _collect_ignored(head, repo)
     return [p for p in (proc.stdout or "").splitlines()
-            if re.search(r"(^|/)test_[^/]*\.py$", p) and not p.startswith(FAST_EXCLUDE)]
+            if re.search(r"(^|/)test_[^/]*\.py$", p) and not p.startswith(FAST_EXCLUDE)
+            and not any(p == i or p.startswith(i + "/") for i in ignored)]
 
 
 def _tests_mentioning(stems: Iterable[str], head: str, repo: Path) -> List[str]:
