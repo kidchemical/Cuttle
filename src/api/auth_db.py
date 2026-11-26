@@ -2818,11 +2818,16 @@ class AuthDatabase:
 
 # Singleton instance
 _db_instance = None
+_db_instance_lock = threading.Lock()
 
 def get_auth_db() -> AuthDatabase:
     """Get singleton database instance"""
     global _db_instance
     if _db_instance is None:
-        # Pass DB_PATH explicitly so monkeypatches / env redirects apply.
-        _db_instance = AuthDatabase(DB_PATH)
+        # Concurrent first callers would each run schema setup on one file
+        # ("database schema has changed"); build it once.
+        with _db_instance_lock:
+            if _db_instance is None:
+                # Pass DB_PATH explicitly so monkeypatches / env redirects apply.
+                _db_instance = AuthDatabase(DB_PATH)
     return _db_instance
