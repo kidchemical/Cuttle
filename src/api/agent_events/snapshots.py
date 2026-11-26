@@ -50,11 +50,14 @@ def snapshot(root,qid,phase,limit=2_000_000):
             if path==scratch or scratch in path.parents:
                 continue
             if path.is_file() and not path.is_symlink():
-                if path.stat().st_size>limit:
-                    skipped[rel]='size'; continue
-                with path.open('rb') as f:
-                    if b'\0' in f.read(8192):
-                        skipped[rel]='binary'; continue
+                try:
+                    if path.stat().st_size>limit:
+                        skipped[rel]='size'; continue
+                    with path.open('rb') as f:
+                        if b'\0' in f.read(8192):
+                            skipped[rel]='binary'; continue
+                except FileNotFoundError:  # gone since status (SQLite -wal, lock files)
+                    skipped[rel]='vanished'; continue
             stage.append(rel)
         # Stage in one git process. One `git add` per dirty path turns a large
         # dirty worktree (Unity asset imports, generated scenes) into thousands

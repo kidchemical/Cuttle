@@ -45,6 +45,14 @@ for line in sys.stdin:
             break
         if mode in ("echo_before_ack", "completion_before_ack_with_echo"):
             echo(text)
+        if mode == "duplicate_echo" and count == 1:
+            # Echo before the ack: once acked, the second identical send can
+            # begin before the reader sees a later echo, and then one echo for
+            # two sends is (rightly) ambiguous. That race failed on CI.
+            echo(text)
+            echo(text)
+            out(ack)
+            continue
         if mode.startswith("completion_before_ack"):
             complete()
             out(ack)
@@ -58,10 +66,6 @@ for line in sys.stdin:
             echo(text, session="other")
         elif mode == "not_steered":
             echo(text, steered=False)
-        elif mode == "duplicate_echo" and count == 1:
-            echo(text)
-            echo(text)
-            continue
         complete()
         if mode == "echo_after_completion":
             echo(text)

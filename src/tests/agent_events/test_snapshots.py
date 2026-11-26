@@ -127,3 +127,24 @@ def test_file_vanishing_during_add_is_skipped_not_fatal(tmp_path, monkeypatch):
     result=snapshots.snapshot(str(tmp_path),'vanish','start')
     assert result['skipped']=={'db.sqlite3-wal':'vanished'}
     assert 'kept.txt' in real(tmp_path,'ls-tree','--name-only',result['tree'])
+
+
+def test_file_vanishing_before_add_is_skipped_not_fatal(tmp_path, monkeypatch):
+    """Gone between git status and the size/binary probe (the other half of the race)."""
+    from pathlib import Path
+    from api.agent_events import snapshots
+
+    git(tmp_path,'init')
+    (tmp_path/'kept.txt').write_text('kept\n', encoding="utf-8")
+    (tmp_path/'db.sqlite3-wal').write_text('wal\n', encoding="utf-8")
+    real_open=Path.open
+
+    def flaky_open(self, *a, **k):
+        if self.name=='db.sqlite3-wal':
+            raise FileNotFoundError(2, 'No such file or directory', str(self))
+        return real_open(self, *a, **k)
+
+    monkeypatch.setattr(Path,'open',flaky_open)
+    result=snapshots.snapshot(str(tmp_path),'vanish2','start')
+    assert result['skipped']=={'db.sqlite3-wal':'vanished'}
+    assert 'kept.txt' in snapshots.git(tmp_path,'ls-tree','--name-only',result['tree'])
