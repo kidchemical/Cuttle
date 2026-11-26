@@ -137,6 +137,7 @@ step, fix. Keep entries short; the theme sections hold the explanation.
 
 | Date | Job | Theme | Failure | Fix |
 |---|---|---|---|---|
+| 2026-11-26 | Quality / python (ubuntu, tag build) | 5 | `test_message_sent_while_waiting_steers_into_the_live_run`: the fake CLI echoed the steer before the receipt was built, so it started `delivered` (passed on the PR run of the same commit) | test accepts pending or delivered with a matching `delivered_at` |
 | 2026-11-25 | pre-push fast tier (v0.13.3) | 4 | ran `diagnostics/test_api_key.py` (async, paid API): the `platform` stem matched `platform.openai.com`, and pytest ignores `collect_ignore` for files named on the command line | fast tier filters conftest `collect_ignore` itself |
 | 2026-11-25 | local release-check (v0.13.3) | 4 | `test_shortcut_script_keeps_the_installed_builds_cuttle_lnk` anchored on a list a `.ps1` refactor moved; the push tier never ran it because only `.py/.js/.css/.html` changes selected related tests | test anchor updated; `.ps1/.sh/.cmd` now select tests that name the script |
 | 2026-11-25 | Quality / python (ubuntu, PR) | 5 | `test_snapshot_records_lines_and_preserves_index`: `-wal` vanished before the size/binary probe | probe skips a vanished file too |

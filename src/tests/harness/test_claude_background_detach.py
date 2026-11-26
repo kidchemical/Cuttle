@@ -290,11 +290,14 @@ def test_message_sent_while_waiting_steers_into_the_live_run(tmp_path, monkeypat
     assert ran == [], "no second claude run may start while the detached run is live"
     assert len(steered_rows) == 1
     receipt = steered_rows[0].pop("steer")
-    # Accepted into the background run, not yet proven read: ``delivered`` is
-    # reserved for a confirmed echo, so acceptance is pending + detached.
+    # Accepted into the background run: ``delivered`` is reserved for a
+    # confirmed echo. The fake CLI may echo before the receipt is built (v0.13.3
+    # tag build on Ubuntu), so either state is valid, with a matching stamp.
+    assert receipt["state"] in ("pending", "delivered")
+    assert (receipt["delivered_at"] is None) == (receipt["state"] == "pending")
     assert receipt["steer_id"] and receipt == {
-        "v": 1, "steer_id": receipt["steer_id"], "state": "pending",
-        "delivered_at": None, "mode": "detached", "reply": None, "covers": []}
+        "v": 1, "steer_id": receipt["steer_id"], "state": receipt["state"],
+        "delivered_at": receipt["delivered_at"], "mode": "detached", "reply": None, "covers": []}
     assert steered_rows == [{"steered": True, "steered_agent": "claude", "steer_idle": True}]
     assert chat_delivery.is_busy(6103) is False
     # While the run answers, every device sees a typing bubble: live status is
