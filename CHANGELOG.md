@@ -1,12 +1,14 @@
 # Changelog
 
-User-visible changes to Cuttle. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
-[Semantic Versioning](https://semver.org/) (the release version lives in
-`electron/package.json`). Each release also gets notes on its
-[GitHub Release](https://github.com/kidchemical/Cuttle/releases) page.
+**This file is no longer maintained.** Release notes for each published release are on the
+[GitHub Releases](https://github.com/kidchemical/Cuttle/releases) page; Cuttle also
+shows the latest ones under Settings → General → **Cuttle updates** and in the
+**What's new** panel after an update.
 
-## [Unreleased]
+## Before release notes (2026-10-05 to 2026-11-20)
+
+Frozen record of the changes logged here before published releases took over.
+Nothing below is updated.
 
 ### Added
 - Agents run commands on other machines through the remote-access tool you
@@ -83,5 +85,3 @@ User-visible changes to Cuttle. The format follows
 - The unused repository-root `bot_config.json`.
 
 Earlier changes predate this changelog; see the git history.
-
-[Unreleased]: https://github.com/kidchemical/Cuttle/commits/main

@@ -261,7 +261,7 @@ flowchart LR
 
 ## Development
 
-Contributions are welcome; start with [`CONTRIBUTING.md`](CONTRIBUTING.md). Notable changes are listed in [`CHANGELOG.md`](CHANGELOG.md).
+Contributions are welcome; start with [`CONTRIBUTING.md`](CONTRIBUTING.md). Release notes for each published release are on [GitHub Releases](https://github.com/kidchemical/Cuttle/releases).
 
 Install runtime and development dependencies before testing. POSIX, from the repo root:
 
