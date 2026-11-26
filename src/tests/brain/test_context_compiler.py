@@ -100,6 +100,17 @@ def test_inventory_lists_cuttle_files(tmp_path):
     assert "demo.yaml" in inv["actions"]
 
 
+def test_inventory_skips_commands_readme(tmp_path):
+    """The scaffold's commands/README.md is not a slash command."""
+    from api.cuttle_brain.context_compiler import project_inventory
+
+    commands = tmp_path / ".cuttle" / "commands"
+    commands.mkdir(parents=True)
+    (commands / "README.md").write_text("# Project commands\n", encoding="utf-8")
+    (commands / "build.md").write_text("---\nname: build\n---\n", encoding="utf-8")
+    assert project_inventory(str(tmp_path))["commands"] == ["build.md"]
+
+
 def test_handoff_only_when_agent_changes(tmp_path, monkeypatch):
     from api.cuttle_brain import handoff as ho
 
