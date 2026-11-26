@@ -103,6 +103,10 @@ _b3_runner = _b3_make_runner()
 if not _b3_mode or _b3_runner is None:
     _b3_refuse("fake runner NOT activated (mode=%r)" % (_b3_mode,))
 _b3_turns.default_runner = _b3_runner
+# The router's availability check refreshes account budgets by running the
+# real vendor CLIs (`agy /usage`, …): never from a test subprocess.
+import api.agent_router.budget as _b3_budget
+_b3_budget._fetchers = lambda: {}
 """
 
 

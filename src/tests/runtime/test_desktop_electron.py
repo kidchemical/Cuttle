@@ -165,7 +165,9 @@ def test_linux_wayland_sessions_launch_under_xwayland(monkeypatch, tmp_path):
                              capture_output=True, text=True, encoding="utf-8",
                              env={"PATH": "/usr/bin:/bin", **env})
         return out.stdout.strip()
-    if subprocess.run(["bash", "-c", "true"]).returncode == 0:
+    # A Linux launcher: on Windows ``bash`` may be WSL's, which cannot read a
+    # Windows path, so only POSIX sources the script (text checks run everywhere).
+    if os.name != "nt" and subprocess.run(["bash", "-c", "true"]).returncode == 0:
         assert shell_args(XDG_SESSION_TYPE="wayland") == "--ozone-platform=x11"
         assert shell_args(XDG_SESSION_TYPE="wayland", CUTTLE_ELECTRON_WAYLAND="1") == ""
         assert shell_args(XDG_SESSION_TYPE="x11") == ""

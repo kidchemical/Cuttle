@@ -12,8 +12,8 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -91,10 +91,22 @@ def fetch_antigravity_quota(*, timeout: float = 45.0) -> Dict[str, Any]:
     exe = antigravity_executable()
     if not exe:
         return {"success": False, "error": "Antigravity CLI (`agy`) not found on PATH."}
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        usage_f = pool.submit(_run_command, exe, "/usage", timeout)
-        credits_f = pool.submit(_run_command, exe, "/credits", timeout)
-        usage, credits = usage_f.result(), credits_f.result()
+    # Daemon threads, not a ThreadPoolExecutor: Python joins executor workers at
+    # interpreter exit, so a slow `agy` (up to ``timeout``) held every CLI that
+    # refreshed the router budget open after its work was done.
+    results: Dict[str, Dict[str, Any]] = {}
+
+    def _probe(command: str) -> None:
+        results[command] = _run_command(exe, command, timeout)
+
+    threads = [threading.Thread(target=_probe, args=(c,), name=f"agy{c}", daemon=True)
+               for c in ("/usage", "/credits")]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join(timeout + 5)
+    late = {"status": "ERROR", "error": "`agy` did not answer in time"}
+    usage, credits = results.get("/usage", late), results.get("/credits", late)
     if str(usage.get("status") or "").upper() != "SUCCESS":
         return {"success": False, "error": str(usage.get("error") or "Antigravity usage unavailable")[:240]}
     command = usage.get("command") if isinstance(usage.get("command"), dict) else {}

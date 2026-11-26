@@ -9,6 +9,8 @@ import time
 import psutil
 import pytest
 
+from tests.process_tree import kill_tree, settled_children
+
 from api.jobs import processes as P
 
 
@@ -76,16 +78,12 @@ def marked_child():
     code = "import subprocess,sys,time; subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); time.sleep(60)"
     proc = subprocess.Popen([sys.executable, "-c", code], env=env)
     proc.chat = chat
-    deadline = time.time() + 10
-    while time.time() < deadline and not psutil.Process(proc.pid).children():
-        time.sleep(0.05)
+    # The whole tree must be up before a scan: with a venv launcher on Windows
+    # the grandchild is a launcher + interpreter pair that starts late.
+    settled_children(proc.pid, want=1)
     yield proc
     if proc.poll() is None:
-        for p in reversed([psutil.Process(proc.pid)] + psutil.Process(proc.pid).children(recursive=True)):
-            try:
-                p.kill()
-            except psutil.Error:
-                pass
+        kill_tree(proc.pid)
     proc.wait(timeout=5)
 
 
