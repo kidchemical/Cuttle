@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -85,7 +86,17 @@ def test_no_turn_env_falls_back_to_the_latest_parent_bubble(tmp_path):
     db, _p, _o, parent = _seed(tmp_path)
     db.add_message(parent, "assistant", "Older reply.", metadata={"query_id": "e0"})
     last = db.add_message(parent, "assistant", "Earlier reply.", metadata={"query_id": "e1"})
-    _spawn(db, parent, wait=False)
+    # Held until the live check below: a finished batch bound to a saved bubble
+    # leaves live status, and the instant fake child sometimes finished first
+    # (1 in 8 on a Windows laptop).
+    gate, base = threading.Event(), _runner_factory({"Scout": "Scout found it"})
+
+    def held(**kwargs):
+        gate.wait(10)
+        return base(**kwargs)
+
+    service.spawn(parent_session_id=parent, children=[{"title": "Scout", "message": "Scout"}],
+                  wait=False, timeout=6, runner=held, db=db)
     [batch] = store.list_batches_for_parent(db, parent)
     assert batch.turn_id == "" and batch.attach_message_id == last  # bound at spawn
     [entry] = service.public_parent_subagents(parent, db=db)
@@ -97,6 +108,16 @@ def test_no_turn_env_falls_back_to_the_latest_parent_bubble(tmp_path):
     later = db.add_message(parent, "assistant", "next turn", metadata={"turn_id": "tNext"})
     assert not (next(m for m in db.get_messages(parent) if m["id"] == later)["metadata"].get("subagents"))
     assert store.list_batches_for_parent(db, parent)[0].attach_message_id == last
+    # Once it ends, the cards stay on that bubble.
+    gate.set()
+    deadline = time.time() + 10
+    while time.time() < deadline and any(
+            c.status not in TERMINAL_CHILD for c in store.list_batches_for_parent(db, parent)[0].children):
+        time.sleep(0.05)
+    assert all(c.status in TERMINAL_CHILD for c in store.list_batches_for_parent(db, parent)[0].children)
+    assert store.list_batches_for_parent(db, parent)[0].attach_message_id == last
+    reply = next(m for m in db.get_messages(parent) if m["id"] == last)
+    assert [c["label"] for c in reply["metadata"]["subagents"]] == ["Scout"]
 
 
 def test_no_bubble_at_all_keeps_the_cards_on_the_strip_until_one_exists(tmp_path):
