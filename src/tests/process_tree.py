@@ -3,7 +3,9 @@
 The suite's kill guard (conftest) only lets a test kill its descendants, judged
 by the live parent chain. Killing a parent first breaks that chain for its
 children, and on Windows a venv ``python.exe`` is a launcher with the
-interpreter as its child, so every spawn adds a level.
+interpreter as its child, so every spawn adds a level. A launcher also exits on
+its own once its interpreter dies, and the guard refuses a pid it can no longer
+trace, so a process that is already gone is skipped, never killed.
 """
 
 from __future__ import annotations
@@ -25,9 +27,13 @@ def kill_tree(pid: int) -> None:
             depth[p.pid] = 0
     for p in sorted(procs, key=lambda p: depth[p.pid], reverse=True):
         try:
-            p.kill()
+            if p.is_running():
+                p.kill()
         except psutil.Error:
             pass
+        except RuntimeError:  # the kill guard: fine only if it exited meanwhile
+            if p.is_running():
+                raise
 
 
 def settled_children(pid: int, *, want: int, timeout: float = 15.0) -> list:

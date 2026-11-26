@@ -26,6 +26,24 @@ function sourceHash() {
     return h.digest('hex').slice(0, 20);
 }
 
+/** Atomic replace. On Windows a rename onto a file another process has open
+ *  (a concurrent pack verifying it, a Client downloading it) fails with
+ *  EPERM/EACCES/EBUSY for a moment: retry briefly, as graceful-fs does. */
+function renameReplacing(from, to) {
+    const deadline = Date.now() + 3000;
+    for (;;) {
+        try {
+            fs.renameSync(from, to);
+            return;
+        } catch (err) {
+            const transient = process.platform === 'win32'
+                && ['EPERM', 'EACCES', 'EBUSY'].includes(err && err.code);
+            if (!transient || Date.now() > deadline) throw err;
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+        }
+    }
+}
+
 function pack() {
     const hash = sourceHash();
     // The Host passes its Cuttle-home cache dir; a manual run keeps dist/.
@@ -78,7 +96,7 @@ function pack() {
         if (lost.length) {
             throw new Error(`packed asar is missing: ${lost.join(', ')}`);
         }
-        fs.renameSync(tmpAsar, outAsar);
+        renameReplacing(tmpAsar, outAsar);
         const manifest = {
             hash,
             packedAt: new Date().toISOString(),
@@ -88,7 +106,7 @@ function pack() {
         };
         const manifestPath = path.join(outDir, 'manifest.json');
         fs.writeFileSync(`${manifestPath}.${process.pid}.tmp`, JSON.stringify(manifest, null, 2));
-        fs.renameSync(`${manifestPath}.${process.pid}.tmp`, manifestPath);
+        renameReplacing(`${manifestPath}.${process.pid}.tmp`, manifestPath);
         process.stdout.write(JSON.stringify(manifest) + '\n');
     } finally {
         fs.rmSync(staging, { recursive: true, force: true });
