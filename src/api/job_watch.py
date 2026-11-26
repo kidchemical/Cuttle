@@ -576,8 +576,9 @@ def watch_form_spec(job_id: str, *, title: str = "Job") -> Dict[str, Any]:
 # restarts often, so new code reaches it quickly) and the daemon (which keeps
 # polling while Flask is down). Both are safe together: a pass runs under an
 # exclusive ``flock`` on the watch dir, and a record is *claimed* (renamed to
-# ``<id>.json.claimed``) before anything fires, so only one process can resume
-# the chat even where the lock is unavailable.
+# ``<id>.json.claimed`` under an exclusive ``<id>.json.claiming`` gate) before
+# anything fires, so only one process can resume the chat even where the lock
+# is unavailable (Windows).
 
 UNIT_WATCH_MAX_SEC = 72 * 3600.0
 # Consecutive failed systemctl queries before a watch is resolved as unknown;
@@ -590,6 +591,7 @@ _RUNNING_UNIT_STATES = ("active", "activating", "reloading", "deactivating", "re
 # (and only once its process is gone).
 UNIT_WATCH_CLAIM_STALE_SEC = 120.0
 _CLAIM_SUFFIX = ".claimed"
+_CLAIM_GATE_SUFFIX = ".claiming"
 
 
 def unit_watch_dir() -> Path:
@@ -808,19 +810,43 @@ def recent_unit_results(chat_session_id: Any, *, limit: int = 3) -> List[Dict[st
     return sorted(results, key=lambda x: x["finished_ts"], reverse=True)[:limit]
 
 
+def _take_claim_gate(gate: Path) -> bool:
+    """Exclusive-create ``gate``; a gate left by a poller that died is reclaimed."""
+    for _ in range(2):
+        try:
+            os.close(os.open(gate, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            return True
+        except FileExistsError:
+            try:
+                if time.time() - gate.stat().st_mtime < UNIT_WATCH_CLAIM_STALE_SEC:
+                    return False
+                gate.unlink(missing_ok=True)
+            except OSError:
+                return False
+        except OSError:
+            return False
+    return False
+
+
 def _claim_record(record: Dict[str, Any]) -> Optional[Path]:
     """Atomically take ``record`` for firing; None when another poller has it.
 
-    ``rename`` succeeds for exactly one caller, so whichever process wins is the
-    only one that writes the terminal status and queues the resume turn."""
+    Whichever caller wins is the only one that writes the terminal status and
+    queues the resume turn. ``rename`` alone is not exclusive on Windows: it
+    opens the source first, so a caller that opened it just before another
+    renamed it "renames" the already-claimed file onto itself and succeeds. An
+    exclusive-create gate serializes the rename on every OS."""
     src = Path(record["record_path"])
     dst = src.with_name(src.name + _CLAIM_SUFFIX)
+    gate = src.with_name(src.name + _CLAIM_GATE_SUFFIX)
+    if not _take_claim_gate(gate):
+        return None
     try:
         os.rename(src, dst)
-    except FileNotFoundError:
+    except OSError:  # FileNotFoundError: another poller claimed it first
         return None
-    except OSError:
-        return None
+    finally:
+        gate.unlink(missing_ok=True)
     try:  # who holds it, for stale-claim recovery
         data = json.loads(dst.read_text(encoding="utf-8"))
         data.update(claimed_by=os.getpid(), claimed_ts=time.time())

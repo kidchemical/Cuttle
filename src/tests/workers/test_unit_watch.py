@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+from pathlib import Path
 
 import pytest
 
@@ -263,6 +265,21 @@ def test_the_claim_alone_keeps_it_exactly_once_without_the_lock(monkeypatch):
     results = _concurrently(3, jw.poll_unit_watches)
     assert sorted(len(r) for r in results) == [0, 0, 1]
     assert len(_notices()) == 1 and jw.unit_watch_records() == []
+
+
+def test_a_claim_gate_left_by_a_dead_poller_expires(monkeypatch):
+    _unit(monkeypatch, **RUNNING)
+    info = _register()
+    _unit(monkeypatch, **EXITED)
+    [record] = jw.unit_watch_records()
+    gate = Path(record["record_path"] + jw._CLAIM_GATE_SUFFIX)
+    gate.touch()
+    assert jw.poll_unit_watches() == [] and len(_notices()) == 0  # a live gate blocks
+    old = jw.time.time() - jw.UNIT_WATCH_CLAIM_STALE_SEC - 5
+    os.utime(gate, (old, old))
+    [out] = jw.poll_unit_watches()
+    assert out["id"] == info["id"] and out["resolved"] is True
+    assert not gate.exists() and len(_notices()) == 1
 
 
 def test_a_poll_from_another_process_skips_while_the_lock_is_held(monkeypatch, tmp_path):

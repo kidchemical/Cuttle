@@ -137,6 +137,7 @@ step, fix. Keep entries short; the theme sections hold the explanation.
 
 | Date | Job | Theme | Failure | Fix |
 |---|---|---|---|---|
+| 2026-11-25 | Quality / python (windows) | 5 | `test_the_claim_alone_keeps_it_exactly_once_without_the_lock` failed 15/15 on Windows: concurrent `os.rename` of one file succeeds for every caller (source opened before rename) | exclusive-create claim gate |
 | 2026-11-25 | Quality / python (windows) | 3 | `test_directory_url_opens_in_file_manager` faked `sys.platform=linux`, which also switched off `file:///D:/` parsing | skipped on Windows (covered by Windows-specific tests) |
 | 2026-11-24 | Quality / python (ubuntu) | 5 | `test_step_snapshot_keeps_intermediate_edits`: SQLite `-wal` vanished during `git add` (`unable to stat`) | both vanished-path messages skip the file |
 | 2026-11-23 | Quality / python (both) | 5 | `test_auth_preflight_reads_text_not_exit_code`: a `0.0` "never checked" stamp read as fresh because `monotonic()` starts near 0 on a just-booted runner | `None` sentinel; test pins a low clock |
@@ -149,7 +150,7 @@ step, fix. Keep entries short; the theme sections hold the explanation.
 | 2026-11-14 | Quality / python (windows) | 5 | `test_two_concurrent_pollers_resume_the_chat_exactly_once` | — |
 | 2026-11-14 | Quality / python (both) | 4 | `stampLiveBubbleTurnRow is not defined` in a JS harness test | harness updated |
 | 2026-11-13 | Quality / python (windows) | 1 | `test_wake_line_says_what_starts_the_next_turn` (`charmap`) | — |
-| 2026-11-13 | Quality / python (windows) | 5 | `test_the_claim_alone_keeps_it_exactly_once_without_the_lock` | — |
+| 2026-11-13 | Quality / python (windows) | 5 | `test_the_claim_alone_keeps_it_exactly_once_without_the_lock` | not a flake: see 2026-11-25 |
 | 2026-11-12 | Quality / python (windows) | 3 | worktree path `\` vs `/` comparison | — |
 | 2026-11-09 | Quality / python (ubuntu) | 4 | `test_relative_cuttle_home_is_rejected` | — |
 | 2026-11-07 | Quality / python + browser (ubuntu) | 7 | `symlink ancestor refused: …/temp` | — |
