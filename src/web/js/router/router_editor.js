@@ -325,7 +325,7 @@ function renderCore() {
 }
 
 // ── budget ───────────────────────────────────────────────────────────────────
-const AGENT_LABELS = { codex: 'Codex', claude: 'Claude Code', cursor: 'Cursor' };
+const AGENT_LABELS = { codex: 'Codex', claude: 'Claude Code', cursor: 'Cursor', antigravity: 'Antigravity' };
 
 function renderBudget() {
     $('#budget-enabled').checked = !!state.budget.enabled;

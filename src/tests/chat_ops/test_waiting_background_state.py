@@ -20,7 +20,7 @@ def _status(path, sid, *, state="running", pid=None):
     (path / f"claude-bg-{sid}-abc123-status.json").write_text(json.dumps({
         "state": state, "label": "Waiting on: build", "chat_session_id": str(sid),
         "run_id": f"claude-bg-{sid}-abc123", "pid": os.getpid() if pid is None else pid,
-        "started_at": "2026-10-31T17:05:08"}))
+        "started_at": "2026-10-31T17:05:08"}), encoding="utf-8")
 
 
 def test_running_wait_with_live_pid_is_found(watch_dir):

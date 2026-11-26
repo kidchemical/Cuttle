@@ -64,22 +64,21 @@ python -m api.knowledge_graph explain "submit_agent_turn"        # a symbol + it
 python -m api.knowledge_graph node-path "APIRouter" "ModelField" # how two things connect
 ```
 
+- Seeds are matched on **names**, not meaning: put the symbol, file or package name
+  in the question (`explain "is_bare_turn"` beats "how does a turn become bare").
 - Keep the budget around **1000–2000 tokens**; narrow the question instead of raising it.
 - Results carry `file:line` and `EXTRACTED`/`INFERRED` tags. Follow `EXTRACTED`
   edges to the real file when you need to confirm behavior.
 - Exit `3` (ambiguous name) / `4` (no match) surface as JSON, never a silent empty answer.
 
-## Keep it fresh (only when needed)
+## Freshness is automatic
 
-```bash
-python -m api.knowledge_graph index            # build/refresh (incremental; local AST only)
-python -m api.knowledge_graph update           # re-extract changed files
-python -m api.knowledge_graph query "…" --refresh   # incremental update, then query
-```
-
-Do **not** rebuild continuously. If `where`/`status` reports `stale: true`
-(recorded HEAD ≠ current HEAD) or you just changed code, run `update` (or
-`query --refresh`) once.
+`query`, `explain` and `node-path` re-extract first when the checkout's HEAD has
+moved past the index, and the Obsidian vault with it (15–25 s on Cuttle; a
+large project far behind took about two minutes, so allow for that in the
+command timeout; the reply carries `refreshed`). `--no-refresh` answers from the stored index. Uncommitted edits are
+not seen: run `update` once if you need them. `index --force` after refactors
+that delete code.
 
 ## Obsidian
 

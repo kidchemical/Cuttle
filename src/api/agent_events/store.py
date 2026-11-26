@@ -303,7 +303,7 @@ class EventStore:
         size=sum(p.stat().st_size for p in self.root.rglob('*') if p.is_file())
         status={}
         try:
-            status=json.loads((self.root/'capture_status.json').read_text())
+            status=json.loads((self.root/'capture_status.json').read_text(encoding="utf-8"))
         except (OSError,ValueError):
             pass
         return dict(bytes=size,events=count[0],oldest=count[1],newest=count[2],runs=runs,

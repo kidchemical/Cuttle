@@ -81,11 +81,11 @@ def test_keep_and_undo_per_hunk_then_review_closes(repo):
     end(snap, "q1")
     rename, append = [h["id"] for h in review(repo)["hunk_list"]]
     service.keep(repo, ["app.py"], [rename])
-    assert (repo / "app.py").read_text() == "one\nTWO\nthree\nfour\nfive\nsix\n"  # keep never touches disk
+    assert (repo / "app.py").read_text(encoding="utf-8") == "one\nTWO\nthree\nfour\nfive\nsix\n"  # keep never touches disk
     assert [h["id"] for h in review(repo)["hunk_list"]] == [append]
     out = service.undo(repo, ["app.py"], [append])
     assert out["files"] == [{"path": "app.py", "closed": True}]
-    assert (repo / "app.py").read_text() == "one\nTWO\nthree\nfour\nfive\n"
+    assert (repo / "app.py").read_text(encoding="utf-8") == "one\nTWO\nthree\nfour\nfive\n"
     assert review(repo) is None and files(repo) == {}
 
 
@@ -142,7 +142,7 @@ def test_user_edits_between_turns_never_become_agent_hunks(repo):
     assert r["baseline"] == "one\ntwo\nthree\nfour\nFIVE (mine)\n" and r["mixed"] is False
     # Undoing the agent hunk keeps the user's edit.
     service.undo(repo, ["app.py"])
-    assert (repo / "app.py").read_text() == "one\ntwo\nthree\nfour\nFIVE (mine)\n"
+    assert (repo / "app.py").read_text(encoding="utf-8") == "one\ntwo\nthree\nfour\nFIVE (mine)\n"
 
 
 def test_user_edit_inside_an_agent_hunk_stays_in_the_hunk(repo):
@@ -188,7 +188,7 @@ def test_undo_created_file_deletes_it_and_deleted_file_is_restored(repo):
     found = files(repo)
     assert found["new.py"]["change"] == "added" and found["app.py"]["change"] == "deleted"
     service.undo(repo)  # every file under the root
-    assert not (repo / "new.py").exists() and (repo / "app.py").read_text() == ORIGINAL
+    assert not (repo / "new.py").exists() and (repo / "app.py").read_text(encoding="utf-8") == ORIGINAL
     assert files(repo) == {}
 
 
@@ -201,7 +201,7 @@ def test_stale_etag_and_stale_hunk_ids_are_conflicts(repo):
         service.undo(repo, ["app.py"], [r["hunk_list"][0]["id"]], etag="stale")
     with pytest.raises(service.Conflict):
         service.keep(repo, ["app.py"], ["nope-0"])
-    assert (repo / "app.py").read_text() == "one\nTWO\nthree\nfour\nfive\n"
+    assert (repo / "app.py").read_text(encoding="utf-8") == "one\nTWO\nthree\nfour\nfive\n"
 
 
 def test_paths_cannot_escape_and_unknown_files_are_not_found(repo):
@@ -302,7 +302,7 @@ def test_routes_list_keep_undo_and_conflict(http, repo, tmp_path):
     stale = client.post("/api/agent-review/undo", json={"root": str(repo), "path": "app.py", "hunks": [first], "etag": "x"})
     assert stale.status_code == 409 and stale.get_json()["conflict"] is True
     ok = client.post("/api/agent-review/undo", json={"root": str(repo), "path": "app.py", "hunks": [first], "etag": detail["etag"]})
-    assert ok.status_code == 200 and (repo / "app.py").read_text() == "one\ntwo\nthree\nfour\nfive\nsix\n"
+    assert ok.status_code == 200 and (repo / "app.py").read_text(encoding="utf-8") == "one\ntwo\nthree\nfour\nfive\nsix\n"
     kept = client.post("/api/agent-review/keep", json={"root": str(repo), "path": "app.py", "hunks": [second]}).get_json()
     assert kept["files"] == [{"path": "app.py", "closed": True}]
     assert client.get("/api/agent-review/files", query_string={"root": str(repo)}).get_json()["files"] == []
@@ -327,7 +327,7 @@ def test_cli_list_show_keep(repo, monkeypatch, capsys):
     assert "+TWO" in capsys.readouterr().out
     assert main(["keep", "--root", str(repo), "--path", "app.py"]) == 0
     assert main(["undo", "--root", str(repo), "--path", "app.py"]) == 1  # nothing left to undo
-    assert (repo / "app.py").read_text() == "one\nTWO\nthree\nfour\nfive\n"
+    assert (repo / "app.py").read_text(encoding="utf-8") == "one\nTWO\nthree\nfour\nfive\n"
 
 
 def test_commit_policy_setting_and_revision_routes(http, repo):

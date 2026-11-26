@@ -89,6 +89,25 @@ def _ordered_efforts(levels: Any) -> List[str]:
     return ordered
 
 
+def _with_known_models(live: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Live rows, then verified manifest models the CLI did not list.
+
+    The ``initialize`` list is the CLI's curated picker (2.1.330 lists only the
+    ``opus``/``fable``/``sonnet``/``haiku`` aliases); full ids such as
+    ``claude-fable-5-1`` still run with ``--model``, so they stay pinnable.
+    """
+    seen = set()
+    for row in live:
+        seen.add(str(row.get("id") or "").lower())
+        seen.add(str(row.get("resolved_model") or "").lower())
+    extra = [
+        {**known, "description": "Pinnable by full id (not in the CLI's own model list)"}
+        for known in CLAUDE_KNOWN_MODELS
+        if known["id"].lower() not in seen
+    ]
+    return [dict(m) for m in live] + extra
+
+
 def _run_claude_initialize() -> Tuple[List[Dict[str, Any]], Optional[List[str]], Optional[str]]:
     """Ask the installed CLI for its model list. Returns ``(rows, default_efforts, error)``."""
     from scripts.utilities.claude_cli_tool import claude_executable
@@ -113,6 +132,7 @@ def _run_claude_initialize() -> Tuple[List[Dict[str, Any]], Optional[List[str]],
             cwd=str(Path.home()),
             env=agent_cli_env(),
             timeout=45,
+            encoding="utf-8", errors="replace",
         )
     except (OSError, subprocess.SubprocessError) as exc:
         return [], None, str(exc)[:200]
@@ -176,6 +196,7 @@ def list_claude_catalog_models(*, refresh: bool = False) -> Dict[str, Any]:
 
         live, default_efforts, err = _run_claude_initialize()
         if live:
+            live = _with_known_models(live)
             if default_efforts is None:
                 default_efforts = list(_DECLARED_DEFAULT_EFFORTS)
             _CATALOG_CACHE = (now, list(live), list(default_efforts), "cli", None)

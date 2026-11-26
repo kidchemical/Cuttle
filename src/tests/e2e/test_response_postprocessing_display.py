@@ -48,7 +48,7 @@ def test_append_collapses_original_before_labelled_summary_and_survives_reload(b
         page.close()
 
 
-def test_thinking_renders_collapsed_before_original_response(browser, static_server):
+def test_thinking_nests_collapsed_inside_original_response(browser, static_server):
     response = ('<think>\nThe real answer the model wrote as thinking\n</think>\n\n'
                 '<cuttle_original_response>' + json.dumps('Closing line') + '</cuttle_original_response>\n\nTLDR')
     world = CardWorld([response])
@@ -57,16 +57,22 @@ def test_thinking_renders_collapsed_before_original_response(browser, static_ser
         frame.locator('#chatInput').fill('Go')
         frame.locator('#sendButton').click()
         bubble = frame.locator('#chatMessages .message.assistant').last
-        thinking = bubble.locator('details.thinking-block')
+        original = bubble.locator('details.response-original-block')
+        expect(original).not_to_have_attribute('open', '')
+        # The reasoning is part of the agent's own reply: one block, inside the disclosure.
+        expect(bubble.locator('details.thinking-block')).to_have_count(1)
+        thinking = original.locator('details.thinking-block')
         expect(thinking).to_have_count(1)
+        expect(thinking).to_be_hidden()
+        expect(bubble.get_by_text('TLDR', exact=True)).to_be_visible()
+        original.locator(':scope > summary').click()
+        expect(thinking.locator('summary')).to_have_text('Thinking')
         expect(thinking).not_to_have_attribute('open', '')
-        expect(bubble.locator('details.response-original-block')).not_to_have_attribute('open', '')
-        assert bubble.locator('.message-content').evaluate(
-            '(n) => n.querySelector("details.thinking-block").compareDocumentPosition('
-            'n.querySelector("details.response-original-block")) & Node.DOCUMENT_POSITION_FOLLOWING')
+        assert original.locator('.response-original-content').evaluate(
+            '(n) => n.firstElementChild.matches("details.thinking-block")')
         thinking.locator('summary').click()
         expect(thinking).to_contain_text('The real answer the model wrote as thinking')
-        expect(bubble.get_by_text('TLDR', exact=True)).to_be_visible()
+        expect(original.get_by_text('Closing line', exact=True)).to_be_visible()
         assert errors == []
     finally:
         page.close()

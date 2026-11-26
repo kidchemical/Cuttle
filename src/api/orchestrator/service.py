@@ -276,10 +276,43 @@ def get_binding(session: Any, *, user_id: Optional[int] = None, db=None) -> Dict
         name, missing = doc.get("name") or doc["id"], False
     except OrchestratorError:
         name, missing = row["playbook_id"], True
+    agents = team(sid, db=db)
+    supervision = _supervision_state(sid)
     return {"session": _handle(sid), "bound": True, "playbook_id": row["playbook_id"],
             "playbook_name": name, "playbook_missing": missing, "goal": row["goal"],
-            "bound_at": row["bound_at"], "agents": team(sid, db=db),
-            "hold": row.get("hold") or "", "hold_at": row.get("hold_at")}
+            "bound_at": row["bound_at"], "agents": agents,
+            "hold": row.get("hold") or "", "hold_at": row.get("hold_at"),
+            "supervision": supervision, "working": _working(sid, agents, supervision)}
+
+
+def _supervision_state(sid: int) -> str:
+    """``'active'`` when a schedule supervises the chat, ``'paused'`` when every
+    one is paused, ``''`` when none. A supervision pause is separate from the
+    orchestration hold, so the chip must say so rather than look live."""
+    try:
+        from api.chat_ops import store as ops
+
+        states = {o["state"] for o in ops.involving(sid)
+                  if o.get("kind") == "supervise" and int(o.get("target") or 0) == sid}
+    except Exception:
+        return ""
+    if not states:
+        return ""
+    return "paused" if states == {"paused"} else "active"
+
+
+def _working(sid: int, agents: List[Dict[str, Any]], supervision: str) -> bool:
+    """Something will move the orchestration on without the user: a turn is
+    running, a sub-agent is live, or an active supervisor will wake it.
+    False is an idle binding (its work finished or was paused piecemeal)."""
+    if supervision == "active" or any(a.get("status") in ("pending", "running") for a in agents):
+        return True
+    try:
+        from api.chat_delivery import is_busy
+
+        return bool(is_busy(sid))
+    except Exception:
+        return False
 
 
 TEAM_LIMIT = 12

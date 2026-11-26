@@ -409,7 +409,7 @@ def _commits_by_path(root: str, since: int, wanted: set) -> Optional[Dict[str, L
         proc = subprocess.Popen(
             ["git", "-c", "core.quotePath=false", "log", f"--since={since}", "-m", "--no-renames",
              "--name-only", "--format=%x01%H %ct"],
-            cwd=root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, errors="replace")
+            cwd=root, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, errors="replace", encoding="utf-8")
     except OSError:
         return None
     touched: Dict[str, List[Tuple[str, float]]] = {}

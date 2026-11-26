@@ -1,0 +1,45 @@
+/* Supervision App. Builds on the shared Orchestrator/Agents/Tasks skin
+   (orchestrator_page.css: buttons, panels, form grid, switches, save bar);
+   only the live list and the System care rows live here. */
+body[data-page="supervision"] { --role: var(--orch-accent); }
+
+.sup-content { display: flex; flex-direction: column; gap: 18px; margin-top: 18px; padding-bottom: 88px; }
+.sup-intro { margin: 0 0 16px; max-width: 78ch; }
+
+/* ── Running now ─────────────────────────────────────────────────── */
+.sup-list { display: flex; flex-direction: column; gap: 8px; }
+.sup-row {
+    display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px;
+    border: 1px solid var(--orch-border); border-radius: var(--orch-radius); background: var(--orch-subtle);
+}
+.sup-dot { flex: none; width: 9px; height: 9px; margin-top: 7px; border-radius: 50%; background: var(--orch-good); }
+.sup-row.is-paused .sup-dot { background: var(--orch-warn); }
+.sup-row-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.sup-row-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.sup-row-title strong { font-weight: 650; overflow-wrap: anywhere; }
+.sup-handle, .sup-project { font-size: 12px; color: var(--orch-muted); }
+.sup-handle { font-variant-numeric: tabular-nums; }
+.sup-row-status { font-size: 13px; }
+.sup-row.is-paused .sup-row-status { color: var(--orch-warn-text); }
+.sup-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 12px; color: var(--orch-muted); }
+.sup-row-actions { flex: none; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 46%; }
+.sup-pause-menu { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.sup-display-note { font-size: 12px; }
+
+/* ── Defaults ────────────────────────────────────────────────────── */
+.sup-care-set { margin: 0; padding: 0; border: 0; min-width: 0; }
+.sup-care-set legend { padding: 0; margin-bottom: 8px; }
+.orch-form label.sup-care {
+    flex-direction: row; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 10px 0; border-top: 1px solid var(--orch-border); font-weight: 400; cursor: pointer;
+}
+.orch-form label.sup-care:first-child { border-top: 0; padding-top: 2px; }
+.sup-care-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sup-care-text strong { font-size: 13px; font-weight: 600; }
+.sup-care-text small { font-size: 12px; color: var(--orch-muted); }
+
+@media (max-width: 720px) {
+    .sup-row { flex-direction: column; }
+    .sup-dot { display: none; }
+    .sup-row-actions { max-width: none; justify-content: flex-start; }
+}

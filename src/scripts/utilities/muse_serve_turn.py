@@ -190,7 +190,7 @@ async def run_muse_turn_serve(
     meta_provider = not prov or prov.lower() == "meta"
 
     from api.agent_harness import steer as steer_registry
-    from api.agent_harness.steer_delivery import SteerDelivery, undelivered_notice
+    from api.agent_harness.steer_delivery import SteerDelivery, vendor_refused
     from api.agent_harness.activity import ActivityEmitter, TextActivityLog, ToolActivityLog, text_preview
 
     argv = [muse_bin, "serve", "--trust-workspace"]
@@ -258,14 +258,34 @@ async def run_muse_turn_serve(
             st["setup_error"] = message
         _finish_connection()
 
-    def _steer_send(text: str) -> "concurrent.futures.Future":
+    def _note(fn: Any, *args: Any) -> None:
+        """Receipt capture must never interrupt the reader."""
+        if st["steer_token"] is None:
+            return
+        try:
+            fn(chat_session_id, st["steer_token"], *args)
+        except Exception:
+            pass
+
+    def _note_echoes(receipts: List[Any]) -> None:
+        """Every confirmation the matcher makes, however it was reached."""
+        for receipt in receipts:
+            if receipt.steer_id:
+                _note(steer_registry.note_echo, receipt.steer_id)
+
+    delivery.confirmed = _note_echoes
+
+    def _steer_send(text: str, steer_id: Optional[str] = None) -> "concurrent.futures.Future":
         out: "concurrent.futures.Future" = concurrent.futures.Future()
         receipt = None
 
         def _done(_result: Optional[Dict[str, Any]], error: Optional[Dict[str, Any]]) -> None:
             if out.done():
                 return
-            accepted = receipt is not None and delivery.acknowledge(receipt, succeeded=error is None)
+            # A vendor error *answer* refuses the send; a synthesized failure
+            # (loop closed, no reply) leaves acceptance unknown.
+            accepted = receipt is not None and delivery.acknowledge(
+                receipt, succeeded=error is None, refused=vendor_refused(error))
             if not accepted:
                 out.set_result((False, rpc_error_text(error)))
             else:
@@ -279,7 +299,7 @@ async def run_muse_turn_serve(
             # callback was scheduled. Completion may have happened meanwhile.
             if not accepting_steers or st["terminal"] is not None:
                 raise RuntimeError("turn is no longer active")
-            receipt = delivery.begin(text)
+            receipt = delivery.begin(text, steer_id)
             params: Dict[str, Any] = {
                 "commandId": command_id(),
                 "sessionId": st["session_id"],
@@ -418,19 +438,24 @@ async def run_muse_turn_serve(
         if kind in ("agentMessage", "reasoning"):
             text_kinds[item.get("itemId")] = "writing" if kind == "agentMessage" else "thinking"
         if kind == "userMessage":
+            # Only a ``steered`` user item is a steer echo; the turn's own
+            # input must never confirm one.
             if method == "item/completed" and item.get("steered") and accepting_steers:
                 text = str(item.get("text") or "")
-                if delivery.receive(text, item.get("itemId")):
+                confirmed = delivery.receive(text, item.get("itemId"))
+                if confirmed:
                     activity.emit(f"steer received: {_first_line(text, 100)}", force=True)
             return
         if kind == "agentMessage":
             if method == "item/started":
                 text_log.start("writing", item.get("itemId"))
+                _note(steer_registry.note_output_start, item.get("itemId"))
             if method == "item/completed":
                 text = str(item.get("text") or "").strip()
                 text_log.save("writing", text, item.get("itemId"))
                 if text:
                     messages.append(text)
+                    _note(steer_registry.note_output_text, item.get("itemId"), text)
                     activity.emit(f"writing: {text_preview(text)}", force=True)
                 st["writing"].pop(item.get("itemId"), None)
             return
@@ -477,7 +502,6 @@ async def run_muse_turn_serve(
         params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
         if st["session_id"] and params.get("sessionId") not in (None, st["session_id"]):
             return
-
         if method in ("item/started", "item/completed"):
             item = params.get("item") if isinstance(params.get("item"), dict) else {}
             _on_item(method, item)
@@ -564,8 +588,9 @@ async def run_muse_turn_serve(
     if not display and st["writing"]:
         display = "\n\n".join(v for v in st["writing"].values() if v).strip()
     undelivered = delivery.undelivered
-    if undelivered:
-        display = f"{display}\n\n{undelivered_notice('Muse Code', undelivered)}".strip()
+    notice = delivery.closing_notice("Muse Code")
+    if notice:
+        display = f"{display}\n\n{notice}".strip()
     stderr = (run.stderr if run is not None else b"").decode("utf-8", errors="replace").strip()
     base: Dict[str, Any] = {
         "usage": _usage_from_turn(st["turn_usage"], st["prompt_tokens"]),

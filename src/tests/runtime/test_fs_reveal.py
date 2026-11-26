@@ -173,3 +173,51 @@ def test_default_opener_rejects_missing_file_before_launch(tmp_path):
         with pytest.raises(FileNotFoundError):
             open_in_default_app(str(tmp_path / 'missing.md'))
         popen.assert_not_called()
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='fakes a POSIX opener, which also switches off '
+                    'drive-letter URL parsing; Windows: test_directory_opens_in_windows_explorer '
+                    'and test_windows_file_url_with_encoded_spaces_parses_to_drive_path')
+@pytest.mark.parametrize('platform, command', [('linux', 'xdg-open'), ('darwin', 'open')])
+def test_directory_url_opens_in_file_manager(tmp_path, monkeypatch, platform, command):
+    """A chat chip for a folder (file:// URL, %20 for spaces) opens the folder itself."""
+    from api import fs_reveal
+
+    folder = tmp_path / 'Game Dev' / 'fsr-ab-default'
+    folder.mkdir(parents=True)
+    monkeypatch.setattr(fs_reveal.sys, 'platform', platform)
+    with mock.patch.object(fs_reveal.subprocess, 'Popen') as popen:
+        popen.return_value.communicate.return_value = ('', '')
+        popen.return_value.returncode = 0
+        result = fs_reveal.open_in_default_app(folder.as_uri() + '/')
+    assert '%20' in folder.as_uri()
+    assert result['kind'] == 'directory'
+    assert result['path'] == str(folder.resolve())
+    assert popen.call_args.args[0] == [command, str(folder.resolve())]
+
+
+def test_directory_opens_in_windows_explorer(tmp_path, monkeypatch):
+    from api import fs_reveal
+
+    folder = tmp_path / 'Game Dev' / 'fsr-ab-sharpen'
+    folder.mkdir(parents=True)
+    monkeypatch.setattr(fs_reveal.sys, 'platform', 'win32')
+    startfile = mock.Mock()
+    monkeypatch.setattr(fs_reveal.os, 'startfile', startfile, raising=False)
+    with mock.patch.object(fs_reveal, 'parse_local_path', return_value=str(folder)), \
+         mock.patch.object(fs_reveal.subprocess, 'Popen') as popen:
+        result = fs_reveal.open_in_default_app('file:///C:/Game%20Dev/fsr-ab-sharpen')
+    startfile.assert_called_once_with(str(folder.resolve()))
+    popen.assert_not_called()
+    assert result['kind'] == 'directory'
+
+
+def test_windows_file_url_with_encoded_spaces_parses_to_drive_path(monkeypatch):
+    """file:///C:/Game%20Dev/x → C:\\Game Dev\\x on Windows (checked with Windows path rules)."""
+    import ntpath
+    from api import fs_reveal
+
+    monkeypatch.setattr(fs_reveal.sys, 'platform', 'win32')
+    monkeypatch.setattr(fs_reveal.os, 'path', ntpath)
+    monkeypatch.setattr(fs_reveal.os, 'sep', '\\')
+    assert fs_reveal.parse_local_path('file:///C:/Game%20Dev/runs/fsr-ab-default/') == 'C:\\Game Dev\\runs\\fsr-ab-default'

@@ -158,3 +158,81 @@ async def test_normal_exit_drains_late_stderr_session_trailer():
     assert result.stderr == b"session_id: saved-at-exit\n"
     assert seen == [result.stderr]
     assert not result.timed_out and not result.cancelled
+
+
+@pytest.mark.asyncio
+async def test_exited_cli_does_not_wait_for_pipe_held_by_grandchild(monkeypatch):
+    """A server the agent started (e.g. ComfyUI) must not hold the turn open.
+
+    CH-002779: Codex finished, but a detached grandchild kept the CLI's stdout
+    pipe open, so the turn stayed running for hours until Stop killed it.
+    """
+    import scripts.utilities.agent_process as ap
+
+    monkeypatch.setattr(ap, "EXITED_PIPE_QUIET_SEC", 0.2)
+    seen = []
+    proc = _FakeProc([b'{"method":"turn/completed"}\n'])
+    proc.returncode = 0  # the CLI is gone; only its stdout pipe survives
+
+    async def wait():
+        return 0
+
+    proc.wait = wait
+    result = await asyncio.wait_for(
+        run_interruptible(proc, timeout=60, on_stdout_line=seen.append), timeout=10
+    )
+    assert seen == [b'{"method":"turn/completed"}\n']
+    assert result.returncode == 0
+    assert not result.timed_out and not result.cancelled
+
+
+@pytest.mark.asyncio
+async def test_exited_cli_drain_is_capped_when_grandchild_keeps_logging(monkeypatch):
+    import scripts.utilities.agent_process as ap
+
+    monkeypatch.setattr(ap, "EXITED_PIPE_QUIET_SEC", 0.2)
+    monkeypatch.setattr(ap, "EXITED_PIPE_MAX_SEC", 0.5)
+
+    class Chatty:
+        async def readline(self):
+            await asyncio.sleep(0.05)
+            return b"server log line\n"
+
+    proc = _FakeProc([])
+    proc.stdout = Chatty()
+    proc.returncode = 0
+
+    async def wait():
+        return 0
+
+    proc.wait = wait
+    result = await asyncio.wait_for(run_interruptible(proc, timeout=60), timeout=10)
+    assert result.returncode == 0
+    assert result.stdout.startswith(b"server log line\n")
+    assert not result.timed_out and not result.cancelled
+
+
+@pytest.mark.asyncio
+async def test_real_grandchild_holding_stdout_does_not_hang_the_drain():
+    import sys
+    import time
+
+    # The grandchild outlives the CLI on the inherited pipe, then ends by itself.
+    script = (
+        "import subprocess, sys\n"
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(12)'],"
+        " stdout=sys.stdout, stderr=sys.stderr)\n"
+        "print('started', flush=True)\n"
+    )
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-c", script,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    started = time.monotonic()
+    lines = []
+    result = await asyncio.wait_for(
+        run_interruptible(proc, timeout=60, on_stdout_line=lines.append), timeout=30
+    )
+    assert result.returncode == 0
+    assert time.monotonic() - started < 9
+    assert [line.strip() for line in lines] == [b"started"]

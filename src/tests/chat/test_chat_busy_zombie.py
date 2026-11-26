@@ -288,3 +288,27 @@ def test_try_begin_reclaims_a_dead_workers_lock(monkeypatch):
         entry["since"] = time.time() - 600
     assert delivery.try_begin("315") is True
     delivery.end("315")
+
+
+def test_stop_reaches_turn_without_local_process_after_superseded_turn_ends(monkeypatch):
+    """CH-002779: a turn on an execution node has no local process. The turn it
+    replaced ended a few seconds later and dropped the chat's registry entry,
+    so Stop set a fresh event and the node was never told to cancel."""
+    from api import chat_run_registry as reg
+
+    monkeypatch.setattr("api.flask_restart.maybe_fire_when_idle", lambda: None)
+    reg._runs.clear()
+    sid = "node_turn_stop_test"
+    reg.begin_run(sid, query_id="q-old")
+    cancel_new = reg.begin_run(sid, query_id="q-new")
+
+    reg.end_run(sid, query_id="q-old")  # the superseded turn finishing late
+    assert not reg.has_live_process(sid)  # polled by the UI; must not unregister it
+    assert reg.active_run_session_ids() == []
+    assert reg.live_query_ids(sid) == ["q-new"]
+
+    reg.cancel_session_runs(sid)
+    assert cancel_new.is_set()
+
+    reg.end_run(sid, query_id="q-new")
+    assert not any(sid in k for k in reg._runs)

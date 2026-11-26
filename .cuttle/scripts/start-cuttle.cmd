@@ -61,21 +61,23 @@ goto MENU
 :START_CLIENT
 echo.
 echo Starting Cuttle Client -^> %DEFAULT_HOST% ...
-if exist "%CUTTLE_EXE%" (
-  if defined CUTTLE_HOST (
-    start "Cuttle Client" /D "%ELECTRON_DIR%\dist\win-unpacked" "%CUTTLE_EXE%" --client --host="%CUTTLE_HOST%"
-  ) else (
-    start "Cuttle Client" /D "%ELECTRON_DIR%\dist\win-unpacked" "%CUTTLE_EXE%" --client
-  )
-  goto :eof
-)
-rem Source checkout: run the installed Electron binary directly (no console).
+rem Source checkout first: run the checkout's shell with the installed Electron
+rem binary (no console). dist\win-unpacked is a stale local pack that git pull
+rem never refreshes, and Smart App Control blocks that unsigned build.
 set "ELECTRON_BIN=%ELECTRON_DIR%\node_modules\electron\dist\electron.exe"
 if exist "%ELECTRON_BIN%" (
   if defined CUTTLE_HOST (
     start "Cuttle Client" /D "%ELECTRON_DIR%" "%ELECTRON_BIN%" "%ELECTRON_DIR%" --client --host="%CUTTLE_HOST%"
   ) else (
     start "Cuttle Client" /D "%ELECTRON_DIR%" "%ELECTRON_BIN%" "%ELECTRON_DIR%" --client
+  )
+  goto :eof
+)
+if exist "%CUTTLE_EXE%" (
+  if defined CUTTLE_HOST (
+    start "Cuttle Client" /D "%ELECTRON_DIR%\dist\win-unpacked" "%CUTTLE_EXE%" --client --host="%CUTTLE_HOST%"
+  ) else (
+    start "Cuttle Client" /D "%ELECTRON_DIR%\dist\win-unpacked" "%CUTTLE_EXE%" --client
   )
   goto :eof
 )

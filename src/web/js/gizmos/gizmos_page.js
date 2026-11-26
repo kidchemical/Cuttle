@@ -81,13 +81,14 @@
             const fields = g.type === 'usage_meter'
                 ? '<label><span>Agent</span><select data-field="agent">' + options(usageAgents(), cfg.agent, a => a.agent, a => a.label) + '</select></label>'
                   + '<label><span>Show</span><select data-field="show">' + options(['remaining', 'used'], cfg.show || 'remaining', s => s, s => (s === 'used' ? 'Used' : 'Remaining')) + '</select></label>'
+                  + '<label><span>Size</span><select data-field="size">' + options(M.SIZES, M.sizeOf(g), z => z, z => M.SIZE_LABELS[z]) + '</select></label>'
                   + ((data && data.readout)
                       ? '<label><span>Readout</span><select data-field="metric">' + options(usageMetrics(), cfg.metric || 'auto', m => m, metricLabel) + '</select></label>'
                       : '')
                   + '<label><span>Window</span><select data-field="window">' + options(windowChoices(g), cfg.window || 'tightest', w => w.id, w => w.label) + '</select></label>'
                   + (cfg.agent === 'claude'
-                      ? '<label class="gizmo-check"><input type="checkbox" data-field="api_credit"' + (cfg.api_credit ? ' checked' : '')
-                        + '><span>Include API credit (Providers key fallback)</span></label>'
+                      ? '<label><span>Billing</span><select data-field="billing">'
+                        + options(M.BILLING_VIEWS, M.claudeBilling(cfg), v => v, v => M.BILLING_LABELS[v]) + '</select></label>'
                       : '')
                 : '';
             return '<article class="gizmo-item" data-gizmo-item="' + esc(g.id) + '">'

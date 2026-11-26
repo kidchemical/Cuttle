@@ -241,7 +241,7 @@ def decide(policy: Dict[str, Any], snap: Dict[str, Any]) -> Dict[str, Any]:
         # The CLI's summary left the window over the threshold: start fresh.
         chosen = "fresh" if fresh else None
     else:
-        # No headless compact (Antigravity manages its own window): leave it be.
+        # No headless compact (DeepSeek is one-shot): leave it be.
         chosen = "native" if native else None
     if chosen is None:
         return no("ineffective" if mode == "auto" and snap.get("ineffective") else "no_method")

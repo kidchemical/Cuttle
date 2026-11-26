@@ -176,6 +176,13 @@ def _claude_command() -> Optional[List[str]]:
     return None
 
 
+def _antigravity_command() -> Optional[List[str]]:
+    from api.agent_harness.agents.antigravity.adapter import antigravity_executable
+
+    exe = antigravity_executable()
+    return [exe] if exe else None
+
+
 def _wsl_command() -> Optional[List[str]]:
     if _is_windows() and shutil.which('wsl'):
         return ['wsl', '-d', 'Ubuntu', 'bash', '-l']
@@ -225,6 +232,7 @@ def _resolve_shell_preset(shell_id: str, cwd: Optional[str] = None) -> Tuple[Opt
         ),
         'hermes': _hermes_preset,
         'claude': lambda: (_claude_command(), cwd, agent_cli_env()),
+        'antigravity': lambda: (_antigravity_command(), cwd, agent_cli_env()),
         'wsl': lambda: (_wsl_command(), cwd, env),
     }
 
@@ -244,6 +252,7 @@ def list_shell_presets() -> List[Dict[str, Any]]:
         {'id': 'python', 'label': 'Python REPL', 'icon': '🐍', 'description': 'Cuttle venv Python interactive shell'},
         {'id': 'hermes', 'label': 'Hermes CLI', 'icon': '🤖', 'description': 'Hermes Agent interactive mode'},
         {'id': 'claude', 'label': 'Claude Code', 'icon': '🧠', 'description': 'Anthropic Claude Code CLI'},
+        {'id': 'antigravity', 'label': 'Antigravity CLI', 'icon': '▲', 'description': 'Google Antigravity CLI (agy) — sign in here'},
         {'id': 'wsl', 'label': 'WSL Bash', 'icon': '🐧', 'description': 'Linux shell via WSL'},
     ]
     if _is_windows():

@@ -8,18 +8,18 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <title>Cuttle</title>
-    <link rel="stylesheet" href="/css/ui_boot.css?v=20261114kbBack">
-    <script src="/js/shared/ui_boot.js?v=20261114kbBack"></script>
-    <link rel="stylesheet" href="/css/app_shell.css?v=20261112workspaces">
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20261122popupContrast">
+    <script src="/js/shared/ui_boot.js?v=20261120peekSafe"></script>
+    <link rel="stylesheet" href="/css/app_shell.css?v=20261122popupContrast">
     <link rel="stylesheet" href="/css/chip_config_modal.css?v=20261112projDialogs">
     <link rel="stylesheet" href="/css/shell_voice.css?v=20261106meter">
     <link rel="stylesheet" href="/css/searchable_select.css?v=20261011attachedMenus">
     <link rel="stylesheet" href="/css/chat_lightbox.css?v=20260922imgCtxMenu">
     <link rel="stylesheet" href="/css/video_background.css?v=20260927blendTarget">
-    <link rel="stylesheet" href="/css/auth_modal.css?v=20260926authLogin">
-    <link rel="stylesheet" href="/css/update_center.css?v=20261018updateCenter">
+    <link rel="stylesheet" href="/css/auth_modal.css?v=20261122popupContrast">
+    <link rel="stylesheet" href="/css/update_center.css?v=20261122popupContrast">
     <link rel="stylesheet" href="/css/git_push_report.css?v=20261018pushReview" data-push-style="git_push_report">
-    <link rel="stylesheet" href="/css/gizmos.css?v=20261028voiceStrip">
+    <link rel="stylesheet" href="/css/gizmos.css?v=20261117meters">
 </head>
 <body>
 <!-- Electron-only custom titlebar (frameless window) -->
@@ -212,9 +212,21 @@
                 </svg>
             </button>
 
+            <button class="rail-item" data-page="/supervision_page.html" data-tooltip="Supervision" id="nav-supervision" style="display:none!important" data-id="nav-supervision" draggable="true" aria-label="Supervision">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 19 2 12z"/><circle cx="12" cy="12" r="3"/>
+                </svg>
+            </button>
+
             <button class="rail-item" data-page="/tasks_page.html" data-tooltip="Tasks" id="nav-tasks" data-id="nav-tasks" draggable="true" aria-label="Tasks">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                     <rect x="3" y="4" width="6" height="6" rx="1.5"/><path d="M4.8 7l1.2 1.2L8 6"/><path d="M12 7h9"/><rect x="3" y="14" width="6" height="6" rx="1.5"/><path d="M12 17h9"/>
+                </svg>
+            </button>
+
+            <button class="rail-item" data-page="/media_page.html" data-tooltip="Media" id="nav-media" data-id="nav-media" draggable="true" aria-label="Media">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.8"/><path d="M21 16l-5-5-9 9"/>
                 </svg>
             </button>
 
@@ -472,7 +484,7 @@
     </section>
 </div>
 
-<script src="/js/shared/toast.js?v=20261114kbBack"></script>
+<script src="/js/shared/toast.js?v=20261120peekSafe"></script>
     <script src="/js/shared/completion_notifications.js?v=20261004completion"></script>
 <script src="/js/shared/net_debug.js?v=20260810c"></script>
 <script src="/js/media/youtube_id.js"></script>
@@ -502,7 +514,7 @@
 <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
 <script src="/js/chat/chat_chip_config.js?v=20261112chipLinks"></script>
 <script src="/js/shell/shell_workspaces.js?v=20261112ws1"></script>
-<script src="/js/shell/shell_spaces.js?v=20261025spaceov1"></script>
+<script src="/js/shell/shell_spaces.js?v=20261122renameclick1"></script>
 <script src="/js/shell/shell_rail.js?v=20261027secretVault1"></script>
 <script src="/js/chat/chat_voice_receipts.js?v=20261012live2"></script>
 <script src="/js/shared/audio_level.js?v=20261106meter"></script>
@@ -511,7 +523,7 @@
 <script src="/js/shell/shell_voice.js?v=20261106meter"></script>
 <script src="/js/shell/shell_notifications.js?v=20261028notifPanel"></script>
 <script src="/js/shell/app_shell.js?v=20261112workspaces"></script>
-<script src="/js/gizmos/gizmos_model.js?v=20261007gizmos2"></script>
-<script src="/js/gizmos/gizmos_shell.js?v=20261103parkedRail"></script>
+<script src="/js/gizmos/gizmos_model.js?v=20261117billView"></script>
+<script src="/js/gizmos/gizmos_shell.js?v=20261117billView"></script>
 </body>
 </html>

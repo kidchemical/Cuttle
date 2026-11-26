@@ -69,6 +69,7 @@ def _git(path: str, *args: str) -> str:
         out = subprocess.run(
             ["git", "-C", os.path.abspath(os.path.expanduser(str(path))), *args],
             capture_output=True, text=True, timeout=15,
+            encoding="utf-8", errors="replace",
         )
     except (OSError, subprocess.SubprocessError):
         return ""

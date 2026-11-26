@@ -58,7 +58,8 @@ PYTHONPATH=src .venv/bin/python -m api.knowledge_graph <verb> [--provider ID] [-
 | `providers` / `status` / `list` | registered engines / inventory (indexed?, nodes/edges, stale?, worktree indexes) |
 | `where` | resolve active project → artifact path (+ `stale`) |
 | `index` (`--force`, `--all`) / `update` | build/refresh (incremental, local AST) / re-extract changed |
-| `query "…" [--budget N] [--refresh]` | scoped subgraph for a question (default 1500 tokens) |
+| `query "…" [--budget N] [--refresh] [--no-refresh]` | scoped subgraph for a question (default 1500 tokens) |
+| `usage [--days N]` | how often agents read the graph: calls by verb, project and agent, refresh count and time |
 | `explain "X" [--all]` / `node-path A B` | one node's neighbors / shortest path |
 | `notes` / `note "api › …"` | list / retrieve **enriched** subsystem explanations (agent-facing; see below) |
 | `export` / `sync [--index]` / `vault` | regenerate one project's vault / all projects / vaults parent folder |
@@ -82,7 +83,11 @@ PYTHONPATH=src .venv/bin/python -m api.knowledge_graph <verb> [--provider ID] [-
   `cluster-only` to apply it. With a labels file present graphify never calls an
   LLM; never run `graphify label` against a Cuttle store unless you want paid naming.
 - Incremental via graphify's manifest + AST cache; `--force` after refactors that
-  delete code. Freshness = recorded HEAD vs current; no daemon/watcher.
+  delete code. Freshness = recorded HEAD vs current; no daemon/watcher. `query` / `explain` /
+  `node-path` refresh a stale index before answering (`service.ensure_fresh`: one
+  refresh per store at a time, fail-open, `--no-refresh` opts out) and regenerate
+  that project's vault with it. Every read is
+  appended to `<home>/<store_root>/usage.jsonl` (`usage.py`).
 
 ## Obsidian vault
 

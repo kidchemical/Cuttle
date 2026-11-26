@@ -9,12 +9,19 @@ Pytest suite. Default entry (per AGENTS.md):
 .venv\Scripts\python.exe -m pytest src/tests/chat/test_chat_stream.py
 ```
 
+## Before pushing
+
+The pre-push hook runs `src/tests/quality` plus the tests touching the changed
+files, and refuses a release tag without a full-suite `release-check` pass
+(`core.prepush_tests`). Both treat `EncodingWarning` as an error. Recurring CI
+failures and the check that catches each: `docs/architecture/ci-failure-patterns.md`.
+
 ## Test tooling and artifacts
 
 Run tests with `pytest` (see above). Generated artifacts belong in the gitignored
 `results/` directory; do not write developer reports under `src/scripts/output/`,
 the Cuttle home, or `src/test-results/`. `conftest.py` pins `CUTTLE_HOME` to a
-throwaway folder for every run, so no test can touch live state.
+throwaway folder before importing application modules. Live-server tests have separate network isolation requirements.
 
 Operator network diagnostics are the narrow exception: `src/scripts/diagnose_*`
 are manually invoked troubleshooting tools, not pytest tests. The phone connectivity
@@ -54,7 +61,7 @@ It exercises stale Claude composer/draft state during a Codex turn, shared
 selection changes/removal, navigation/reload, completion, and router fallback.
 Working badges use turn identity; composer chips describe the next send.
 
-Requires Playwright and Chromium from `src/requirements/requirements-dev.txt`.
+Install Playwright from `src/requirements/requirements-dev.txt` and install a compatible Chromium browser.
 This test serves production assets with an isolated API; it never reaches the
 running Flask or a provider. Set `CUTTLE_API_URL=http://127.0.0.1:9` for a full
 offline suite so older live-server E2E fixtures skip instead of touching an
@@ -78,7 +85,6 @@ interpreter, e.g. via symlink, without copying environments):
 (
 set -e
 mkdir -p temp
-export PATH="<node-dir>:$PATH"
 node --version  # required gate: missing node silently skips frontend validation
 export TMPDIR="$PWD/temp" GIT_CEILING_DIRECTORIES="$PWD/temp"
 export CUTTLE_API_URL=http://127.0.0.1:9 CUTTLE_AGENT_STEER=0 CUTTLE_JEV_WATCH=0 CUTTLE_MOBILE_AUTO_REBUILD=0
@@ -108,39 +114,12 @@ settings, or resume copies — root imports can reload keys from `<home>/.env`
 (`override=False`), so no existing worktree is automatically safe. Not
 main-checkout-only: any isolated worktree runs the same recipe.)
 
-Offline broad gate (same env, historical exclusions): `.venv/bin/python -m
-pytest -q -p no:warnings src/tests/ --ignore=src/tests/diagnostics -rf -rs
---basetemp=temp/pytest-a2-broad` (never bare `pytest`). Skip reasons are
-reported by `-rs`, not asserted and not passing coverage — 2026-10-01
-baseline snapshot: 41 spend/scope-gated live tests, 21 platform/fixture
-cases (incl. the generated-Android-config skip). Measured 2026-10-01:
-broad 2125 passed / 62 skipped, focused gate 92 passed, browser suites 14
-passed (13 pre-existing + 1 guard test). The broad measurement preceded
-the Android test split; the final targeted file run reported 21 passed /
-1 skipped, with the tracked-source assertion counted separately. The
-initial broad run is a historical measurement only: its logs show an
-unintended `[MOBILE]` APK rebuild attempt (`JAVA_HOME` missing) during
-API module import/collection (`PYTEST_CURRENT_TEST` is unset at
-collection, so that guard did not apply). Corrected by the
-`pytest_configure` hard override (`CUTTLE_MOBILE_AUTO_REBUILD=0`) plus
-focused verification in `test_pytest_configure_isolation.py` that the
-configured env beats an inherited `1` and collection-style route
-registration starts no thread/Gradle. Latest focused gate (hook + mobile
-Android + mobile webview + boundary): 52 passed / 1 skipped.
+Run the default offline suite with `.venv/bin/python -m pytest -q src/tests/ -rs`. Request browser tests explicitly and review their skip reasons.
 
 ## Shadow gates (S1/S2, Linux-only)
 
 Real-app shadow suites run the production Flask from an isolated snapshot —
-never the live server. **Linux only**: `test_dev_instance.py`, `test_shadow_chat_journeys.py`, and
-`e2e/test_shadow_chat_stop_resend.py` skip off-Linux (`sys.platform !=
-"linux"`); pure B1 tests stay platform-neutral. S1 passed 37 (22 dev + 15
-architecture). S2 real-HTTP run: 34 passed / 66
-executions / zero guard denials. Manager combined candidate: all three real
-browser tests passed with no skips (4.80 s), and all 71 shadow/HTTP/boundary
-tests passed (8.47 s). Earlier broad result kept: 2255 passed / 61 skipped /
-zero failures. S1/S2 implementation is verified and activated (Linux);
-historical counts above are the acceptance evidence.
-Details: `docs/architecture/development-instance-safety.md`.
+never the live server. The shadow runtime and browser journeys require Linux. See the [development instance guide](../../docs/architecture/development-instance-safety.md).
 
 Run from the repo root with the same scrubbed offline env as above (plus the
 shadow CLI owns its ports — `prepare` then `up`, ephemeral by default, live
@@ -194,6 +173,10 @@ Three fresh contexts/databases per workload; output defaults to ignored
 `temp/f1-measurements.json` (`CUTTLE_COST_PROFILE_OUT` overrides it). This is
 a measurement aid, not a timing-threshold CI gate.
 Browser skips remain unmet validation gates.
+
+Optional Studio reference captures read local scene HTML under
+`temp/studio-reference/intro/` and `temp/studio-reference/film/scenes/`.
+Only the reference captures require these external design assets.
 
 ## Layout
 

@@ -160,6 +160,7 @@ def execute_job(job: Dict[str, Any], auth_token: Optional[str] = None) -> Dict[s
         "blender_render",
         "shell",
         "cuttle_self_update",
+        "agent_turn",
     }:
         raise JobExecError(f"unsupported job type: {raw_type or jtype}")
     params = job.get("params") if isinstance(job.get("params"), dict) else {}
@@ -181,6 +182,11 @@ def execute_job(job: Dict[str, Any], auth_token: Optional[str] = None) -> Dict[s
         return _shell_recipe(params)
     if jtype == "cuttle_self_update":
         return _cuttle_self_update(params)
+    if jtype == "agent_turn":
+        # Execution node: the paired host's chat turn (opt-in here; api.exec_nodes).
+        from api.exec_nodes.node import run_agent_turn
+
+        return run_agent_turn(job, auth_token)
     raise JobExecError(f"unsupported job type: {raw_type or jtype}")
 
 
@@ -511,6 +517,7 @@ def _git_update_checkout(
                 text=True,
                 timeout=30,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                encoding="utf-8", errors="replace",
             ).stdout.strip()
         except (OSError, subprocess.SubprocessError):
             return ""
@@ -525,6 +532,7 @@ def _git_update_checkout(
             argv,
             capture_output=True, text=True, timeout=300, cwd=str(repo),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            encoding="utf-8", errors="replace",
         )
         output = (result.stdout or "") + (result.stderr or "")
         if log_path:

@@ -5,6 +5,7 @@ Connects the landing page to the local bot functionality
 """
 
 import json
+import importlib
 import threading
 import time
 import re
@@ -114,8 +115,9 @@ except ImportError as e:
 
 app = Flask(__name__)
 # gzip text responses; registered first so it runs after every other hook.
-from api import http_compression  # noqa: E402
+from api import error_pages, http_compression  # noqa: E402
 http_compression.install(app)
+error_pages.install(app)  # styled 4xx/5xx for page loads only
 # Restrict CORS to known-safe origins (+ LAN IP when lan_access_enabled).
 try:
     from api.lan_access import build_cors_origins
@@ -347,6 +349,10 @@ try:
     app.register_blueprint(secret_vault_pages_bp)
 except Exception as _secret_vault_err:
     print(f"[SECRET VAULT] Failed to register routes: {_secret_vault_err}")
+try:  # Media App (owner: api.media_library)
+    from api.media_library.routes import media_library_bp; app.register_blueprint(media_library_bp)
+except Exception as _media_library_err:
+    print(f"[MEDIA] Failed to register routes: {_media_library_err}")
 
 try:
     from api.chat_vfx.routes import chat_vfx_bp
@@ -414,12 +420,12 @@ try:
 except Exception as _provider_keys_err:
     print(f"[PROVIDER KEYS] Failed to register routes: {_provider_keys_err}")
 
-# Claude Code palette pins (owned by the Claude agent slice)
-try:
-    from api.agent_harness.agents.claude.routes import claude_bp
-    app.register_blueprint(claude_bp)
-except Exception as _claude_err:
-    print(f"[CLAUDE] Failed to register routes: {_claude_err}")
+# Claude Code + Antigravity palette pins (each owned by its agent slice)
+for _pin_agent in ("claude", "antigravity"):
+    try:
+        app.register_blueprint(importlib.import_module(f"api.agent_harness.agents.{_pin_agent}.routes").__dict__[f"{_pin_agent}_bp"])
+    except Exception as _pin_err:
+        print(f"[{_pin_agent.upper()}] Failed to register routes: {_pin_err}")
 
 # Muse Code palette pins (owned by the Muse agent slice)
 try:
@@ -498,9 +504,9 @@ except Exception as _jev_watch_err:
 
 # Existing-chat agent operations (durable outbox, check-ins, supervision UI routes).
 try:
-    from api.chat_ops.routes import chat_ops_bp
+    from api.chat_ops.routes import chat_ops_bp, chat_ops_pages_bp
     from api.chat_ops.worker import ensure_started as _chat_ops_start
-    app.register_blueprint(chat_ops_bp)
+    for _bp in (chat_ops_bp, chat_ops_pages_bp): app.register_blueprint(_bp)
     _chat_ops_start()
 except Exception as _chat_ops_err:
     print(f"[CHAT OPS] worker not started: {_chat_ops_err}")
@@ -2559,13 +2565,12 @@ def _apply_request_agent_pins(session_id, data, message_text=None) -> None:
     except Exception as exc:
         print(f"[CHAT] apply opencode agent_pins failed: {exc}", flush=True)
 
-    try:
-        claude = _entry('claude')
-        if claude:
-            from api.agent_harness.agents.claude.routes import apply_request_pins
-            apply_request_pins(session_id, claude)
-    except Exception as exc:
-        print(f"[CHAT] apply claude agent_pins failed: {exc}", flush=True)
+    for pin_agent in ('claude', 'antigravity'):
+        try:
+            if _entry(pin_agent):
+                importlib.import_module(f'api.agent_harness.agents.{pin_agent}.routes').apply_request_pins(session_id, _entry(pin_agent))
+        except Exception as exc:
+            print(f"[CHAT] apply {pin_agent} agent_pins failed: {exc}", flush=True)
 
     try:
         cursor = _entry('cursor')
@@ -2775,9 +2780,7 @@ def _resolve_auth_chat_session(chat_session_id):
 
         _db_sid = _parse_auth_db_session_id(chat_session_id)
         if _db_sid is not None:
-            chat_session = db.get_chat_session(_db_sid, user['id'])
-            if chat_session:
-                return user, _db_sid, False
+            db.get_chat_session(_db_sid, user['id'])  # revives an owned chat deleted while empty
             return user, _db_sid, False
         return user, chat_session_id, False
     except Exception as e:
@@ -3592,6 +3595,8 @@ def chat_endpoint():
             except Exception as _pin_err:
                 print(f"[CHAT] apply agent_pins failed: {_pin_err}", flush=True)
         if _auth_user and _created_new_session:
+            from api.exec_nodes.service import bind_new_chat
+            bind_new_chat(chat_session_id, data, owner=is_owner_user(_auth_user))
             try:
                 _preview = ' '.join((message_content or '').split())
                 if _preview:

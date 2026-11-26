@@ -20,7 +20,7 @@ def run_checks() -> Dict[str, Any]:
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
         test_file = data_dir / ".doctor_write_test"
-        test_file.write_text("ok")
+        test_file.write_text("ok", encoding="utf-8")
         test_file.unlink()
     except Exception as e:
         error = str(e)

@@ -1,0 +1,118 @@
+/* ================================================================
+   Studio chat look — design tokens. Tokens only.
+
+   Everything here is scoped to `:root.cuttle-studio`, which ui_boot.js or
+   chat_display.js sets only when the Studio pref AND chat_studio_display are
+   on. Classic never matches a selector below, so its look is unchanged.
+
+   Studio is a layout and shape layer (radii, spacing, shadows, motion) on top
+   of the active Cuttle theme. Every colour below derives from the theme's own
+   variables (--bg-*, --text-*, --accent-*, --message-*-bg, --bubble-*; see
+   chat_page.css and themes.css), so all themes, wallpapers and custom palettes
+   carry through. Studio sets no font: the theme's type and the user's
+   Text & fonts prefs (text_prefs.css) apply as in Classic.
+
+   Do not add a fixed colour or a font-family to a Studio stylesheet; derive
+   it from a theme variable here.
+   ================================================================ */
+
+:root.cuttle-studio {
+    /* Type scale (app density; film 23–31px maps to about 12–16px here). */
+    --studio-text-2xs: 11px;
+    --studio-text-xs: 12px;
+    --studio-text-sm: 13px;
+    --studio-text-base: 15px;
+    --studio-text-md: 16px;
+    --studio-text-lg: 18px;
+    --studio-text-xl: 22px;
+    --studio-text-2xl: 28px;
+
+    /* Weights. */
+    --studio-weight-regular: 400;
+    --studio-weight-medium: 500;
+    --studio-weight-semibold: 600;
+    --studio-weight-bold: 700;
+    --studio-weight-heavy: 800;
+
+    /* Line heights. */
+    --studio-leading-tight: 1.25;
+    --studio-leading-base: 1.5;
+    --studio-leading-relaxed: 1.6;
+    --studio-tracking-tight: -0.01em;
+
+    /* Spacing (4px grid). */
+    --studio-space-1: 4px;
+    --studio-space-2: 8px;
+    --studio-space-3: 12px;
+    --studio-space-4: 16px;
+    --studio-space-5: 20px;
+    --studio-space-6: 24px;
+    --studio-space-8: 32px;
+
+    /* Radii. */
+    --studio-radius-sm: 10px;
+    --studio-radius-md: 14px;
+    --studio-radius-lg: 18px;
+    --studio-radius-xl: 22px;
+    --studio-radius-pill: 999px;
+
+    /* Ink and accent: the theme's text and accent colours. */
+    --studio-ink: var(--text-primary);
+    --studio-ink-muted: var(--text-secondary);
+    --studio-ink-faint: var(--text-tertiary, color-mix(in srgb, var(--text-secondary) 70%, transparent));
+    --studio-accent: var(--accent-color);
+    --studio-accent-2: var(--accent-hover);
+    --studio-accent-soft: color-mix(in srgb, var(--accent-color) 14%, transparent);
+    --studio-accent-ink: color-mix(in srgb, var(--accent-color) 70%, var(--text-primary));
+    --studio-accent-glow: color-mix(in srgb, var(--accent-color) 32%, transparent);
+    --studio-accent-gradient: linear-gradient(135deg, var(--accent-color), var(--accent-hover));
+    --studio-focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent-color) 45%, transparent);
+
+    /* Surfaces: the theme's page and card colours. The backdrop is a soft
+       accent wash laid over the theme's own page colour (see threads.css). */
+    --studio-surface-base: var(--bg-secondary);
+    --studio-backdrop:
+        radial-gradient(ellipse at 12% 8%, color-mix(in srgb, var(--accent-color) 11%, transparent) 0%, transparent 46%),
+        radial-gradient(ellipse at 100% 100%, color-mix(in srgb, var(--accent-hover) 9%, transparent) 0%, transparent 60%);
+    --studio-card-bg: var(--message-assistant-bg, var(--bg-secondary));
+    --studio-card-ring: 0 0 0 1px var(--studio-border-color);
+    --studio-thinking-bg: color-mix(in srgb, var(--text-primary) 5%, transparent);
+
+    /* Layered card shadows in the theme's shadow colour. The fallbacks cover
+       pages on shared_navigation.css (the Orchestrator playbook), which has no
+       bubble variables. */
+    --studio-shadow-color: var(--bubble-shadow, var(--card-shadow, color-mix(in srgb, black 20%, transparent)));
+    --studio-border-color: var(--bubble-border, var(--border-color));
+    --studio-shadow-card: 0 1px 2px var(--studio-shadow-color), 0 8px 20px -8px var(--studio-shadow-color);
+    --studio-shadow-raised: 0 1px 2px var(--studio-shadow-color), 0 16px 36px -14px var(--studio-shadow-color);
+    --studio-shadow-composer: 0 0 0 1px var(--studio-border-color), 0 16px 36px -14px var(--studio-shadow-color);
+    --studio-shadow-avatar: 0 4px 12px -4px var(--studio-shadow-color);
+
+    /* Chat bubbles. Studio forces bubbles on (ui_boot.js drops flat messages).
+       Colours are the theme's bubble colours; Studio adds the shape. Text size
+       stays the user's (Text & fonts prefs). */
+    --studio-bubble-user-bg: linear-gradient(135deg, var(--message-user-bg), var(--accent-hover));
+    --studio-bubble-user-ink: var(--text-inverse, white);
+    --studio-bubble-user-shadow: 0 10px 24px -12px color-mix(in srgb, var(--message-user-bg) 55%, transparent);
+    --studio-bubble-bot-bg: var(--studio-card-bg);
+    --studio-bubble-bot-ink: var(--text-primary);
+    --studio-bubble-radius: var(--studio-radius-xl);
+    --studio-bubble-tail: 8px;
+    --studio-bubble-padding: 16px 20px;
+    --studio-bubble-shadow: 0 2px 4px var(--studio-shadow-color), 0 14px 32px -16px var(--studio-shadow-color);
+
+    /* Motion. Reduced motion zeroes the durations below. */
+    --studio-ease-out: cubic-bezier(0.2, 0.9, 0.25, 1);
+    --studio-ease-pop: cubic-bezier(0.2, 0.9, 0.25, 1.12);
+    --studio-dur-fast: 160ms;
+    --studio-dur-base: 300ms;
+    --studio-dur-slow: 480ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root.cuttle-studio {
+        --studio-dur-fast: 0ms;
+        --studio-dur-base: 0ms;
+        --studio-dur-slow: 0ms;
+    }
+}

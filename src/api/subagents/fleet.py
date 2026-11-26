@@ -74,6 +74,22 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
 
 
+def card_fields(state: str, body: str, *, started_at: Any = "", finished_at: Any = "",
+                live_status_at: Any = "") -> Dict[str, Any]:
+    """The fleet half of a card payload: outcome, one-line summary, tooltip text, times.
+
+    Shared by sub-agent cards and chat-ops send cards (``api.chat_ops.cards``)."""
+    return {
+        "fleet": True,
+        "outcome": state,
+        "summary": _clip(body, SUMMARY_CHARS),
+        "detail": _clip(body, DETAIL_CHARS),
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "live_status_at": live_status_at if state == "running" else "",
+    }
+
+
 def fleet_entry(child: ChildRecord) -> Dict[str, Any]:
     """Launcher payload plus outcome, one-line summary and full tooltip text."""
     state = outcome(child)
@@ -89,11 +105,6 @@ def fleet_entry(child: ChildRecord) -> Dict[str, Any]:
         body = plain_text(child.live_status) or "Working…"
     return {
         **public_launcher(child.public()),
-        "fleet": True,
-        "outcome": state,
-        "summary": _clip(body, SUMMARY_CHARS),
-        "detail": _clip(body, DETAIL_CHARS),
-        "started_at": child.started_at,
-        "finished_at": child.finished_at,
-        "live_status_at": child.live_status_at if state == "running" else "",
+        **card_fields(state, body, started_at=child.started_at, finished_at=child.finished_at,
+                      live_status_at=child.live_status_at),
     }

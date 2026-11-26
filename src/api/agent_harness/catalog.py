@@ -105,6 +105,19 @@ def _load_manifest_dict(agent_dir: Path) -> Dict[str, Any]:
     return data
 
 
+_IDENTITY_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _identity_color(raw: Any) -> str:
+    """A manifest ``color`` as ``#rrggbb``, or ``""`` (frontend grey) if invalid.
+
+    Strict on purpose: the value reaches inline CSS in the chat UI, so only a
+    six-digit hex colour passes. Anything else is dropped, not repaired.
+    """
+    value = str(raw or "").strip()
+    return value.lower() if _IDENTITY_COLOR_RE.match(value) else ""
+
+
 def _manifest_from_dict(
     data: Dict[str, Any],
     *,
@@ -177,12 +190,14 @@ def _manifest_from_dict(
     # Single short glyph only — never prose or a path. Keeps the wire shape
     # boring for drop-ins that set something odd.
     icon = icon_raw[:8]
+    color = _identity_color(data.get("color"))
     return AgentManifest(
         permissions=permissions(data.get("permissions")),
         provenance=provenance(data.get("provenance"), agent_dir),
         id=mid,
         label=str(data.get("label") or mid).strip(),
         icon=icon,
+        color=color,
         slash=_canonical_slash(str(data.get("slash") or ""), mid),
         requires_cloud=bool(data.get("requires_cloud", True)),
         sticky=bool(data.get("sticky", True)),
@@ -201,6 +216,7 @@ def _manifest_from_dict(
         pricing_benchmark=str(data.get("pricing_benchmark") or "").strip().lower(),
         resume=bool(data.get("resume", True)),
         capabilities_inject=str(data.get("capabilities_inject") or "once_per_resume").strip(),
+        context=str(data.get("context") or "full").strip().lower(),
         env_profile=str(data.get("env_profile") or "native").strip(),
         activity=str(data.get("activity") or "heartbeat").strip(),
         missing_cli_hint=str(data.get("missing_cli_hint") or "").strip(),
@@ -640,7 +656,9 @@ def public_catalog(project_path: Optional[str] = None) -> List[Dict[str, Any]]:
     """Catalog rows for the palette and Settings.
 
     Guest authentication belongs to each CLI. Legacy credential fields remain
-    in the wire shape but never consult Cuttle's provider environment.
+    in the wire shape but never consult Cuttle's provider environment. Model
+    lists carry the last saved live catalog, not only the manifest snapshot
+    (``agent_models.overlay_saved_catalogs``).
     """
     rows: List[Dict[str, Any]] = []
     for agent_id in list_agents(project_path):
@@ -658,6 +676,12 @@ def public_catalog(project_path: Optional[str] = None) -> List[Dict[str, Any]]:
         # Installed is not a claim that the native login is valid.
         row["ready"] = avail
         rows.append(row)
+    try:
+        from api.agent_harness.agent_models import overlay_saved_catalogs
+
+        overlay_saved_catalogs(rows)
+    except Exception as exc:  # noqa: BLE001 — keep the manifest snapshot
+        print(f"[agent_harness.catalog] saved model catalogs unavailable: {exc}", flush=True)
     return rows
 
 

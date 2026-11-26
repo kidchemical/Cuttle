@@ -31,6 +31,18 @@ def setup_function(_fn=None):
     reload_catalog()
 
 
+@pytest.fixture(autouse=True)
+def _live_smoke_runners(request):
+    """Live tests are the explicit opt-in the fail-closed CLI guard allows (spend_guard.py)."""
+    if not request.node.name.startswith("test_live_") or os.environ.get("CUTTLE_AGENT_SMOKE") != "1":
+        yield
+        return
+    from api.agent_router.supervised.test_isolation import allow_external_runners
+
+    with allow_external_runners(f"{request.node.name}: CUTTLE_AGENT_SMOKE=1 live harness smoke"):
+        yield
+
+
 
 
 def test_summarize_antigravity_auth_wall():
@@ -38,7 +50,7 @@ def test_summarize_antigravity_auth_wall():
 
     raw = "authentication required: no cached credential profile is available"
     msg = summarize_antigravity_error(raw, returncode=1)
-    assert "authentication is required" in msg.lower()
+    assert "not signed in" in msg.lower()
     assert "agy" in msg
     assert "\n" not in msg
 

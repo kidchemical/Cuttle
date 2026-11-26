@@ -50,7 +50,16 @@ CHAT_CSS = WEB / "css" / "chat_page.css"
 USAGE_HARNESS_IDS = ("cursor", "muse", "codex", "hermes", "opencode", "claude")
 
 # Bundled agents that intentionally do *not* go through agent_usage.py.
-NO_SHARED_USAGE_IDS = ("deepseek", "antigravity")
+NO_SHARED_USAGE_IDS = ("deepseek",)
+
+# Recorded `agy -p "/usage" --output-format json` → command.data (agy 1.5.13).
+AGY_USAGE_DATA = {"groups": [
+    {"name": "Gemini Models", "description": "Models within this group: Gemini 4 Neon, Gemini 3.8 Flash",
+     "buckets": [{"id": "gemini-weekly", "name": "Weekly Limit Remaining", "window": "weekly",
+                  "remaining_fraction": 0.9982, "reset_time": "2026-11-28T00:42:55Z"},
+                 {"id": "gemini-5h", "name": "Five Hour Limit Remaining", "window": "5h",
+                  "remaining_fraction": 0.9936, "reset_time": "2026-11-21T05:42:55Z"}]},
+]}
 
 
 def _meters_payload(md: str) -> Dict[str, Any]:
@@ -537,12 +546,17 @@ def test_handle_agent_usage_slash_routes_all_non_cursor(monkeypatch):
         "api.agent_usage.run_claude_usage",
         lambda days=30: format_claude_usage_markdown({**CLAUDE_USAGE_FAKE, "days": days}),
     )
+    from api.agent_harness.agents.antigravity import usage as agy_usage
+
+    monkeypatch.setattr(agy_usage, "fetch_antigravity_quota", lambda **_k: {
+        "success": True, "groups": agy_usage.parse_quota_groups(AGY_USAGE_DATA), "credits": {"remaining": 0}})
     for agent_id, title in (
         ("codex", "Codex"),
         ("muse", "Muse"),
         ("hermes", "Hermes"),
         ("opencode", "OpenCode"),
         ("claude", "Claude"),
+        ("antigravity", "Antigravity"),
     ):
         for prompt in ("/usage", "usage", "/usage 7d"):
             md = handle_agent_usage_slash(agent_id, prompt)

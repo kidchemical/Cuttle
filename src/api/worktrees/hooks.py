@@ -94,6 +94,7 @@ def run_setup_hook(
         proc = subprocess.run(
             command, cwd=cwd, shell=True, capture_output=True, text=True,
             timeout=limit, env={**os.environ, **(env or {})},
+            encoding="utf-8", errors="replace",
         )
     except subprocess.TimeoutExpired:
         return {"ran": True, "ok": False, "reason": "timeout", "timeout": limit}

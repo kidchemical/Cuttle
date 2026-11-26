@@ -15,7 +15,7 @@
 /* Summary card (label, big value, bar, caption). */
 .settings-stat {display:flex;flex-direction:column;gap:10px;margin-bottom:6px;}
 .settings-stat-label {margin:0;font-size:11.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--text-secondary);}
-.settings-stat-value {margin:0;font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1.1;color:var(--text-primary);font-variant-numeric:tabular-nums;}
+.settings-stat-value {margin:0;font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1.4;color:var(--text-primary);font-variant-numeric:tabular-nums;}
 .settings-stat-bar {height:8px;border-radius:999px;background:color-mix(in srgb,var(--text-primary) 10%,transparent);overflow:hidden;max-width:none;}
 .settings-stat-bar > span {display:block;height:100%;border-radius:inherit;background:var(--accent-color);transition:width var(--dur-slow,.36s) var(--ease-out,ease);}
 .settings-stat-bar.is-over > span {background:var(--error-border,#e5484d);}

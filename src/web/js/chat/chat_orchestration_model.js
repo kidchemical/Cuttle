@@ -15,11 +15,17 @@
         if (!b.bound) return null;
         const name = String(b.playbook_name || b.playbook_id || 'playbook');
         const hold = HOLD[b.hold] ? String(b.hold) : '';
+        // Bound but nothing moving it on (no turn, live agent or active
+        // supervisor): idle, not live. An older server sends no `working`.
+        const working = !hold && b.working !== false;
+        const label = hold ? HOLD[hold].label : (working ? 'Orchestrating' : 'Idle');
         return {
-            text: (hold ? HOLD[hold].label : 'Orchestrating') + ' · ' + name,
+            text: label + ' · ' + name,
             hold,
-            stateLabel: hold ? HOLD[hold].label : 'Orchestrating',
-            holdNote: hold ? HOLD[hold].note : '',
+            working,
+            stateLabel: label,
+            holdNote: hold ? HOLD[hold].note : (working ? '' : IDLE_NOTE),
+            supervisionNote: !hold && b.supervision === 'paused' ? SUPERVISION_PAUSED_NOTE : '',
             actions: actions(hold),
             playbookId: String(b.playbook_id || ''),
             playbookName: name,
@@ -34,6 +40,9 @@
         paused: { label: 'Paused', note: 'Nothing new starts. Jobs already running finish, and their results wait for Resume.' },
         stopped: { label: 'Stopped', note: 'Its agents and jobs were ended and its wake-ups dropped. Resume lets it work again.' },
     };
+
+    const IDLE_NOTE = 'Nothing is running: no turn, sub-agent or active supervisor. It works again when you send a message.';
+    const SUPERVISION_PAUSED_NOTE = 'Supervision of this chat is paused on its own (not by this orchestration); resume it from the supervision chip.';
 
     /** The panel's control buttons for a hold state, in order. */
     function actions(hold) {

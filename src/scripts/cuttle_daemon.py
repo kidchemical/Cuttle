@@ -88,6 +88,11 @@ PROJECT_ROOT = SRC_ROOT.parent
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+# Relocation must precede even dotenv and log-directory initialization.
+if __name__ == "__main__":
+    from core.home_relocation import apply_at_startup
+    apply_at_startup(PROJECT_ROOT)
+
 # Load <home>/.env so API keys and optional REST tokens (e.g. DISCORD_TOKEN for agent-ops) are available
 from core.runtime_paths import env_file as _home_env_file
 
@@ -419,6 +424,7 @@ def _warn_primary_port_conflicts() -> None:
             capture_output=True,
             text=True,
             timeout=10,
+            encoding="utf-8", errors="replace",
         )
         raw = (result.stdout or "").strip()
         if not raw:
@@ -706,6 +712,7 @@ def _primary_port_listeners() -> List[int]:
                 capture_output=True,
                 text=True,
                 timeout=10,
+                encoding="utf-8", errors="replace",
             )
             for line in (result.stdout or "").splitlines():
                 line = line.strip()
@@ -737,6 +744,7 @@ def _primary_port_listeners() -> List[int]:
             capture_output=True,
             text=True,
             timeout=8,
+            encoding="utf-8", errors="replace",
         )
         for line in (result.stdout or "").splitlines():
             if "pid=" not in line:

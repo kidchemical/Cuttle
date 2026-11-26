@@ -171,8 +171,23 @@
             const fragment = doc.createDocumentFragment();
             for (let i = start; i < end; i++) {
                 const opt = filtered[i];
+                // A native <optgroup> renders as a header row before its first
+                // option (also after a search filters the list).
+                const group = optionGroup(opt);
+                if (group && (i === 0 || optionGroup(filtered[i - 1]) !== group)) {
+                    const head = doc.createElement('li');
+                    head.className = 'cuttle-combo-group';
+                    head.setAttribute('role', 'presentation');
+                    head.textContent = group.label || '';
+                    fragment.appendChild(head);
+                }
                 const li = doc.createElement('li');
                 li.className = 'cuttle-combo-option';
+                // `is-muted` on an <option> (or its <optgroup>) dims a choice
+                // that stays selectable.
+                if (opt.classList.contains('is-muted') || (group && group.classList.contains('is-muted'))) {
+                    li.classList.add('is-muted');
+                }
                 li.setAttribute('role', 'option');
                 li.id = list.id + '-' + i;
                 li.setAttribute('aria-selected', String(opt.value === select.value));
@@ -190,6 +205,11 @@
             }
             list.appendChild(fragment);
             rendered = end;
+        }
+
+        function optionGroup(opt) {
+            const parent = opt && opt.parentElement;
+            return parent && parent.tagName === 'OPTGROUP' ? parent : null;
         }
 
         function loadMore() {

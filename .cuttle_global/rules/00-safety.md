@@ -6,7 +6,7 @@ To change them for everyone, edit this tree (`.cuttle_global/rules/`) — a
 per-project `GLOBAL.ini` cannot switch them off, and a project `00-safety.md`
 can only *append* (never replace them).
 
-1. Never force-kill Flask, `cuttle_daemon`, or the Discord bot from an agent those
+1. Never force-kill Flask (`web_chat_api`) or `cuttle_daemon` from an agent those
    processes host (on Windows that means no `taskkill` / `Stop-Process` on them).
    To offer a Flask restart in Cuttle chat, emit exactly
    `<cuttle_action_form>{"title": "Restart Flask (daemon-owned)"}</cuttle_action_form>`

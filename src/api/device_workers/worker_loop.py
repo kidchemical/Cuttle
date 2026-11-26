@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 import threading
 import time
@@ -174,6 +175,32 @@ def _run_one(
         log.warning("job %s retryable fail: %s", jid, e)
 
 
+def _claim_caps(ads: dict) -> dict:
+    """Capabilities for a claim: agent turns only while a slot is free."""
+    caps = dict(ads.get("capabilities") or {})
+    storage = ads.get("storage") or {}
+    if isinstance(storage, dict):
+        caps = {**caps, "storage": storage}
+    if caps.get("agent_exec"):
+        try:
+            from api.exec_nodes import node as exec_node
+
+            caps["agent_exec"] = exec_node.slots_free()
+        except Exception:
+            caps["agent_exec"] = False
+    return caps
+
+
+def _run_claimed(job: dict, run: Callable[[], None]) -> None:
+    """Agent turns run beside the loop (they can take an hour); the rest inline."""
+    if str(job.get("type") or "") == "agent_turn":
+        from api.exec_nodes import node as exec_node
+
+        exec_node.start(str(job.get("id") or ""), run)
+    else:
+        run()
+
+
 def run_local_worker_loop(*, should_continue: Callable[[], bool]) -> None:
     """Host-side worker: registers into the local SQLite store and claims jobs."""
     for _ in range(10):
@@ -201,11 +228,7 @@ def run_local_worker_loop(*, should_continue: Callable[[], bool]) -> None:
             _maybe_reload_stale_code()
             ads = _ads()
             _local_register(store, ads)
-            caps = dict(ads.get("capabilities") or {})
-            # Merge storage for requirement checks
-            storage = ads.get("storage") or {}
-            if isinstance(storage, dict):
-                caps = {**caps, "storage": storage}
+            caps = _claim_caps(ads)
             jobs = store.claim_jobs(
                 worker_id=wid,
                 capabilities=caps,
@@ -213,7 +236,8 @@ def run_local_worker_loop(*, should_continue: Callable[[], bool]) -> None:
                 lease_seconds=lease,
             )
             for job in jobs:
-                _run_one(
+                _run_claimed(job, functools.partial(
+                    _run_one,
                     job,
                     complete=lambda jid, result: store.complete_job(jid, wid, result=result),
                     fail=lambda jid, error, retry, params_update=None, partial_result=None: store.fail_job(
@@ -229,7 +253,7 @@ def run_local_worker_loop(*, should_continue: Callable[[], bool]) -> None:
                     ),
                     lease_seconds=lease,
                     auth_token=local_token,
-                )
+                ))
         except Exception as e:
             log.warning("local worker tick error: %s", e)
             print(f"[DAEMON] Device worker error: {e}")
@@ -279,14 +303,12 @@ def run_remote_worker_loop(
                 "meta": _meta_from_ads(ads),
             }
             client.register(payload)
-            caps = dict(ads.get("capabilities") or {})
-            storage = ads.get("storage") or {}
-            if isinstance(storage, dict):
-                caps = {**caps, "storage": storage}
+            caps = _claim_caps(ads)
             jobs = client.claim(limit=1, capabilities=caps)
             lease = lease_seconds()
             for job in jobs:
-                _run_one(
+                _run_claimed(job, functools.partial(
+                    _run_one,
                     job,
                     complete=lambda jid, result: client.complete(jid, result),
                     fail=lambda jid, error, retry, params_update=None, partial_result=None: client.fail(
@@ -301,7 +323,7 @@ def run_remote_worker_loop(
                     ),
                     lease_seconds=lease,
                     auth_token=remote_token,
-                )
+                ))
         except Exception as e:
             log.warning("remote worker tick error: %s", e)
             print(f"[WORKER] tick error: {e}")

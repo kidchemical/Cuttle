@@ -61,8 +61,7 @@ Some rules that trip up first contributions:
 - New vendor CLIs are adapters under `src/api/agent_harness/agents/<id>/`.
   Cuttle discovers CLIs; it never installs them.
 - Runtime state and secrets live in the per-user Cuttle home (`<home>/secrets/`,
-  `<home>/.env`), never in the repository; see `docs/architecture/cuttle-home.md`
-  or the repo.
+  `<home>/.env`), never in the repository. See the [runtime directory layout](docs/architecture/cuttle-home.md).
 
 ## Pull requests
 

@@ -28,7 +28,7 @@ const G = require(process.env.GAUGE_JS);
 const pick = (p) => ({ type: p.type, state: p.state, icon: p.icon, label: p.label, detail: p.detail });
 const out = {};
 out.legacy = {
-  project: pick(N.fromText('📁 Project: Cuttle → `/mnt/warpgate/Dev/Cuttle`')),
+  project: pick(N.fromText('📁 Project: Cuttle → `/example/projects/Cuttle`')),
   worktree: pick(N.fromText('\u{1F33F} Worktree: feat/x')),
   checkout: pick(N.fromText('📁 Local checkout')),
   stop: pick(N.fromText('⏹ Stopped generating.', 'generation-stop')),
@@ -73,7 +73,7 @@ def out():
 def test_legacy_text_rows_parse_into_typed_notices(out):
     lg = out["legacy"]
     assert lg["project"] == {"type": "project", "state": "done", "icon": "📁",
-                             "label": "Project: Cuttle", "detail": "/mnt/warpgate/Dev/Cuttle"}
+                             "label": "Project: Cuttle", "detail": "/example/projects/Cuttle"}
     assert lg["worktree"]["type"] == "worktree" and lg["worktree"]["label"] == "Worktree: feat/x"
     assert lg["checkout"]["type"] == "checkout"
     assert lg["stop"] == {"type": "stop", "state": "done", "icon": "⏹", "label": "Stopped generating.", "detail": ""}

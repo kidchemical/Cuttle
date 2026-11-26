@@ -81,18 +81,18 @@ def test_resolve_allowed_rewrites_windows_cuttle_src_path():
 def test_resolve_allowed_maps_registered_alias_to_live_path(tmp_path: Path):
     """A chat saved on Windows sends the project's Windows path; any registered
     alias resolves to the project's live (resolved) path."""
-    live = tmp_path / "Escape-Purgatory-Unity6"
+    live = tmp_path / "Demo-Game"
     live.mkdir()
     projects = [{
         "id": 14,
         "name": "EP",
         "path": str(live),
-        "stored_path": r"G:\Game Dev\Escape-Purgatory-Unity6",
-        "paths": [r"G:\Game Dev\Escape-Purgatory-Unity6", str(live)],
+        "stored_path": r"G:\Game Dev\Demo-Game",
+        "paths": [r"G:\Game Dev\Demo-Game", str(live)],
     }]
-    for sent in (r"G:\Game Dev\Escape-Purgatory-Unity6",
-                 "g:\\game dev\\escape-purgatory-unity6\\",
-                 "G:/Game Dev/Escape-Purgatory-Unity6"):
+    for sent in (r"G:\Game Dev\Demo-Game",
+                 "g:\\game dev\\demo-game\\",
+                 "G:/Game Dev/Demo-Game"):
         cwd, proj, err = resolve_allowed_project_cwd(sent, None, projects, None)
         assert err is None, sent
         assert proj["id"] == 14
@@ -205,7 +205,7 @@ def test_collect_skips_numstat_for_filtered_lfs_paths(tmp_path: Path, monkeypatc
     repo.mkdir()
 
     def git(*args):
-        r = subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, check=False)
+        r = subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, check=False, encoding="utf-8")
         assert r.returncode == 0, r.stderr
         return r
 

@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import replace
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from api.subagents.types import ChildSpec
 
 
 _ROUTE_AGENTS = frozenset({"", "auto", "router", "route"})
+_TASK_REF_RE = re.compile(r"^([A-Za-z0-9_.-]{1,128}):([A-Za-z0-9_.-]{1,128})$")
+
+
+def parse_task_ref(raw: Any) -> Tuple[str, str]:
+    """``"<gizmo>:<item>"`` → (Tasks list id, item id). Raises ValueError."""
+    match = _TASK_REF_RE.match(str(raw or "").strip())
+    if not match:
+        raise ValueError('task must be "<gizmo>:<item>": a Tasks list id, a colon, then an item id')
+    return match.group(1), match.group(2)
 
 
 def parse_child(raw: Any, *, index: int = 0) -> ChildSpec:
@@ -80,6 +90,13 @@ def parse_child(raw: Any, *, index: int = 0) -> ChildSpec:
     if agent in _ROUTE_AGENTS:
         route = True
         agent = "cursor"
+    task = str(raw.get("task") or "").strip()
+    if task:
+        try:
+            list_id, item_id = parse_task_ref(task)
+        except ValueError as exc:
+            raise ValueError(f"child {label!r}: {exc}") from exc
+        task = f"{list_id}:{item_id}"
     return ChildSpec(
         title=title[:80],
         message=message,
@@ -95,6 +112,8 @@ def parse_child(raw: Any, *, index: int = 0) -> ChildSpec:
         model_explicit=model_explicit,
         effort_explicit=effort_explicit,
         tier=tier[:60],
+        task=task,
+        node=str(raw.get("node") or "").strip()[:120],
     )
 
 

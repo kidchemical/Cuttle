@@ -109,7 +109,7 @@
         }
         const modeRow = el('div', '', 'setting-item');
         const modeLabel = el('div', '', 'setting-label');
-        modeLabel.append(el('strong', 'How'), info('How', 'Agents without a headless compact (Antigravity) manage their own window and are left alone in Auto and Native.'));
+        modeLabel.append(el('strong', 'How'), info('How', 'Agents without a headless compact (DeepSeek) are left alone in Auto and Native.'));
         const mode = el('select', '', 'setting-input');
         mode.setAttribute('aria-label', 'Auto-compact method');
         for (const [v, text] of MODES) {

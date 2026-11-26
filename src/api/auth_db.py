@@ -11,7 +11,7 @@ import re
 import time
 import uuid
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timedelta, timezone
 
 # Lazy: read-only agent tools (python -m api.chat_cli) must not require bcrypt
@@ -311,6 +311,10 @@ class AuthDatabase:
             # round was started in; its cards bind to the row of that turn.
             'ALTER TABLE subagent_batches ADD COLUMN turn_id TEXT',
             'ALTER TABLE subagent_children ADD COLUMN card_turn_id TEXT',
+            # Explicit Tasks assignment (api.subagents.extras): the list and item
+            # this child works on; the item's owner says who holds it now.
+            'ALTER TABLE subagent_children ADD COLUMN task_gizmo_id TEXT',
+            'ALTER TABLE subagent_children ADD COLUMN task_item_id TEXT',
         ):
             try:
                 cursor.execute(col_sql)
@@ -1802,7 +1806,7 @@ class AuthDatabase:
                 cursor.execute(
                     'UPDATE chat_sessions SET composer_selection = ?, '
                     'composer_revision = composer_revision + 1 WHERE id = ?',
-                    (json.dumps(selection), chat_session_id),
+                    (json.dumps({**selection, 'after_message_id': int(message_id or 0)}), chat_session_id),
                 )
         from api.chat_attention import refresh
         refresh(conn, chat_session_id)
@@ -1910,18 +1914,23 @@ class AuthDatabase:
         selection = normalize_selection(value)
         conn = self._get_connection()
         try:
+            max_row = conn.execute(
+                'SELECT COALESCE(MAX(id), 0) AS max_id FROM chat_messages WHERE chat_session_id = ?',
+                (session_id,),
+            ).fetchone()
+            stored = {**selection, 'after_message_id': int(max_row['max_id'] or 0) if max_row else 0}
             row = conn.execute(
                 'UPDATE chat_sessions SET composer_selection = ?, '
                 'composer_revision = composer_revision + 1 '
                 'WHERE id = ? AND user_id = ? AND is_active = 1 '
                 'RETURNING composer_revision',
-                (json.dumps(selection), session_id, user_id),
+                (json.dumps(stored), session_id, user_id),
             ).fetchone()
             conn.commit()
             if row:
                 from api.chat_live_status import notify_changed
                 notify_changed()
-            return {**selection, 'revision': row['composer_revision']} if row else None
+            return {**stored, 'revision': row['composer_revision']} if row else None
         finally:
             conn.close()
 
@@ -1952,12 +1961,20 @@ class AuthDatabase:
 
     def assistant_message_by_query(self, chat_session_id: int, query_id: str) -> Optional[Dict[str, Any]]:
         """The newest assistant row carrying ``query_id`` (metadata decoded), or None."""
+        return self._newest_message_by_metadata(chat_session_id, 'assistant', 'query_id', query_id)
+
+    def user_message_by_chat_op(self, chat_session_id: int, chat_op_id: str) -> Optional[Dict[str, Any]]:
+        """The user row a chat-ops send arrived as (``metadata.chat_op_id``, decoded), or None."""
+        return self._newest_message_by_metadata(chat_session_id, 'user', 'chat_op_id', chat_op_id)
+
+    def _newest_message_by_metadata(self, chat_session_id: int, role: str, key: str,
+                                    value: str) -> Optional[Dict[str, Any]]:
         conn = self._get_connection()
         try:
             row = conn.execute(
-                "SELECT * FROM chat_messages WHERE chat_session_id=? AND role='assistant' "
-                "AND json_valid(metadata) AND json_extract(metadata, '$.query_id')=? ORDER BY id DESC LIMIT 1",
-                (int(chat_session_id), str(query_id)),
+                "SELECT * FROM chat_messages WHERE chat_session_id=? AND role=? "
+                f"AND json_valid(metadata) AND json_extract(metadata, '$.{key}')=? ORDER BY id DESC LIMIT 1",
+                (int(chat_session_id), role, str(value)),
             ).fetchone()
         finally:
             conn.close()
@@ -2079,6 +2096,59 @@ class AuthDatabase:
             if metadata is not None and target is not None and target['role'] == 'assistant':
                 self._bind_turn_cards(target['chat_session_id'], int(message_id), metadata)
         return affected > 0
+
+    def patch_message_metadata(
+        self,
+        updates: List[Tuple[int, Dict[str, Any]]],
+    ) -> int:
+        """Merge metadata patches into existing messages in one transaction.
+
+        ``updates`` is ``[(message_id, patch)]``; a key whose value is None is
+        removed. One connection and one transaction for the whole batch, so a
+        turn's steer receipts (``api.agent_harness.steer_receipts``) cost one
+        write however many rows they cover. Returns the rows changed.
+        """
+        rows = [(int(mid), patch) for mid, patch in (updates or []) if mid is not None]
+        if not rows:
+            return 0
+        conn = self._get_connection()
+        try:
+            conn.execute('BEGIN IMMEDIATE')
+            sessions = set()
+            changed = 0
+            for message_id, patch in rows:
+                existing = conn.execute(
+                    'SELECT chat_session_id, metadata FROM chat_messages WHERE id = ?',
+                    (message_id,),
+                ).fetchone()
+                if existing is None:
+                    continue
+                try:
+                    meta = json.loads(existing['metadata'] or '{}')
+                except (TypeError, ValueError):
+                    meta = {}
+                if not isinstance(meta, dict):
+                    meta = {}
+                for key, value in (patch or {}).items():
+                    if value is None:
+                        meta.pop(key, None)
+                    else:
+                        meta[key] = value
+                conn.execute('UPDATE chat_messages SET metadata = ? WHERE id = ?',
+                             (json.dumps(meta), message_id))
+                changed += 1
+                if existing['chat_session_id'] is not None:
+                    sessions.add(existing['chat_session_id'])
+            from api.chat_attention import refresh
+            for session_id in sessions:
+                refresh(conn, session_id)
+            conn.commit()
+        finally:
+            conn.close()
+        if changed:
+            from api.chat_live_status import notify_changed
+            notify_changed()
+        return changed
 
     def merge_message_metadata_by_query(
         self,
@@ -2748,11 +2818,16 @@ class AuthDatabase:
 
 # Singleton instance
 _db_instance = None
+_db_instance_lock = threading.Lock()
 
 def get_auth_db() -> AuthDatabase:
     """Get singleton database instance"""
     global _db_instance
     if _db_instance is None:
-        # Pass DB_PATH explicitly so monkeypatches / env redirects apply.
-        _db_instance = AuthDatabase(DB_PATH)
+        # Concurrent first callers would each run schema setup on one file
+        # ("database schema has changed"); build it once.
+        with _db_instance_lock:
+            if _db_instance is None:
+                # Pass DB_PATH explicitly so monkeypatches / env redirects apply.
+                _db_instance = AuthDatabase(DB_PATH)
     return _db_instance

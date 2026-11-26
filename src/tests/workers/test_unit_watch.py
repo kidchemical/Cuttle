@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+from pathlib import Path
 
 import pytest
 
@@ -265,6 +267,21 @@ def test_the_claim_alone_keeps_it_exactly_once_without_the_lock(monkeypatch):
     assert len(_notices()) == 1 and jw.unit_watch_records() == []
 
 
+def test_a_claim_gate_left_by_a_dead_poller_expires(monkeypatch):
+    _unit(monkeypatch, **RUNNING)
+    info = _register()
+    _unit(monkeypatch, **EXITED)
+    [record] = jw.unit_watch_records()
+    gate = Path(record["record_path"] + jw._CLAIM_GATE_SUFFIX)
+    gate.touch()
+    assert jw.poll_unit_watches() == [] and len(_notices()) == 0  # a live gate blocks
+    old = jw.time.time() - jw.UNIT_WATCH_CLAIM_STALE_SEC - 5
+    os.utime(gate, (old, old))
+    [out] = jw.poll_unit_watches()
+    assert out["id"] == info["id"] and out["resolved"] is True
+    assert not gate.exists() and len(_notices()) == 1
+
+
 def test_a_poll_from_another_process_skips_while_the_lock_is_held(monkeypatch, tmp_path):
     import os
     import subprocess
@@ -278,7 +295,7 @@ def test_a_poll_from_another_process_skips_while_the_lock_is_held(monkeypatch, t
     with jw._PollLock() as lock:
         assert lock.acquired
         proc = subprocess.run([sys.executable, "-m", "api.job_watch", "poll-units"], capture_output=True,
-                              text=True, timeout=60, env=env, cwd=str(src))
+                              text=True, timeout=60, env=env, cwd=str(src), encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout.strip().splitlines()[-1]) == {"resolved": []}
     assert len(jw.unit_watch_records()) == 1 and _notices() == []
@@ -305,9 +322,9 @@ def _strand_claim(monkeypatch, *, queued):
     info = _register()
     [record] = jw.unit_watch_records()
     claimed = jw._claim_record(record)
-    data = json.loads(claimed.read_text())
+    data = json.loads(claimed.read_text(encoding="utf-8"))
     data.update(claimed_by=999999, claimed_ts=jw.time.time() - jw.UNIT_WATCH_CLAIM_STALE_SEC - 5)
-    claimed.write_text(json.dumps(data))
+    claimed.write_text(json.dumps(data), encoding="utf-8")
     if queued:
         jw._post_unit_resume(record, {"state": "done", "exit": 0})
     monkeypatch.setattr(jw, "pid_alive", lambda pid: False)

@@ -33,6 +33,39 @@ def test_turn_thinking_reads_full_top_level_blocks_only():
     assert turn_thinking(T()) == ["real"]
 
 
+def test_live_status_carries_the_running_turns_reasoning(monkeypatch):
+    """The live bubble shows reasoning while the turn works, not only in the saved reply."""
+    from api import chat_live_status, query_tracker
+    from api.agent_harness import reasoning_reply
+    from api.chat_live_extras import live_status_extras
+
+    class T:
+        query_id = "abcd1234"
+        execution_data = {"events": [
+            {"kind": "thinking", "text": "first", "agent_text": True},
+            {"kind": "thinking", "text": "child", "agent_text": True, "nested": True},
+            {"kind": "thinking", "text": "second", "agent_text": True},
+        ]}
+
+    monkeypatch.setattr(query_tracker, "get_query_tracker", lambda qid=None: T())
+    monkeypatch.setattr(query_tracker, "get_shared_live_snapshot", lambda qid: None)
+    assert reasoning_reply.live_thinking("abcd1234") == "first\n\nsecond"
+    assert reasoning_reply.live_thinking("abcd1234", limit=6) == "\u2026second"
+    # Another turn's tracker (thread fallback) never leaks into this chat.
+    assert reasoning_reply.live_thinking("ffff0000") == ""
+    assert reasoning_reply.live_thinking("") == ""
+    # ...unless that turn's published snapshot is still around.
+    monkeypatch.setattr(query_tracker, "get_shared_live_snapshot",
+                        lambda qid: {"events": [{"kind": "thinking", "text": "snap", "agent_text": True}]})
+    assert reasoning_reply.live_thinking("ffff0000") == "snap"
+
+    live = {"active": True, "query_id": "abcd1234"}
+    monkeypatch.setattr(chat_live_status, "get_live_status", lambda sid: dict(live))
+    assert live_status_extras("7")["thinking"] == "first\n\nsecond"
+    live["active"] = False
+    assert live_status_extras("7")["thinking"] == ""
+
+
 def _manifest(agent_id):
     from api.agent_harness.types import AgentManifest
     return AgentManifest(

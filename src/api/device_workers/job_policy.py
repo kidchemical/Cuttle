@@ -11,6 +11,8 @@ DEFAULT_QUEUE_TTL_SECONDS: Dict[str, int] = {
     "file_copy": 2 * 3600,
     "blender_render": 12 * 3600,
     "cuttle_self_update": 45 * 60,
+    # A chat turn waiting for its node: the host gives up first (api.exec_nodes).
+    "agent_turn": 2 * 60,
 }
 
 # Max claim attempts before cancel on next lease expiry (1 = no requeue).
@@ -21,6 +23,8 @@ DEFAULT_MAX_ATTEMPTS: Dict[str, int] = {
     # Extra room for shrink-and-retry after partial durable progress.
     "blender_render": 5,
     "cuttle_self_update": 1,
+    # Never rerun a turn: a second attempt would repeat the agent's work.
+    "agent_turn": 1,
 }
 
 _FALLBACK_TTL = 6 * 3600

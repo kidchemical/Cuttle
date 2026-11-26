@@ -48,6 +48,19 @@ fresh/full context and ride change-deltas on resume — keep them small and load
   they fire on irrelevant prompts and teach the ranker nothing. Prefer the smallest
   intent phrase that still catches the real cases.
 
+- **A role is not a trigger for an always-on rule.** Guidance for one kind of
+  chat (a supervisor's check-ins, a sub-agent, an orchestrator) reaches every
+  chat when it sits in `rules/`, and its prohibitions get applied where they were
+  never meant. Put it where that role is briefed: a supervision setting
+  (`api.chat_ops.brief`), a sub-agent profile, a playbook; procedures go in a
+  runbook the brief names.
+- **Scope every "never".** Say what the prohibition protects against (unprompted
+  cleanup, an agent's own initiative) so it is not read as overriding the user:
+  a standing caution does not outrank the user asking for that exact act in this
+  turn. Only the safety core (`00-safety.md`) holds regardless.
+- Name only processes, files and commands that exist. A prohibition on a retired
+  component is noise that agents still act on.
+
 ## Budgets and tests
 
 - Always-on text is paid on the fresh compile and can recur on deltas: the Brain

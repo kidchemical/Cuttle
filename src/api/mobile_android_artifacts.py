@@ -79,6 +79,7 @@ def inspect_apk(path: Path) -> dict:
     signed = subprocess.run(
         [java, "-jar", str(tools / "lib/apksigner.jar"), "verify", "--print-certs", str(path)],
         capture_output=True, text=True, check=True, timeout=60,
+        encoding="utf-8", errors="replace",
     )
     certificates = re.findall(r"Signer #\d+ certificate SHA-256 digest: ([a-fA-F0-9]{64})", signed.stdout)
     if len(certificates) != 1:
@@ -86,6 +87,7 @@ def inspect_apk(path: Path) -> dict:
     badging = subprocess.run(
         [str(tools / ("aapt" + suffix)), "dump", "badging", str(path)],
         capture_output=True, text=True, check=True, timeout=30,
+        encoding="utf-8", errors="replace",
     ).stdout
     package = re.search(r"^package: name='([^']+)' versionCode='(\d+)' versionName='([^']*)'", badging, re.M)
     if not package or package[1] != PACKAGE_NAME:

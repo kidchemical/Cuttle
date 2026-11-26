@@ -29,6 +29,18 @@ DEFAULT_NUDGE = 'agent'
 # Template nudges in a row with no Tasks progress before the supervisor is woken instead.
 TEMPLATE_NUDGE_LIMIT = 2
 
+# System care: what the host measures about the machine on each check and puts
+# in the check-in (``api.chat_ops.system_care``). Off = not part of the job.
+SYSTEM = {
+    'processes': 'the host lists processes the chat (or its sub-agents) left running after their turns '
+                 'ended, for you to end the ones nothing still needs',
+    'memory': 'the host watches machine memory and wakes you when it runs low or the kernel kills a '
+              'process for memory',
+    'display': 'the host keeps the display awake while the chat works and tells you when it is off or '
+               'locked anyway',
+}
+DEFAULT_SYSTEM = {'processes': True, 'memory': False, 'display': False}
+
 CHECKPOINT_LABELS = {'milestone': 'Tasks milestones', 'tests': 'test runs', 'repeat_failures': 'repeated failures',
                      'watched_paths': 'watched files'}
 
@@ -47,6 +59,25 @@ def nudge(value: Any) -> str:
     if value and value not in NUDGE:
         raise ValueError(f"nudge must be one of {', '.join(NUDGE)}")
     return value or DEFAULT_NUDGE
+
+
+def system(value: Any) -> Dict[str, bool]:
+    """``{'processes': bool, 'memory': bool, 'display': bool}`` from a stored dict, a
+    list of names or ``"processes,memory"`` / ``"none"``; None or '' = the defaults."""
+    if value is None or value == '':
+        return dict(DEFAULT_SYSTEM)
+    if isinstance(value, Mapping):
+        unknown = [k for k in value if k not in SYSTEM]
+        picked = {k: bool(value.get(k, False)) for k in SYSTEM}
+    else:
+        names = value.split(',') if isinstance(value, str) else list(value)
+        names = [str(n).strip().lower() for n in names if str(n).strip()]
+        names = [n for n in names if n not in ('none', 'off')]
+        unknown = [n for n in names if n not in SYSTEM]
+        picked = {k: k in names for k in SYSTEM}
+    if unknown:
+        raise ValueError(f"system care must be any of {', '.join(SYSTEM)} (or none)")
+    return picked
 
 
 def focus(value: Any) -> str:
@@ -98,6 +129,10 @@ def settings_lines(cfg: Mapping[str, Any], snap: Mapping[str, Any]) -> List[str]
     if nudge(cfg.get('nudge')) == 'template':
         lines.append('- Idle with open Tasks items: the host sends the next item itself; you are woken for '
                      'anything else.')
+    care = [text for key, text in SYSTEM.items() if system(cfg.get('system'))[key]]
+    lines.append('- System care: ' + ('; '.join(care) + '.' if care else
+                                      'off. Cleaning up processes or machine memory and keeping the '
+                                      'display awake are not part of this job.'))
     text = str(cfg.get('instructions') or '').strip()  # stored before the Focus cap: never raise here
     if text:
         lines += ['', "**Focus** (the user's notes for this job):", text]
@@ -141,9 +176,18 @@ _LINT = (
     (re.compile(r'\b(check|wake|look)\w*(\s+(in|on\s+it))?\s+every\s+\d+\s*(s|sec|seconds?|m|min|minutes?|h|hours?)\b'
                 r'|\bcheck-?in interval\b', re.I),
      'states an interval: use "Check every" (--every)'),
+    (re.compile(r'\b(orphan\w*|leftover|stale|zombie)\s+process|\bOOM\b|\bout of memory\b|\bmemory pressure\b'
+                r'|\bend-process\b|\bwork-tree\b', re.I),
+     'asks for process or memory cleanup: turn on System care (--system processes,memory); the host '
+     'measures both and lists what to end in the check-in'),
+    (re.compile(r'\b(display|screen|monitor)s?\b[^.]{0,40}\b(awake|asleep|sleep\w*|blank\w*|turn\w* off)\b'
+                r'|\b(wake|keep)\b[^.]{0,30}\b(display|screen|monitor)s?\b', re.I),
+     'asks to keep the display on: turn on System care → display (--system processes,display); the host '
+     'holds the display awake while the chat works'),
     (re.compile(r'`python -m |\.sh\b|`[^`]*\b(kill|pkill|end-process)\b', re.I),
-     'embeds a procedure (commands to run on every check-in): put it in a project/personal rule or runbook, '
-     'which every check-in already loads'),
+     'embeds a procedure (commands to run on every check-in): use the setting that owns it, or put the '
+     'steps in a project/personal runbook (docs/) and name that runbook here; an always-on rule would '
+     'reach every chat, not only this supervisor'),
     (re.compile(r'\breview\w*\b[^.]{0,60}\bmilestone|\bmilestone\w*\b[^.]{0,60}\breview', re.I),
      'asks for milestone reviews: turn on the "Tasks item or list completed" checkpoint and pick a reviewer '
      '(--checkpoints \'{"milestone":{"do":["supervisor:<profile>","wake"]}}\')'),
@@ -162,4 +206,5 @@ def focus_warnings(text: Any) -> List[str]:
 
 def settings_body(cfg: Mapping[str, Any]) -> Dict[str, Any]:
     """The normalized policy fields of a schedule payload."""
-    return {'involve_user': involve(cfg.get('involve_user')), 'nudge': nudge(cfg.get('nudge'))}
+    return {'involve_user': involve(cfg.get('involve_user')), 'nudge': nudge(cfg.get('nudge')),
+            'system': system(cfg.get('system'))}

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="icon" type="image/png" href="/img/cuttle-mascot_square.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="/img/apple-touch-icon.png">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Supervision - Cuttle</title>
+    <link rel="stylesheet" href="/css/ui_boot.css?v=20261122popupContrast">
+    <script src="/js/shared/ui_boot.js?v=20261120peekSafe"></script>
+    <link rel="stylesheet" href="/css/shared_navigation.css?v=20260926lightBg">
+    <link rel="stylesheet" href="/css/landing_page.css?v=20261028gpuBg">
+    <link rel="stylesheet" href="/css/compact_page.css?v=20261015glass">
+    <link rel="stylesheet" href="/css/auth_modal.css?v=20261122popupContrast">
+    <link rel="stylesheet" href="/css/searchable_select.css?v=20261011attachedMenus">
+    <link rel="stylesheet" href="/css/page_controls.css?v=20261015glass">
+    <link rel="stylesheet" href="/css/orchestrator_page.css?v=20261122tone1">
+    <link rel="stylesheet" href="/css/supervision_page.css?v=20261122tone1">
+</head>
+<body class="compact-shell-page" data-page="supervision">
+    <main class="orch-page supervision-page cuttle-page">
+        <header class="compact-page-title has-actions">
+            <div class="compact-page-heading">
+                <h1>Supervision</h1>
+                <p>Supervisor chats that keep your long-running chats moving: what is running now, and what a new supervision starts from.</p>
+            </div>
+            <div class="compact-page-actions">
+                <button id="supRefresh" type="button" aria-label="Refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 6M20 4v7h-7"/></svg><span class="desktop-label">Refresh</span></button>
+            </div>
+        </header>
+
+        <section id="supNotice" class="orch-notice" role="status" aria-live="polite">Loading supervision…</section>
+
+        <div id="supContent" class="sup-content" hidden>
+            <section class="orch-panel" aria-labelledby="supRunningTitle">
+                <div class="orch-block-head"><h2 id="supRunningTitle">Running now</h2><span class="orch-count" id="supCount"></span><span class="orch-grow"></span><span id="supDisplayNote" class="orch-status" hidden></span></div>
+                <div id="supList" class="sup-list" aria-live="polite"></div>
+            </section>
+
+            <section class="orch-panel" aria-labelledby="supDefaultsTitle">
+                <div class="orch-block-head"><h2 id="supDefaultsTitle">Defaults for new supervisions</h2><span class="orch-grow"></span><button type="button" id="supReset" class="orch-small-btn">Reset to built-in</button></div>
+                <p class="orch-help sup-intro">The Supervise dialog and <code>chat_cli supervise</code> start from these. Anything set for one supervision wins, then an orchestrator playbook's supervisor settings, then these. Supervisions already running keep their settings: change those from the chat's <strong>Supervising</strong> badge.</p>
+                <form id="supDefaults" class="orch-form" autocomplete="off">
+                    <label>Check every
+                        <select name="every"></select></label>
+                    <label>Involve me
+                        <select name="involve_user"></select></label>
+                    <label>When the chat is idle with open tasks
+                        <select name="nudge"></select></label>
+                    <fieldset class="orch-wide sup-care-set">
+                        <legend class="orch-label">System care</legend>
+                        <div id="supCare"></div>
+                    </fieldset>
+                    <label class="orch-wide">Alert me about a forgotten pause
+                        <span class="orch-input-suffix"><input name="paused_alert_hours" type="number" min="0" max="720" step="1"><span>hours paused with work still open (0 = never)</span></span></label>
+                </form>
+            </section>
+        </div>
+
+        <div class="orch-savebar" id="supSavebar" hidden>
+            <span class="orch-savebar-state" id="supSaveState"></span>
+            <span class="orch-grow"></span>
+            <button type="button" id="supDiscard">Discard</button>
+            <button type="button" id="supSave" class="primary">Save defaults</button>
+        </div>
+    </main>
+    <script src="/js/shared/shared_navigation.js"></script>
+    <script src="/js/shared/toast.js"></script>
+    <script src="/js/shared/searchable_select.js?v=20261011attachedMenus"></script>
+    <script src="/js/shared/page_controls.js?v=20261011pageControls2"></script>
+    <script src="/js/chat/chat_supervision_model.js?v=20261122sup1"></script>
+    <script src="/js/supervision/supervision_model.js?v=20261122sup1"></script>
+    <script src="/js/supervision/supervision_page.js?v=20261122sup1"></script>
+</body>
+</html>

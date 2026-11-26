@@ -47,8 +47,8 @@ SETTING_FAMILIES = (
     {"name": "response-postprocessing", "routes": ["GET/POST /settings/response-postprocessing", "GET /settings/response-postprocessing/<kind>/<target>/models"],
      "backend": "api.chat_preferences", "validator": "save_processor",
      "read": "authenticated", "write": "owner"},
-    {"name": "storage", "routes": ["GET /settings/storage", "POST /settings/storage/<id>", "POST /settings/storage/<id>/<operation>"],
-     "backend": "api.storage.service + api.agent_events.service", "validator": "api.storage.service.validate",
+    {"name": "storage", "routes": ["GET /settings/storage", "GET/POST /settings/storage/location", "POST /settings/storage/<id>", "POST /settings/storage/<id>/<operation>"],
+     "backend": "api.storage.service + api.agent_events.service + core.home_relocation", "validator": "api.storage.service.validate",
      "read": "owner", "write": "owner"},
     {"name": "lan-access", "routes": ["GET/POST /settings/lan-access"],
      "backend": "settings-manager key 'discovery' + api.lan_access (live)",
@@ -1186,6 +1186,19 @@ def get_published_releases():
 def storage_settings():
     from api.storage.service import list_stores
     return jsonify(stores=list_stores())
+
+
+@settings_bp.route('/settings/storage/location', methods=['GET', 'POST'])
+@owner_required
+def storage_location():
+    from core.home_relocation import configure, location
+    try:
+        status = configure(request.get_json(silent=True)) if request.method == 'POST' else location()
+        return jsonify(success=True, location=status)
+    except ValueError as exc:
+        return jsonify(success=False, error=str(exc)), 400
+    except OSError as exc:
+        return jsonify(success=False, error=str(exc)), 409
 
 
 @settings_bp.route('/settings/storage/<ident>', methods=['POST'])

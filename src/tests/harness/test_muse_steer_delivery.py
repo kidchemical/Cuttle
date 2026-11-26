@@ -45,6 +45,14 @@ for line in sys.stdin:
             break
         if mode in ("echo_before_ack", "completion_before_ack_with_echo"):
             echo(text)
+        if mode == "duplicate_echo" and count == 1:
+            # Echo before the ack: once acked, the second identical send can
+            # begin before the reader sees a later echo, and then one echo for
+            # two sends is (rightly) ambiguous. That race failed on CI.
+            echo(text)
+            echo(text)
+            out(ack)
+            continue
         if mode.startswith("completion_before_ack"):
             complete()
             out(ack)
@@ -58,10 +66,6 @@ for line in sys.stdin:
             echo(text, session="other")
         elif mode == "not_steered":
             echo(text, steered=False)
-        elif mode == "duplicate_echo" and count == 1:
-            echo(text)
-            echo(text)
-            continue
         complete()
         if mode == "echo_after_completion":
             echo(text)
@@ -114,9 +118,14 @@ def test_accepted_but_unread_followup_is_visible(tmp_path, monkeypatch, mode):
     assert result["success"] is True
     assert result["steered"] == (1 if mode == "duplicate_echo" else 0)
     assert result["undelivered_steers"] == ["potato"]
-    assert "Muse Code ended this turn without confirming it read your follow-up" in result["output"]
+    if mode == "duplicate_echo":
+        # Two identical sends, one confirmed: the notice counts, never guesses.
+        assert "it read 1 of 2 identical follow-ups" in result["output"]
+    else:
+        assert "without confirming it read your follow-up" in result["output"]
     assert "- potato" in result["output"]
-    assert "Send it again to continue." in result["output"]
+    assert "Delivery is not confirmed" in result["output"]
+    assert "Send it again" not in result["output"], "a resend would run the request twice"
     assert any("steer queued: potato" in str(status) for status in statuses)
 
 
@@ -148,7 +157,7 @@ def test_rejected_send_cannot_consume_an_identical_retry_receipt():
     assert delivery.acknowledge(failed, succeeded=False) is False
     retry = delivery.begin("potato")
     assert delivery.acknowledge(retry, succeeded=True) is True
-    assert delivery.receive("potato", "u2") is True
+    assert delivery.receive("potato", "u2") == [retry]
     assert delivery.received_count == 1
     assert delivery.undelivered == []
 
@@ -157,11 +166,25 @@ def test_history_echo_cannot_confirm_a_future_identical_send():
     from api.agent_harness.steer_delivery import SteerDelivery
 
     delivery = SteerDelivery()
-    assert delivery.receive("potato", "history-item") is False
+    assert delivery.receive("potato", "history-item") == []
     receipt = delivery.begin("potato")
     delivery.acknowledge(receipt, succeeded=True)
-    assert delivery.receive("potato", "history-item") is False
+    assert delivery.receive("potato", "history-item") == []
     assert delivery.received_count == 0
+    assert delivery.undelivered == ["potato"]
+
+
+def test_completed_request_claims_its_echo_not_an_identical_siblings():
+    from api.agent_harness.steer_delivery import SteerDelivery
+
+    delivery = SteerDelivery()
+    first, second = delivery.begin("potato"), delivery.begin("potato")
+    for receipt in (first, second):
+        delivery.acknowledge(receipt, succeeded=True)
+    assert delivery.receive("potato") == []  # one echo, two candidates: ambiguous
+    assert delivery.confirm(first) is True
+    assert delivery.confirm(first) is False
+    assert delivery.received_count == 1
     assert delivery.undelivered == ["potato"]
 
 

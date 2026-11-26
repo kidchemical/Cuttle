@@ -2,10 +2,13 @@
 import json
 from pathlib import Path
 from urllib.parse import urlparse
+
 import pytest
 from tests.browser_guard import launch_chromium
 
-SCRIPT = Path(__file__).resolve().parents[2] / 'web/js/gizmos/tasks_gizmo.js'
+WEB = Path(__file__).resolve().parents[2] / 'web'
+SCRIPT = WEB / 'js/gizmos/tasks_gizmo.js'
+STYLE = WEB / 'css/chat_page.css'
 
 
 def test_tasks_render_tool_progress_and_shared_edits():
@@ -165,9 +168,93 @@ def test_linked_lists_say_linked_and_open_the_tasks_app():
         page.wait_for_selector('[data-widget-id="raw"]')
         scope = lambda wid: page.locator(f'[data-widget-id="{wid}"] [data-widget-scope]').inner_text()
         assert [scope('home'), scope('shared'), scope('proj')] == ['This chat', 'Linked', 'Linked']
-        page.locator('[data-widget-id="shared"] [data-widget-scope]').click()
-        page.locator('[data-widget-id="home"] [data-widget-manage]').click()
+        shared = page.locator('[data-widget-id="shared"]')
+        home = page.locator('[data-widget-id="home"]')
+        shared.locator('[data-widget-toggle]').click()
+        shared.locator('[data-widget-scope]').click()
+        home.locator('[data-widget-toggle]').click()
+        home.locator('[data-widget-manage]').click()
         assert page.evaluate('window.navs') == ['/tasks_page.html?list=shared&tab=chats',
                                                 '/tasks_page.html?list=home']
         assert patches == []
+        browser.close()
+
+
+def test_tasks_headers_fit_on_a_phone_and_keep_actions_inside():
+    playwright = pytest.importorskip('playwright.sync_api')
+    long_title = 'Review keyboard navigation and touch targets in the composer on smaller phones'
+    rows = [
+        {'id': 'project', 'scope': 'project', 'project_path': '/projects/current',
+         'title': f'Escape Purgatory: {long_title}', 'description': 'Test narrow layouts.'},
+        {'id': 'home', 'scope': 'session', 'session_id': 7,
+         'title': 'Escape Purgatory: Laptop Fix'},
+        {'id': 'linked', 'scope': 'project', 'project_path': '/projects/other',
+         'linked_sessions': [7], 'title': 'Escape Purgatory: Optimization'},
+        {'id': 'plain', 'scope': 'session', 'session_id': 7, 'title': 'Optimization: profile startup'},
+    ]
+    for row in rows:
+        row.update(type='tasks', payload={'items': [{'id': 'a', 'text': 'Verify'}]})
+    fixture = '''<link rel="stylesheet" href="/chat_page.css">
+      <link rel="stylesheet" href="/pending_changes.css">
+      <div id="chatWidgetsStrip" class="chat-widgets" hidden></div>
+      <div class="pending-changes"><div class="pending-changes-header">
+        <button class="pending-changes-toggle">
+          <span class="pending-changes-chevron"></span><span class="pending-changes-title">Changes</span>
+          <span class="pending-changes-meta">17 files</span>
+        </button>
+      </div></div>
+      <script src="/tasks.js"></script><script>
+      window.ctrl = CuttleTaskGizmos.create({getSessionId: () => 7,
+        getProjectPath: () => '/projects/current', getProjectName: () => 'Escape Purgatory'});
+      ctrl.refresh();</script>'''
+    with playwright.sync_playwright() as driver:
+        browser = launch_chromium(driver)
+        page = browser.new_page(viewport={'width': 320, 'height': 650}, has_touch=True)
+
+        def route(route):
+            path = urlparse(route.request.url).path
+            if path == '/fixture':
+                return route.fulfill(body=fixture, content_type='text/html')
+            if path == '/chat_page.css':
+                return route.fulfill(body=STYLE.read_text(encoding="utf-8"), content_type='text/css')
+            if path == '/pending_changes.css':
+                return route.fulfill(body=(WEB / 'css/pending_changes.css').read_text(encoding="utf-8"),
+                                     content_type='text/css')
+            if path == '/tasks.js':
+                return route.fulfill(body=SCRIPT.read_text(encoding="utf-8"), content_type='text/javascript')
+            if path == '/api/gizmos/tasks':
+                return route.fulfill(json={'success': True, 'gizmos': rows, 'revision': 1})
+            return route.abort()
+
+        page.route('**/*', route)
+        page.goto('http://tasks.test/fixture')
+        project = page.locator('[data-widget-id="project"]')
+        toggle = project.locator('[data-widget-toggle]')
+        playwright.expect(page.locator('.chat-widget-title')).to_have_text([
+            long_title, 'Laptop Fix', 'Escape Purgatory: Optimization', 'Optimization: profile startup',
+        ])
+        assert page.evaluate('CuttleTaskGizmos.activeLists()[0].title') == f'Escape Purgatory: {long_title}'
+        assert page.locator('[data-widget-id="home"]').evaluate('''el => {
+            const changes = document.querySelector('.pending-changes');
+            const taskTitle = el.querySelector('.chat-widget-title');
+            const changeTitle = changes.querySelector('.pending-changes-title');
+            return el.offsetHeight <= changes.offsetHeight
+                && getComputedStyle(taskTitle).fontSize === getComputedStyle(changeTitle).fontSize;
+        }''')
+        assert toggle.evaluate('''el => {
+            const title = el.querySelector('.chat-widget-title');
+            const count = el.querySelector('.chat-widget-meta');
+            const range = document.createRange();
+            range.selectNodeContents(title);
+            const lines = Array.from(range.getClientRects());
+            return lines.length > 1 && lines.every(line => line.right <= count.getBoundingClientRect().left)
+                && count.getBoundingClientRect().right <= el.getBoundingClientRect().right;
+        }''')
+        playwright.expect(project.get_by_text('Test narrow layouts.')).to_be_hidden()
+        playwright.expect(project.get_by_role('button', name='Archive', include_hidden=True)).to_be_hidden()
+        toggle.press('Enter')
+        playwright.expect(toggle).to_be_focused()
+        playwright.expect(project.get_by_text('Test narrow layouts.')).to_be_visible()
+        for label in ('Agent', 'Project', 'Open in Tasks', 'Archive'):
+            playwright.expect(project.get_by_role('button', name=label, exact=True)).to_be_visible()
         browser.close()

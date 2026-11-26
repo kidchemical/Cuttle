@@ -339,6 +339,12 @@
             persistSpacesState();
         }
 
+        // A press on the strip that blurs an open rename must not rebuild the tabs
+        // before its click lands: a tab replaced between mousedown and mouseup
+        // gets no click, so the press would be lost.
+        let stripPressed = false;
+        let renderAfterPress = false;
+
         function startSpaceRename(id) {
             const tab = doc.querySelector('.shell-space-tab[data-space-id="' + win.CSS.escape(id) + '"]');
             const nameEl = tab && tab.querySelector('.shell-space-name');
@@ -355,7 +361,8 @@
                 if (done) return;
                 done = true;
                 if (commit) renameSpace(id, input.value);
-                renderSpaceTabs();
+                if (stripPressed) renderAfterPress = true;
+                else renderSpaceTabs();
                 // The rename pinned the fullscreen titlebar; re-arm its auto-hide.
                 if (win.CuttleShellElectron) {
                     try { win.CuttleShellElectron.rescheduleTitlebarHide(); } catch (_) {}
@@ -1948,6 +1955,19 @@
             renderSpaceTabs();
 
             setupTabOverflow(hostEl);
+            hostEl.addEventListener('pointerdown', () => { stripPressed = true; }, true);
+            const releaseStrip = (e) => {
+                // Window capture also sees the rename input's own blur.
+                if (!stripPressed || (e.type === 'blur' && e.target !== win)) return;
+                stripPressed = false;
+                // After the click this release produces.
+                win.setTimeout(() => {
+                    if (!renderAfterPress) return;
+                    renderAfterPress = false;
+                    renderSpaceTabs();
+                }, 0);
+            };
+            ['pointerup', 'pointercancel', 'blur'].forEach((evt) => win.addEventListener(evt, releaseStrip, true));
             const tabId = (e) => e.target.closest('.shell-space-tab')?.dataset.spaceId || '';
             hostEl.addEventListener('click', (e) => {
                 const id = tabId(e);

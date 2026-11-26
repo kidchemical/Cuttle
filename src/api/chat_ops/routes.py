@@ -8,13 +8,25 @@ not go through here and stay available regardless.
 
 from __future__ import annotations
 
-from flask import Blueprint, jsonify, request
+from pathlib import Path
+
+from flask import Blueprint, jsonify, request, send_from_directory
 
 from api.chat_ops import service
 from api.experimental import is_enabled
-from api.http_authz import authenticated_required, current_user
+from api.http_authz import authenticated_required, current_user, owner_required
 
 chat_ops_bp = Blueprint("chat_ops", __name__, url_prefix="/api/chat-ops")
+chat_ops_pages_bp = Blueprint("chat_ops_pages", __name__)
+
+_WEB = Path(__file__).resolve().parents[2] / "web"
+
+
+@chat_ops_pages_bp.route("/supervision_page.html")
+@authenticated_required
+def supervision_page():
+    """Supervision App; the data endpoints enforce the flag."""
+    return send_from_directory(_WEB, "supervision_page.html")
 
 _DISABLED = {"success": False, "disabled": True, "error": "Chat supervision is disabled"}
 
@@ -40,11 +52,49 @@ def session_overview(session: str):
     return _call(service.overview, session, _uid())
 
 
+@chat_ops_bp.get("/sessions/<session>/timeline")
+@authenticated_required
+def session_timeline(session: str):
+    def read():
+        sid = service.session_id(session)
+        from api.auth_db import get_auth_db
+        if not get_auth_db().get_chat_session(sid, _uid()):
+            raise LookupError('Chat not found')
+        from api.chat_ops.timeline import project
+        return project(sid, before=request.args.get('before'), limit=request.args.get('limit', 50),
+                       include_quiet=request.args.get('include_quiet') == '1')
+    return _call(read)
+
+
 @chat_ops_bp.get("/sessions/<session>/defaults")
 @authenticated_required
 def supervise_defaults(session: str):
     """Prefill for the "Supervise this chat…" dialog (live branch, checkout)."""
     return _call(service.supervise_defaults, session, _uid())
+
+
+@chat_ops_bp.get("/supervisions")
+@authenticated_required
+def supervisions():
+    """Supervision app: every supervision of the signed-in user still in force."""
+    return _call(service.supervisions, _uid())
+
+
+@chat_ops_bp.get("/defaults")
+@authenticated_required
+def get_defaults():
+    from api.chat_ops import defaults
+    return _call(defaults.view)
+
+
+@chat_ops_bp.put("/defaults")
+@owner_required
+def put_defaults():
+    """Install-wide (settings.json), so only the owner changes them."""
+    from api.chat_ops import defaults
+    data = request.get_json(silent=True)
+    return _call(lambda: {"schema_version": defaults.SCHEMA_VERSION, "defaults": defaults.save(data),
+                          "builtin": defaults.normalize(None)})
 
 
 @chat_ops_bp.post("/supervise")
@@ -59,7 +109,7 @@ def start_supervision():
     def run():
         return service.start_supervisor(
             data.get("target"), user_id=_uid(), agent=str(data.get("agent") or ""),
-            every=int(data.get("every") or 900), instructions=str(data.get("instructions") or ""),
+            every=int(data["every"]) if data.get("every") else None, instructions=str(data.get("instructions") or ""),
             required_branch=str(data.get("required_branch") or ""),
             required_path=str(data.get("required_path") or ""),
             forbidden_branches=[str(b) for b in forbidden], model_tiers=tiers,
@@ -67,6 +117,7 @@ def start_supervision():
             task_ids=data.get("task_ids") if isinstance(data.get("task_ids"), list) else None,
             checkpoints=data.get("checkpoints") if isinstance(data.get("checkpoints"), dict) else None,
             involve_user=str(data.get("involve_user") or ""), nudge=str(data.get("nudge") or ""),
+            system=data.get("system"),
         )
 
     return _call(run)

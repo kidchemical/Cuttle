@@ -9,6 +9,7 @@ from pathlib import Path
 from core.git_status import parse_status_z
 
 _lock=threading.Lock()
+VANISHED=('did not match any files',"unable to stat")
 _active={}
 
 
@@ -49,11 +50,14 @@ def snapshot(root,qid,phase,limit=2_000_000):
             if path==scratch or scratch in path.parents:
                 continue
             if path.is_file() and not path.is_symlink():
-                if path.stat().st_size>limit:
-                    skipped[rel]='size'; continue
-                with path.open('rb') as f:
-                    if b'\0' in f.read(8192):
-                        skipped[rel]='binary'; continue
+                try:
+                    if path.stat().st_size>limit:
+                        skipped[rel]='size'; continue
+                    with path.open('rb') as f:
+                        if b'\0' in f.read(8192):
+                            skipped[rel]='binary'; continue
+                except FileNotFoundError:  # gone since status (SQLite -wal, lock files)
+                    skipped[rel]='vanished'; continue
             stage.append(rel)
         # Stage in one git process. One `git add` per dirty path turns a large
         # dirty worktree (Unity asset imports, generated scenes) into thousands
@@ -67,7 +71,9 @@ def snapshot(root,qid,phase,limit=2_000_000):
                 # A path can vanish between status and add (lock files, SQLite
                 # -shm/-wal, build temp files). Bisect failed batches so a
                 # single vanished file cannot restore thousands of git spawns.
-                if 'did not match any files' not in str(exc):
+                # Git reports a path gone before pathspec matching and one gone
+                # while it stats the match differently; both are vanished.
+                if not any(m in str(exc) for m in VANISHED):
                     raise
                 if len(rels)==1:
                     skipped[rels[0]]='vanished'

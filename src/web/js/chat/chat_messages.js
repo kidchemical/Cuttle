@@ -119,6 +119,7 @@
             supervised_terminal: !!meta.supervised_terminal,
             steered: !!meta.steered,
             steer_idle: !!meta.steer_idle,
+            steer: meta.steer || undefined,
             steered_agent: meta.steered_agent || m.steered_agent || undefined,
             supervised_delivery_event_id: meta.supervised_delivery_event_id || undefined,
             parent_user_message_id: meta.parent_user_message_id || undefined,
@@ -301,7 +302,8 @@
 
     function splitPostprocessedResponse(text) {
         const source = String(text || '');
-        // Leading <think> blocks (the turn's reasoning) sit ahead of the wrapper.
+        // Leading <think> blocks (the turn's reasoning) are stored ahead of the
+        // wrapper and rendered nested inside the "Original response" disclosure.
         const match = /^((?:\s*<think>[\s\S]*?<\/think>)*)\s*<cuttle_original_response>([\s\S]*?)<\/cuttle_original_response>\s*/i.exec(source);
         if (!match) return null;
         try {
@@ -316,6 +318,12 @@
         const parsed = splitPostprocessedResponse(text);
         if (!parsed) return text;
         return [parsed.original.trim(), parsed.response.trim()].filter(Boolean).join('\n\n');
+    }
+
+    /** One collapsed reasoning disclosure (saved replies; live: chat_live_thinking.js). */
+    function thinkingBlockHtml(content, deps) {
+        return '<details class="thinking-block"><summary>Thinking</summary>'
+            + formatThinkingInner(content, deps) + '</details>';
     }
 
     /**
@@ -337,22 +345,23 @@
             const placeholder = '{{CUTTLE_THINK_' + thinkBlocks.length + '}}';
             const content = typeof d.formatMessage === 'function'
                 ? d.formatMessage(processed.original) : d.escapeHtmlInline(processed.original);
+            // The turn's reasoning belongs to the agent's own reply: it nests
+            // inside the disclosure, ahead of the original text.
+            const reasoning = [];
+            processed.lead.replace(/<think>\n?([\s\S]*?)\n?<\/think>/gi, (_, body) => {
+                if (body.trim()) reasoning.push(thinkingBlockHtml(body, d));
+            });
             thinkBlocks.push('<details class="response-original-block"><summary>Original response</summary>'
-                + '<div class="response-original-content">' + content + '</div>'
+                + '<div class="response-original-content">' + reasoning.join('') + content + '</div>'
                 // Copy wiring (icon, clipboard, toast) is post-paint: chat_activate.js.
                 + '<div class="response-original-actions"><button type="button" class="response-original-copy-btn"'
                 + ' data-copy-text="' + d.escapeHtmlInline(processed.original) + '">Copy</button></div></details>'
                 + '<div class="response-postprocessed-label">Added by post-processing</div>');
-            out = (processed.lead ? processed.lead + '\n\n' : '') + placeholder + '\n\n' + processed.response;
+            out = placeholder + '\n\n' + processed.response;
         }
         const pushThinkBlock = (content) => {
             const placeholder = '{{CUTTLE_THINK_' + thinkBlocks.length + '}}';
-            thinkBlocks.push(
-                '<details class="thinking-block">'
-                + '<summary>Progress</summary>'
-                + formatThinkingInner(content, d)
-                + '</details>'
-            );
+            thinkBlocks.push(thinkingBlockHtml(content, d));
             return placeholder;
         };
         // Match <think>/<redacted_thinking> tags, but ignore any that live inside
@@ -734,10 +743,11 @@
             const imageBlocks = [];
             if (d.buildMediaThumbHtml) {
                 text = text.replace(/!\[([^\]]*)]\(([^)]+)\)/g, function(_, label, dest) {
-                    const match = String(dest).match(/^(.*?)\s+["']([^"']*)["']\s*$/);
+                    // A "…" description may hold apostrophes (and '…' may hold double quotes).
+                    const match = String(dest).match(/^(.*?)\s+(?:"([^"]*)"|'([^']*)')\s*$/);
                     const url = (match ? match[1] : dest).trim().replace(/^<|>$/g, '');
                     const placeholder = '{{CUTTLE_IMAGE_' + imageBlocks.length + '}}';
-                    imageBlocks.push(d.buildMediaThumbHtml(url, { title: label, description: match ? match[2] : '' }));
+                    imageBlocks.push(d.buildMediaThumbHtml(url, { title: label, description: match ? (match[2] ?? match[3]) : '' }));
                     return placeholder;
                 });
             }
@@ -889,6 +899,47 @@
     }
 
     /**
+     * Studio: a leading `/orchestrate @<playbook> ` in a sent user bubble,
+     * as { head, playbookId, body } (null = not that prefix, or Classic).
+     * Display only: the stored message text is never changed.
+     */
+    function studioOrchestrateOf(content, deps) {
+        const orch = root.CuttleChatOrchestrateChip;
+        if (!orch || typeof orch.bubblePrefixOf !== 'function') return null;
+        const found = orch.bubblePrefixOf(content);
+        if (!found) return null;
+        const isStudio = deps.isStudio || studioNow;
+        return isStudio() ? found : null;
+    }
+
+    /**
+     * Studio check when the page passes none: the shared helper if loaded, else
+     * the `cuttle-studio` class ui_boot.js puts on <html>. Reads no storage here.
+     */
+    function studioNow() {
+        const helper = root.CuttleChatDisplay;
+        if (helper && typeof helper.isStudio === 'function') return !!helper.isStudio();
+        const doc = root.document;
+        return !!(doc && doc.documentElement && doc.documentElement.classList.contains('cuttle-studio'));
+    }
+
+    /**
+     * The user bubble's orchestrate chip: the same history-style chip the
+     * page paints for slash commands (`slashCommandChipHistoryHtml`), wrapped
+     * by the chip owner so its playbook name is patched in once the list loads.
+     */
+    function orchestrateBubbleHtml(orch, renderBody, deps) {
+        const owner = root.CuttleChatOrchestrateChip;
+        // Loads the playbook list once (shared cache); the name is patched in later.
+        owner.ensurePlaybooks();
+        const chip = deps.slashCommandChipHistoryHtml(owner.bubbleLabel(orch.playbookId), orch.head, 'project-cmd');
+        const inline = '<span class="slash-chips-inline">' + owner.bubbleChipHtml(orch.playbookId, chip) + '</span>';
+        if (!orch.body) return '<div class="user-message-with-slash">' + inline + '</div>';
+        return '<div class="user-message-with-slash">' + inline
+            + '<div class="user-slash-body">' + renderBody(orch.body) + '</div></div>';
+    }
+
+    /**
      * User-bubble display dispatch: which body HTML a user turn paints.
      * Owns the branch order only — every leaf renderer stays in its
      * owner and arrives via `deps` (all required):
@@ -905,6 +956,9 @@
      * - slash chip leaves (page, shared with badge/palette paths):
      *   collapseCursorSlashChips, slashCommandChipHistoryHtml.
      * - shared util (page): escapeHtmlInline.
+     * - Studio orchestrate chip (optional `isStudio()`; default
+     *   `studioNow()`: the shared helper, else the <html> class): a leading `/orchestrate @<id>`
+     *   renders as the chip. Classic keeps the raw prefix.
      *
      * Preserves the page contract exactly: `Selected:` / button /
      * form-reply shortcuts win over slash parsing; chips already in
@@ -948,8 +1002,11 @@
                     bodyHtml = `<div class="cuttle-button-selection">Selected: <strong>${escapeHtmlInline(btnClick.label)}</strong></div>`;
                 } else {
                     const renderBody = (text) => formatFormReplyHtml(text) || formatMessage(text);
-                    const parsed = parseStoredSlashCommandMessage(displayContent);
-                    if (!parsed) {
+                    const orch = studioOrchestrateOf(displayContent, d);
+                    const parsed = orch ? null : parseStoredSlashCommandMessage(displayContent);
+                    if (orch) {
+                        bodyHtml = orchestrateBubbleHtml(orch, renderBody, d);
+                    } else if (!parsed) {
                         bodyHtml = renderBody(displayContent);
                     } else if (o.suppressInlineSlashChips) {
                         // Chips already shown in the message header row; just render the body.
@@ -1009,6 +1066,11 @@
         const message = reason.replace(/^(?:Fallback|Escalated to|Default)\s+[^\s]+\s*\/\s*[^\s]+\s*/i, '')
             .replace(/^after:\s*/i, '').trim();
         return renderStatusChipHtml(statuses[badge.kind], message, message, esc, 'routing-selection-chip');
+    }
+
+    /** Bubble header time: "Just now" / "Sent 3m ago". */
+    function messageTimestampLabel(ago) {
+        return ago === 'now' ? 'Just now' : 'Sent ' + ago + ' ago';
     }
 
     function routingAgentSlash(badge) {
@@ -1138,6 +1200,7 @@
     const api = {
         renderRoutingBadgeHtml,
         routingAgentSlash,
+        messageTimestampLabel,
         renderStatusChipHtml,
         renderAssistantStatusHtml,
         authMessageOptsFromServer,

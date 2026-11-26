@@ -211,7 +211,7 @@
     {
       "id": "arch_ep_fishnet_multiplayer",
       "category": "architecture",
-      "prompt": "Design and implement end-to-end multiplayer state authority for Escape Purgatory using FishNet, including reconnects and host migration.",
+      "prompt": "Design and implement end-to-end multiplayer state authority for Demo Game using FishNet, including reconnects and host migration.",
       "allowed_task_types": ["architecture", "coding"],
       "allowed_difficulties": ["high"],
       "allowed_targets": [{"agent": "cursor", "model": "grok-4.6"}],

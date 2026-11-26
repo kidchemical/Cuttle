@@ -1,7 +1,7 @@
 """Project chip must stick after /project — CH-000204 regression.
 
 Reproduces: chat already stamped Cuttle in the auth DB / last messages hydrate.
-User picks Escape Purgatory via the composer chip. A later reconcile (send path,
+User picks Demo Game via the composer chip. A later reconcile (send path,
 loadProjects, session reload) snaps the chip back to Cuttle because
 ``lastHydratedSessionProject`` still says Cuttle and beats fresh local prefs.
 
@@ -173,7 +173,7 @@ const fetch = () => Promise.resolve({{ ok: true, json: async () => ({{ success: 
 
 @node_only
 def test_project_chip_survives_reconcile_after_user_pick():
-    """CH-000204: /project → Escape Purgatory must not snap back to Cuttle on reconcile."""
+    """CH-000204: /project → Demo Game must not snap back to Cuttle on reconcile."""
     res = _run_project_chip_js(
         """
 const ep = projects.find((p) => p.name === 'Demo Game');

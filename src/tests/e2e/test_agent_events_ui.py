@@ -198,7 +198,7 @@ def test_database_controls(browser,static_server):
     # settings components are verified by their existing page suites.
     try:
         page.goto(static_server+'/agent_feed.html')
-        page.set_content('<link rel="stylesheet" href="'+static_server+'/css/settings_page.css"><div id="storageStores"></div>')
+        page.set_content('<link rel="stylesheet" href="'+static_server+'/css/landing_page.css"><link rel="stylesheet" href="'+static_server+'/css/settings_page.css"><link rel="stylesheet" href="'+static_server+'/css/storage_settings.css"><div id="storageStores"></div>')
         page.add_script_tag(url=static_server+'/js/settings/settings_storage.js')
         expect(page.get_by_role('heading',name='Agent events')).to_be_visible()
         expect(page.get_by_role('heading',name='Legacy query logs')).to_be_visible()
@@ -250,3 +250,72 @@ def test_feed_experiment_controls_apps_and_saved_pin(browser,static_server):
         expect(page.locator('[data-id="nav-agent-feed"]').first).to_be_hidden()
         assert page.evaluate('lastUILayout.rail_items.includes("nav-agent-feed")')
     finally:page.close()
+
+
+@pytest.mark.parametrize('viewport,zoom', [({'width': 1280, 'height': 800}, 1),
+                                           ({'width': 1024, 'height': 768}, 1.25),
+                                           ({'width': 390, 'height': 844}, 1)])
+def test_data_page_has_no_nested_scrollbars(browser, static_server, viewport, zoom):
+    """Exercise production shell and full Settings CSS, including large figures."""
+    from .test_shared_diff_modal import apply_request_guard
+    context = browser.new_context(viewport=viewport, reduced_motion='reduce')
+    apply_request_guard(context, static_server)
+    page = context.new_page()
+    stores = [
+        {'id': 'agent_events', 'label': 'Agent events', 'bytes': 123456789012345678,
+         'events': 42, 'configurable': True, 'reset': True, 'reset_policy': 'typed_confirm',
+         'supports_prune': True, 'supports_vacuum': True,
+         'policy': {'retention_days': 90, 'thinking_full_days': 14, 'quota_mb': 5000,
+                    'thinking_mode': 'full_then_summary', 'starred_retention_days': -1}},
+        {'id': 'chats', 'label': 'Chats and accounts', 'bytes': 456000,
+         'configurable': False, 'reset': False, 'policy': None},
+    ]
+    def handle(route):
+        url = route.request.url
+        if url.endswith('/api/settings/storage/location'):
+            body = {'success': True, 'location': {'version': 1, 'current': '/home/owner/.local/share/cuttle',
+                    'pending': '/mnt/storage/apps/cuttle', 'error': None, 'available': True, 'reason': None}}
+        elif url.endswith('/api/settings/storage'):
+            body = {'stores': stores}
+        else:
+            body = {'success': True, 'data': [], 'agents': [], 'flags': []}
+        route.fulfill(content_type='application/json', body=json.dumps(body))
+    page.route('**/api/**', handle)
+    try:
+        page.goto(static_server + '/app_shell.html', wait_until='domcontentloaded')
+        page.evaluate("(zoom) => { document.documentElement.style.zoom = zoom; }", zoom)
+        page.locator('#contentFrame').first.evaluate(
+            "(frame, url) => { frame.src = url; }", static_server + '/settings_page.html?tab=data')
+        frame = page.frame_locator('#contentFrame').first
+        expect(frame.locator('.settings-stat-value')).to_have_count(2)
+        frame.locator('html').evaluate('(el, zoom) => { el.style.zoom = zoom; }', zoom)
+        # The phone layout starts at the category index. Select Data through the
+        # page's normal tab owner so the complete panel is laid out.
+        frame.locator('#tab-data').evaluate("el => el.click()")
+        expect(frame.locator('#panel-data')).to_be_visible()
+        stats = frame.locator('.settings-stat-value')
+        expect(stats.first).to_have_text('123456789.01 GB')
+        geometry = frame.locator('#panel-data').evaluate("""panel => {
+            const root = document.documentElement;
+            const nested = [...panel.querySelectorAll('*')].filter(el => {
+                if (!el.getClientRects().length) return false;
+                const style = getComputedStyle(el);
+                return (['auto', 'scroll'].includes(style.overflowX) && el.scrollWidth > el.clientWidth) ||
+                       (['auto', 'scroll'].includes(style.overflowY) && el.scrollHeight > el.clientHeight);
+            }).map(el => ({tag: el.tagName, className: el.className,
+                           width: [el.clientWidth, el.scrollWidth], height: [el.clientHeight, el.scrollHeight]}));
+            return {width: [root.clientWidth, root.scrollWidth],
+                    height: [root.clientHeight, root.scrollHeight], nested,
+                    stats: [...panel.querySelectorAll('.settings-stat-value')].map(el => ({
+                        width: [el.clientWidth, el.scrollWidth], height: [el.clientHeight, el.scrollHeight]}))};
+        }""")
+        assert geometry['width'][0] == geometry['width'][1], geometry
+        assert geometry['height'][1] > geometry['height'][0], geometry
+        assert not geometry['nested'], geometry
+        assert all(w == sw and h == sh for (w, sw), (h, sh) in
+                   ((stat['width'], stat['height']) for stat in geometry['stats'])), geometry
+        # The one page scrollbar must actually reach the last Data control.
+        frame.locator('#panel-data').evaluate('el => el.lastElementChild.scrollIntoView({block: "end"})')
+        assert frame.locator('html').evaluate('el => el.scrollTop > 0')
+    finally:
+        context.close()

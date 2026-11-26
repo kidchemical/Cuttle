@@ -83,6 +83,11 @@
                     : [];
                 idx = list.indexOf(messageEl) + 1;
                 if (idx > 0) messageEl.dataset.messageIndex = String(idx);
+                // A still-generating bubble is not a record yet: its reply lands
+                // in the next slot after the records above it (not cached).
+                else if (messageEl.matches('#typing-indicator, #typing-indicator-remote')) {
+                    idx = list.filter((el) => el.compareDocumentPosition(messageEl) & 4).length + 1;
+                }
             }
             return formatMessageRef(currentSessionId(), idx);
         }

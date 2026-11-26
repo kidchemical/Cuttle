@@ -56,7 +56,7 @@ def test_windows_bundle_extraction_uses_native_tar_despite_git_bash_path(tmp_pat
     assert.equal(fs.existsSync(dest + '-extract'), false);
     '''
     result = subprocess.run(['node', '-e', script, str(REPO / 'electron' / 'bundle-python.js'),
-                             str(tmp_path / 'bundle')], capture_output=True, text=True)
+                             str(tmp_path / 'bundle')], capture_output=True, text=True, encoding="utf-8")
     assert result.returncode == 0, result.stdout + result.stderr
 
 
@@ -65,7 +65,7 @@ def test_bundle_extractor_unpacks_local_archive_without_running_build(tmp_path):
     import tarfile
     source = tmp_path / 'source' / 'python' / 'lib'
     source.mkdir(parents=True)
-    (source / 'fixture.txt').write_text('Bundled runtime fixture')
+    (source / 'fixture.txt').write_text('Bundled runtime fixture', encoding="utf-8")
     archive = tmp_path / 'python.tar.gz'
     with tarfile.open(archive, 'w:gz') as packed:
         packed.add(source.parent, arcname='python')
@@ -73,7 +73,7 @@ def test_bundle_extractor_unpacks_local_archive_without_running_build(tmp_path):
     result = subprocess.run(['node', '-e',
         'require(process.argv[1]).extractRuntime(process.argv[2], process.argv[3]);',
         str(REPO / 'electron' / 'bundle-python.js'), str(archive), str(dest)],
-        capture_output=True, text=True)
+        capture_output=True, text=True, encoding="utf-8")
     assert result.returncode == 0, result.stdout + result.stderr
-    assert (dest / 'lib' / 'fixture.txt').read_text() == 'Bundled runtime fixture'
+    assert (dest / 'lib' / 'fixture.txt').read_text(encoding="utf-8") == 'Bundled runtime fixture'
     assert not Path(str(dest) + '-extract').exists()

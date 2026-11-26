@@ -16,6 +16,7 @@ from api.completion_providers import describe as api_description, resolve_model,
 from api.model_providers import service as providers
 from api.model_providers.types import TextRequest, TextResult
 from api.agent_harness import catalog
+from api.agent_harness.agent_models import saved_model_ids
 from api.agent_harness.helper import HelperRequest, HelperCancelled
 
 SETTINGS_KEY = 'background_helpers'
@@ -62,7 +63,7 @@ def targets():
         available = bool(adapter.available()) if callable(getattr(adapter, 'available', None)) else False
         rows.append({'id': manifest.id, 'target': manifest.id, 'key': 'cli:' + manifest.id,
                      'label': manifest.label, 'kind': 'cli', 'configured': available,
-                     'default_model': manifest.default_model, 'suggested_models': manifest.models,
+                     'default_model': manifest.default_model, 'suggested_models': saved_model_ids(manifest.id, manifest.models),
                      'auth_modes': manifest.background_text.get('auth_modes', []),
                      'authentication': 'Saved CLI login; access and remaining allowance are checked when running',
                      'auth_command': manifest.auth_command})

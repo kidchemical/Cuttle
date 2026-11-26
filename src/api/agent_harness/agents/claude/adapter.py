@@ -326,6 +326,14 @@ class Adapter:
             kernel_override=model,
             cli_default="",
         )
+        from api.agent_harness.agents.claude import api_fallback
+
+        pin = api_fallback.bare_billing_command(prompt)
+        if pin:
+            from scripts.utilities.claude_cli_session_store import save_claude_billing
+
+            save_claude_billing(chat_session_id, pin)
+            return AgentResult(success=True, output=api_fallback.pin_reply(pin), model=active or "")
         usage_md = handle_agent_usage_slash("claude", prompt)
         if usage_md is not None:
             return AgentResult(success=True, output=usage_md, model=active or "")
@@ -440,6 +448,7 @@ class Adapter:
         reasoning_effort: Optional[str] = None,
         cancel_event: Any = None,
         billing: Optional[str] = None,
+        background_wait_cap: Any = None,
     ) -> AgentResult:
         from scripts.utilities.claude_cli_session_store import (
             load_claude_effort,
@@ -523,14 +532,18 @@ class Adapter:
 
         async def _run(text: str, rid: Optional[str], extra_env: Optional[dict] = None) -> dict:
             # Background tasks pending at the first result: reply now, follow up later.
+            # A caller that caps the wait (a sub-agent child turn) owns the turn to
+            # its end: its process does not outlive the batch, so it never detaches.
             background = (
                 BackgroundWait(chat_session_id, "claude")
-                if steerable and chat_session_id and detach_enabled("claude") else None
+                if steerable and chat_session_id and background_wait_cap is None
+                and detach_enabled("claude") else None
             )
             return await tool.execute_prompt(
                 text, cwd=cwd, resume=rid, status_queue=status_queue,
                 chat_session_id=chat_session_id, timeout=timeout, cancel_event=cancel_event,
                 steerable=steerable, background=background, extra_env=extra_env,
+                background_wait_cap=background_wait_cap,
             )
 
         from api.agent_harness.agents.claude import api_fallback as _billing

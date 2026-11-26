@@ -299,7 +299,8 @@ def test_rank_injects_winner_body(tmp_path):
     assert ranked["items"][0]["name"] == "local-only.md"
     assert "discord.post" in ranked["items"][0]["body"]
     block = format_ranked_block(ranked["items"])
-    assert "Suggested runbooks" in block
+    assert "Suggested for this turn" in block and "local-only.md" in block
+    assert "Suggested runbooks" in format_ranked_block(ranked["items"], mode="excerpt")
 
 
 def test_compiler_injects_ranked_layer(tmp_path):

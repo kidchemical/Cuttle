@@ -108,13 +108,52 @@ def test_claude_meter_api_credit_toggle(cfg, monkeypatch):
 
     meter = catalog.get("usage_meter")
     on = meter.normalize_config({"agent": "claude", "api_credit": True})
-    assert on["api_credit"] is True
-    assert "api_credit" not in meter.normalize_config({"agent": "codex", "api_credit": True})
-    assert "api_credit" not in meter.normalize_config({"api_credit": False}, on)
+    assert on["billing"] == "both" and "api_credit" not in on
+    assert "billing" not in meter.normalize_config({"agent": "codex", "api_credit": True})
+    assert "billing" not in meter.normalize_config({"api_credit": False}, on)
     usage.set_snapshot("claude", _sub())
     assert meter.resolve_data(on, False)["windows"][-1]["id"] == "api_credit"
     assert all(w["id"] != "api_credit" for w in meter.resolve_data({"agent": "claude"}, False)["windows"])
     assert "claude_api" not in [p["agent"] for p in usage.providers()]
+
+
+def test_claude_meter_billing_views(cfg, monkeypatch):
+    from api.gizmos import catalog, usage
+
+    meter = catalog.get("usage_meter")
+    norm = meter.normalize_config
+    assert "billing" not in norm({"agent": "claude"})
+    assert norm({"agent": "claude", "api_credit": True})["billing"] == "both"
+    api = norm({"agent": "claude", "billing": "api"})
+    assert api["billing"] == "api" and norm({"show": "used"}, api)["billing"] == "api"
+    assert "billing" not in norm({"agent": "codex", "billing": "api"})
+    with pytest.raises(ValueError):
+        norm({"agent": "claude", "billing": "nope"})
+    assert meter.default_title(api) == "Claude API credit"
+    assert meter.default_title({"agent": "claude", "api_credit": True}) == "Claude Code usage"
+
+    usage.set_snapshot("claude", _sub())
+    ids = lambda config: [w["id"] for w in meter.resolve_data(config, False)["windows"]]
+    assert "api_credit" not in ids({"agent": "claude"})
+    assert ids(api) == ["api_credit"]
+    data = meter.resolve_data(api, False)
+    assert data["plan"] == "API" and data["primary_window"] == "api_credit" and not data["blocked"]
+    assert set(data["extras"]) == {"api_credit"}
+    assert ids({"agent": "claude", "billing": "both"})[-1] == "api_credit" and len(ids({"agent": "claude", "billing": "both"})) > 1
+
+    current = {"agent": "claude", "billing": "current"}
+    data = meter.resolve_data(current, False)
+    assert data["billing"]["shown"] == "subscription" and "api_credit" not in ids(current)
+    cfg["agent_billing_fallback"]["claude"]["prefer"] = "api"
+    data = meter.resolve_data(current, False)
+    assert data["billing"]["shown"] == "api" and ids(current) == ["api_credit"]
+    cfg["agent_billing_fallback"]["claude"]["prefer"] = "subscription"
+    usage.set_snapshot("claude", _sub(blocked=True))  # subscription out, fallback covering
+    assert meter.resolve_data(current, False)["billing"]["shown"] == "api"
+
+    fb.record_spend(250.0, chat_session_id="1", model="opus")  # budget spent
+    data = meter.resolve_data(api, False)
+    assert data["blocked"] is True and data["unblock_at"]
 
 
 # ── adapter flow ─────────────────────────────────────────────────────────────

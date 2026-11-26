@@ -58,6 +58,25 @@ def test_pause_stops_the_turn_pauses_supervision_and_marks_the_brief(held_ctx):
     assert [e["action"] for e in store.binding_events(session_id=sid)][-3:] == ["pause", "pause", "resume"]
 
 
+def test_binding_reports_idle_and_a_separately_paused_supervisor(held_ctx, monkeypatch):
+    """A bound chat whose work finished is idle, not live; a supervision pause
+    made outside the hold is reported so the chip does not read as running."""
+    from api.chat_ops import store as ops
+
+    ctx, sid = held_ctx, held_ctx["sid"]
+    monkeypatch.setattr("api.chat_delivery.is_busy", lambda _sid: False)
+    out = service.get_binding(sid, db=ctx["db"])
+    assert out["working"] is False and out["supervision"] == ""
+    op = _supervise(ctx)
+    out = service.get_binding(sid, db=ctx["db"])
+    assert out["working"] is True and out["supervision"] == "active"
+    ops.set_paused(op["id"], op["actor"], True)
+    out = service.get_binding(sid, db=ctx["db"])
+    assert out["working"] is False and out["supervision"] == "paused" and out["hold"] == ""
+    monkeypatch.setattr("api.chat_delivery.is_busy", lambda _sid: True)
+    assert service.get_binding(sid, db=ctx["db"])["working"] is True
+
+
 def test_resume_leaves_supervision_the_user_paused_alone(held_ctx):
     from api.chat_ops import store as ops
 
@@ -177,6 +196,14 @@ assert.deepEqual(paused.actions, ['resume', 'halt']); assert.ok(paused.holdNote.
 const stopped = M.chip({...base, hold: 'stopped'});
 assert.equal(stopped.text, 'Stopped · Fast'); assert.deepEqual(stopped.actions, ['resume']);
 assert.equal(M.chip({...base, hold: 'bogus'}).hold, '');
+// Bound with nothing moving it on reads Idle (no live dot), not Orchestrating.
+const idle = M.chip({...base, working: false, supervision: 'paused'});
+assert.equal(idle.text, 'Idle · Fast'); assert.equal(idle.working, false);
+assert.ok(idle.holdNote.includes('Nothing is running')); assert.ok(idle.supervisionNote.includes('paused on its own'));
+assert.deepEqual(idle.actions, ['pause', 'halt']);
+assert.equal(M.chip({...base, working: true}).text, 'Orchestrating · Fast');
+assert.equal(M.chip({...base, hold: 'paused', working: true}).working, false);
+assert.equal(M.chip({...base, hold: 'paused', supervision: 'paused'}).supervisionNote, '');
 assert.equal(M.actionSummary('halt', {actions: {agents_stopped: 1, jobs_stopped: ['a', 'b'], deliveries_dropped: 1,
   supervision_paused: ['x']}}), 'Orchestration stopped: 1 agent batch stopped, 2 jobs stopped, 1 wake-up dropped, supervision paused');
 assert.equal(M.actionSummary('pause', {actions: {errors: ['turn_stopped: x']}}), 'Orchestration paused (1 step failed)');

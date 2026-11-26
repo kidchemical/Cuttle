@@ -163,6 +163,8 @@ def child_slash_command(
         "codex": "Codex",
         "hermes": "Hermes",
         "opencode": "OpenCode",
+        "claude": "Claude Code",
+        "antigravity": "Antigravity",
         "cursor": "Cursor",
     }.get(agent, agent.title() if agent else "Cursor")
     pretty = model or "Auto"
@@ -250,6 +252,16 @@ def pin_child_session(session_id: Any, spec: ChildSpec, *, project_path: str = "
                 save_opencode_model(session_id, model)
             if effort:
                 save_opencode_effort(session_id, effort)
+            return
+        if agent == "antigravity":
+            from api.agent_harness.agents.antigravity.session_store import (
+                save_antigravity_effort,
+                save_antigravity_model,
+            )
+            if model:
+                save_antigravity_model(session_id, model)
+            if effort:
+                save_antigravity_effort(session_id, effort)
     except Exception:
         return
 

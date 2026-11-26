@@ -11,6 +11,8 @@ Every meaningful behavior or state transition should have one obvious owner.
 Do not duplicate business rules across pages, routes, adapters, helpers, or compatibility paths.
 
 If logic already has an owner, call that owner instead of reimplementing it.
+The same holds for UI building blocks and data sources: the registry in
+`canonical-components.md` names the one dropdown, picker, modal and model list.
 
 **One owner per lifetime.** Group code by the lifetime of the state it manages
 — turn, session, pane, space, process — and let that owner hold both the

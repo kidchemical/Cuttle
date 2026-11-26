@@ -94,6 +94,21 @@ def test_no_extra_needed_injects_nothing(tmp_path):
     assert ranked["items"] == []
 
 
+def test_pointer_needs_less_evidence_than_an_excerpt(tmp_path):
+    # A confident pick the judge is lukewarm about still earns a pointer...
+    ranked = _rank(tmp_path, _judge(needs=0.4, conf=0.94))
+    assert ranked["meta"]["injected"] == ["doc:b.md"]
+
+
+def test_lukewarm_need_never_pastes_an_excerpt(tmp_path, monkeypatch):
+    from api.jev import thresholds as T
+
+    # ...but not a pasted body.
+    monkeypatch.setattr(T, "RANK_INJECT_MODE", "excerpt")
+    ranked = _rank(tmp_path, _judge(needs=0.4, conf=0.94))
+    assert ranked["items"] == []
+
+
 def test_low_confidence_injects_nothing(tmp_path):
     ranked = _rank(tmp_path, _judge(conf=0.2))
     assert ranked["items"] == []
@@ -276,7 +291,7 @@ def test_truncated_body_marked_excerpt_request_preserved(tmp_path):
     assert ranked["items"][0]["excerpt"] is True
     assert ranked["meta"]["excerpt"] is True
     assert captured["state"]["user_request"] == "do the beta thing"
-    block = format_ranked_block(ranked["items"])
+    block = format_ranked_block(ranked["items"], mode="excerpt")
     assert "before acting on a procedure" in block
 
 
@@ -318,7 +333,7 @@ def test_tiny_budget_reports_excerpt_without_marker(tmp_path, monkeypatch):
     assert ranked["meta"]["excerpt"] is True
     from api.jev.rank import format_ranked_block
 
-    assert "(excerpt" in format_ranked_block(ranked["items"])
+    assert "(excerpt" in format_ranked_block(ranked["items"], mode="excerpt")
 
 
 def test_long_request_preserved_through_compile(tmp_path):
@@ -396,11 +411,13 @@ def test_block_labels_excerpt_from_flag_without_marker():
     from api.jev.rank import format_ranked_block
 
     block = format_ranked_block(
-        [{"kind": "doc", "name": "b.md", "body": "short body", "excerpt": True}]
+        [{"kind": "doc", "name": "b.md", "body": "short body", "excerpt": True}],
+        mode="excerpt",
     )
     assert "(excerpt" in block
     plain = format_ranked_block(
-        [{"kind": "doc", "name": "b.md", "body": "short body", "excerpt": False}]
+        [{"kind": "doc", "name": "b.md", "body": "short body", "excerpt": False}],
+        mode="excerpt",
     )
     assert "(excerpt" not in plain
 
@@ -449,3 +466,22 @@ def test_context_ranking_runs_on_a_chosen_helper_instead_of_jev(tmp_path, monkey
     assert rank.rank_context("hi", project_path=str(guest), inventory={"docs": ["alpha.md"]})["items"] == []
     monkeypatch.setattr(helpers, "generate", lambda *a, **k: None)
     assert rank.rank_context("hi", project_path=str(guest), inventory={"docs": ["alpha.md"]})["items"] == []
+
+
+def test_default_block_points_at_the_winner_instead_of_pasting_it(tmp_path):
+    """A pasted excerpt cost ~3,150 chars a turn and still had to be opened in full."""
+    from api.jev.rank import format_ranked_block, rank_context
+
+    big = "# Big beta\nWhen to run the beta procedure.\n" + "procedure line\n" * 800
+    guest = _guest(tmp_path, {"b.md": big})
+    ranked = rank_context(
+        "do the beta thing",
+        project_path=str(guest),
+        inventory={"docs": ["b.md"]},
+        client=_judge(winner="doc:b.md", probs={"doc:b.md": 1.0}),
+    )
+    block = format_ranked_block(ranked["items"])
+    assert len(block) < 500
+    assert "procedure line" not in block
+    assert "doc `b.md` — Big beta — When to run the beta procedure." in block
+    assert str(guest / ".cuttle" / "docs" / "b.md") in block

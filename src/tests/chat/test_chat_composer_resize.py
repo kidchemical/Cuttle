@@ -31,7 +31,7 @@ def test_fit_height_combines_auto_grow_and_dragged_height():
     if not node:
         pytest.skip("node not installed")
     out = subprocess.run([node, "-e", HARNESS], capture_output=True, text=True, timeout=30,
-                         env={**os.environ, "RESIZE_JS": str(RESIZE_JS)})
+                         env={**os.environ, "RESIZE_JS": str(RESIZE_JS)}, encoding="utf-8")
     assert out.returncode == 0, out.stderr
     r = json.loads(out.stdout)
     assert r["autoSmall"] == {"height": 50, "overflow": False}

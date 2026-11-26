@@ -78,7 +78,7 @@ def on_session_event(kind, session_id, detail):
     with _lock:
         _pending.setdefault(int(session_id), kind)
         if command and rules.is_git_write(command):
-            _commands.setdefault(int(session_id), []).append(command)
+            _commands.setdefault(int(session_id), []).append((command, bool((detail or {}).get('failed'))))
             del _commands[int(session_id)][:-MAX_COMMANDS]
     _wake.set()
 

@@ -279,3 +279,4 @@ def test_live_badge_preserved_for_status_updates_replaced_on_fallback_and_fenced
     assert live.get_live_status('12')['slash_command'] is None
     live.clear_live_status('12', turn=2)
     assert not live.get_live_status('12')['active']
+

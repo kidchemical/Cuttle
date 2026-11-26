@@ -70,6 +70,46 @@ out.preview = [
   M.previewText('<think>hmm</think> Done: ```code``` tests pass'),
   M.previewText('x'.repeat(200), 20),
 ];
+const receipt = (state, mode, reply, covers) => M.steerReceipt({messageId: 12, turnId:'T1', metadata:{steer:{v:1,state,mode,reply,covers}}, steerIdle:false}, [], 'T1');
+out.receipts = [receipt('pending','live',null,[]), receipt('delivered','live',{text:'ok'},[12]), receipt('pending','detached',null,[]), receipt('delivered','detached',{text:'ok'},[12]), receipt('undelivered','live',null,[]), M.steerReceipt({metadata:{steer:{state:'delivered'}}}, [], 'T1')];
+const row = (o, steer) => Object.assign({ messageId: 12, turnId: 'T1', steerIdle: false, metadata: steer === undefined ? undefined : { steer } }, o);
+const st = (o) => Object.assign({ v: 1, steer_id: 'h', state: 'pending', delivered_at: null, mode: 'live', reply: null, covers: [] }, o);
+const label = (r) => (r ? r.label : null);
+out.labels = {
+  // The live extra wins for the current turn, even when the row has no saved receipt yet.
+  liveWinsOverSaved: label(M.steerReceipt(row({}, st({ state: 'pending' })), [{ message_id: 12, ...st({ state: 'delivered' }) }], 'T1')),
+  liveWithoutSavedReceipt: label(M.steerReceipt(row({}, undefined), [{ message_id: 12, ...st({}) }], 'T1')),
+  liveOtherRowIgnored: label(M.steerReceipt(row({}, st({ state: 'delivered' })), [{ message_id: 99, ...st({}) }], 'T1')),
+  // A row sent from this page has no id yet: it follows live status by its steer id.
+  localRowFollowsLive: label(M.steerReceipt(row({ messageId: null }, M.sentReceipt({ steer_id: 'h' })), [{ message_id: 12, ...st({ state: 'delivered' }) }], 'T1')),
+  localRowPending: label(M.steerReceipt(row({ messageId: null }, M.sentReceipt({ steer_id: 'h' })), [], 'T1')),
+  localRowOtherSteer: label(M.steerReceipt(row({ messageId: null }, M.sentReceipt({ steer_id: 'x' })), [{ message_id: 12, ...st({ state: 'delivered' }) }], 'T1')),
+  sentDelivered: label(M.steerReceipt(row({ messageId: null }, M.sentReceipt({ steer_id: 'h', delivered: true })), [], 'T1')),
+  sentIdle: label(M.steerReceipt(row({ messageId: null, steerIdle: true }, M.sentReceipt({ steer_id: 'h', steer_idle: true })), [], '')),
+  sentNoId: M.sentReceipt({ steered: true }),
+  // A row without an id and without a receipt never matches a live entry.
+  noIdNoLiveMatch: label(M.steerReceipt(row({ messageId: null }, undefined), [{ message_id: 12, ...st({}) }], 'T1')),
+  // Pending on a live row whose turn is no longer live: not a spinner.
+  pendingOtherTurn: label(M.steerReceipt(row({ turnId: 'T2' }, st({})), [], 'T1')),
+  pendingNoLiveTurn: label(M.steerReceipt(row({}, st({})), [], '')),
+  undeliveredDetached: label(M.steerReceipt(row({}, st({ mode: 'detached', state: 'undelivered' })), [], 'T1')),
+  undeliveredLive: label(M.steerReceipt(row({}, st({ state: 'undelivered' })), [], 'T1')),
+  // A live entry without v is ignored; the row's own v1 receipt still renders.
+  unknownLiveShape: label(M.steerReceipt(row({}, st({})), [{ message_id: 12, state: 'delivered', mode: 'live' }], 'T1')),
+  noRowAtAll: M.steerReceipt(null, [], 'T1'),
+};
+// Excerpt placement.
+const excerptOf = (steer) => M.steerReceipt(row({}, st(steer)), [], 'T1');
+out.excerpts = {
+  groupedFirst: excerptOf({ state: 'delivered', mode: 'live', reply: null, covers: [12, 13] }).excerpt,
+  groupedLast: M.steerReceipt(row({ messageId: 13 }, st({ state: 'delivered', mode: 'live', reply: { text: 'answer' }, covers: [12, 13] })), [], 'T1').excerpt,
+  // A reply that names this row but is not the last covered row is never shown here.
+  notLastCovered: excerptOf({ state: 'delivered', mode: 'live', reply: { text: 'x' }, covers: [12, 13] }).excerpt,
+  idleSteer: M.steerReceipt(row({ steerIdle: true }, st({ state: 'delivered', mode: 'detached', reply: { text: 'x' }, covers: [12] })), [], 'T1').excerpt,
+  emptyCovers: excerptOf({ state: 'delivered', mode: 'live', reply: { text: 'x' }, covers: [] }).excerpt,
+  liveReply: M.steerReceipt(row({}, st({ state: 'pending' })), [{ message_id: 12, ...st({ state: 'delivered', reply: { text: 'live' }, covers: [12] }) }], 'T1').excerpt,
+  label: M.EXCERPT_LABEL,
+};
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -144,3 +184,50 @@ def test_idle_steer_starts_a_new_thread_instead_of_joining_the_old_turn(out):
     t = g["threads"][0]
     assert t["root"] == 3 and t["key"] == "t:T1#1"
     assert [r["index"] for r in t["replies"]] == [4, 5]
+
+
+def test_steer_receipt_copy_and_legacy_shape(out):
+    assert [item["label"] if item else None for item in out["receipts"]] == [
+        "Sending into the live turn…", "Steered into the live turn · no restart",
+        "Accepted into the background run", "Read by the background run",
+        "Ended without confirmation", None,
+    ]
+    assert out["receipts"][1]["excerpt"] == "ok"
+    assert out["receipts"][0]["excerpt"] is None
+
+
+@node_only
+def test_receipt_label_for_every_contract_state(out):
+    labels = out["labels"]
+    assert labels["liveWinsOverSaved"] == "Steered into the live turn · no restart"
+    assert labels["liveWithoutSavedReceipt"] == "Sending into the live turn…"
+    # A live entry for another message never overrides this row's saved receipt.
+    assert labels["liveOtherRowIgnored"] == "Steered into the live turn · no restart"
+    # A row without an id cannot be matched by a live entry, and has no saved receipt: nothing to show.
+    assert labels["noIdNoLiveMatch"] is None
+    # A steer just sent from this page: pending, then delivered, by steer id.
+    assert labels["localRowPending"] == "Sending into the live turn…"
+    assert labels["localRowFollowsLive"] == "Steered into the live turn · no restart"
+    assert labels["localRowOtherSteer"] == "Sending into the live turn…"
+    assert labels["sentDelivered"] == "Steered into the live turn · no restart"
+    assert labels["sentIdle"] == "Accepted into the background run"
+    assert labels["sentNoId"] is None
+    assert labels["pendingOtherTurn"] == "Not confirmed"
+    assert labels["pendingNoLiveTurn"] == "Not confirmed"
+    assert labels["undeliveredDetached"] == "Ended without confirmation"
+    assert labels["undeliveredLive"] == "Ended without confirmation"
+    # A live entry without `v` is not trusted: the row's own v1 receipt is used.
+    assert labels["unknownLiveShape"] == "Sending into the live turn…"
+    assert out["labels"]["noRowAtAll"] is None
+
+
+@node_only
+def test_excerpt_is_shown_once_on_the_last_covered_row(out):
+    ex = out["excerpts"]
+    assert ex["groupedFirst"] is None  # earlier member of a group carries no reply
+    assert ex["groupedLast"] == "answer"
+    assert ex["notLastCovered"] is None
+    assert ex["idleSteer"] is None  # never on a steer_idle row
+    assert ex["emptyCovers"] is None  # covers [] means no reply yet
+    assert ex["liveReply"] == "live"  # the live extra carries the reply for the current turn
+    assert ex["label"] == "Agent response excerpt"

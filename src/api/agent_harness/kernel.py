@@ -158,8 +158,8 @@ def _resolve_agent_cwd(adapter, project_path: Optional[str]) -> str:
     """Chip path wins for every agent. Adapters may only refine within that project.
 
     Cursor used to pin ``--workspace`` to whichever folder last saved a
-    ``--resume`` UUID for the chat, so an Escape Purgatory chip still launched
-    inside Cuttle (CH-000164). Future adapters that fall back to process cwd
+    ``--resume`` UUID for the chat, so a different project chip still launched
+    inside Cuttle. Future adapters that fall back to process cwd
     hit the same trap — constrain here so they cannot.
     """
     base = resolve_harness_cwd(
@@ -325,6 +325,7 @@ def _record_context_metrics(
             handoff_messages=brain_meta.get("handoff_messages"),
             handoff_mode=brain_meta.get("handoff_mode"),
             layer_chars=brain_meta.get("layer_chars"),
+            ranked=brain_meta.get("ranked"),
             context_tokens=fill,
             context_limit=limit,
             compacted=compacted,
@@ -342,6 +343,7 @@ def _compile_agent_prompt(
     cwd: str,
     chat_session_id: Optional[str],
     has_resume: bool,
+    model: Optional[str] = None,
 ) -> tuple:
     """Build the outbound prompt via Context Compiler + hot-swap handoff + context delta.
 
@@ -353,7 +355,12 @@ def _compile_agent_prompt(
     interrupted turns keep their notices pending and mid-turn edits are not
     swallowed. Keep it out of query-log metadata and sent payloads.
     """
+    from api.cuttle_brain.bare import is_bare_turn
     from api.cuttle_brain.context_compiler import _USER_REQUEST_HEADER
+
+    if is_bare_turn(manifest, model):
+        # Plain-chat target: the typed request and nothing else.
+        return prompt, {"mode": "bare", "prompt_chars": len(prompt or "")}, None
 
     handoff = None
     handoff_error: Optional[str] = None
@@ -695,6 +702,10 @@ def run_agent_web_command(
         }
 
     manifest, adapter = pair
+    # A chat bound to an execution node runs its CLI there (api.exec_nodes).
+    from api.exec_nodes.service import adapter_for_turn
+
+    adapter = adapter_for_turn(manifest, adapter, chat_session_id)
     slash = manifest.slash_prefix().rstrip()
     type_ok = f"{manifest.id}_command"
     type_err = f"{manifest.id}_error"
@@ -903,6 +914,7 @@ def run_agent_web_command(
                 cwd=cwd,
                 chat_session_id=sid,
                 has_resume=bool(resume),
+                model=model,
             )
             if isinstance(compiled, tuple):
                 agent_prompt = compiled[0]
@@ -914,8 +926,9 @@ def run_agent_web_command(
                 agent_prompt = compiled
                 brain_meta = {}
                 brain_receipt = None
-            from api.chat_preferences import apply_agent_prompt
-            agent_prompt = apply_agent_prompt(agent_prompt, manifest.id)
+            if brain_meta.get("mode") != "bare":
+                from api.chat_preferences import apply_agent_prompt
+                agent_prompt = apply_agent_prompt(agent_prompt, manifest.id)
             brain_meta = dict(brain_meta, prompt_chars=len(agent_prompt))
             try:
                 tr = get_query_tracker(query_id)

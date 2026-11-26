@@ -56,6 +56,9 @@ USAGE_SHOW = ("remaining", "used")
 # How a meter reads out: a dollar amount, a percent, or the provider default
 # (``auto`` = amount for readout providers like OpenRouter, else percent).
 USAGE_METRICS = ("auto", "amount", "percent")
+# Display footprint on the blade bar and float/pop-out docks: the ring/card,
+# a slim label + horizontal bar (``micro``), or the bar alone (``pico``).
+USAGE_SIZES = ("regular", "micro", "pico")
 
 
 def _truthy(value: Any) -> bool:
@@ -85,36 +88,60 @@ def _usage_config(raw: Dict[str, Any], existing: Optional[Dict[str, Any]] = None
     metric = str(raw.get("metric", base.get("metric", "auto")) or "auto").strip().lower()
     if metric not in USAGE_METRICS:
         raise ValueError("metric must be 'auto', 'amount', or 'percent'")
+    size = str(raw.get("size", base.get("size", "regular")) or "regular").strip().lower()
+    if size not in USAGE_SIZES:
+        raise ValueError("size must be one of: " + ", ".join(USAGE_SIZES))
     if "notify_on_unblock" in raw:
         notify = _truthy(raw.get("notify_on_unblock"))
     else:
         notify = _truthy(base.get("notify_on_unblock", False))
-    # Claude Code only: add the Anthropic API-credit fallback as a row.
-    api_credit = agent == "claude" and _truthy(raw.get("api_credit", base.get("api_credit", False)))
     out = {"agent": agent, "window": window, "show": show,
            "metric": metric, "notify_on_unblock": notify}
-    if api_credit:
-        out["api_credit"] = True
+    if size != "regular":
+        out["size"] = size
+    if agent == "claude":
+        # Claude Code only: subscription, API credit, both, or the active side.
+        billing = str(raw.get("billing") or "").strip().lower()
+        if not billing and "api_credit" in raw:  # legacy checkbox
+            billing = "both" if _truthy(raw.get("api_credit")) else "subscription"
+        billing = billing or _claude_billing(base)
+        if billing not in CLAUDE_BILLING_VIEWS:
+            raise ValueError("billing must be one of: " + ", ".join(CLAUDE_BILLING_VIEWS))
+        if billing != "subscription":
+            out["billing"] = billing
     return out
+
+
+CLAUDE_BILLING_VIEWS = ("subscription", "api", "both", "current")
+
+
+def _claude_billing(config: Dict[str, Any]) -> str:
+    """A Claude meter's billing view; stored configs may carry the old ``api_credit`` flag."""
+    billing = str(config.get("billing") or "").strip().lower()
+    if billing in CLAUDE_BILLING_VIEWS:
+        return billing
+    return "both" if _truthy(config.get("api_credit")) else "subscription"
 
 
 def _usage_title(config: Dict[str, Any]) -> str:
     provider = usage.get_provider(config.get("agent"))
+    if config.get("agent") == "claude" and _claude_billing(config) == "api":
+        return "Claude API credit"
     return f"{provider.label if provider else 'Agent'} usage"
 
 
 def _usage_data(config: Dict[str, Any], refresh: bool) -> Dict[str, Any]:
     snap = usage.snapshot(config.get("agent"), force=refresh)
-    if config.get("agent") == "claude" and config.get("api_credit"):
-        from api.agent_harness.agents.claude.api_fallback import merge_claude_usage
+    if config.get("agent") == "claude":
+        from api.agent_harness.agents.claude.api_fallback import claude_usage_view
 
-        snap = merge_claude_usage(snap)
+        snap = claude_usage_view(snap, _claude_billing(config))
     return snap
 
 
 def _usage_options() -> Dict[str, Any]:
     return {"agents": usage.providers(), "show": list(USAGE_SHOW),
-            "metrics": list(USAGE_METRICS)}
+            "metrics": list(USAGE_METRICS), "sizes": list(USAGE_SIZES), "billing": list(CLAUDE_BILLING_VIEWS)}
 
 
 register_type(GizmoType(

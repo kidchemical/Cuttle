@@ -53,7 +53,7 @@ def test_builtin_shell_is_not_a_service_op():
 def test_drop_in_op_is_discovered_and_dispatchable(tmp_path, monkeypatch):
     ext = tmp_path / "service_ops"
     ext.mkdir()
-    (ext / "slack.py").write_text(DROP_IN)
+    (ext / "slack.py").write_text(DROP_IN, encoding="utf-8")
     monkeypatch.setenv("CUTTLE_SERVICE_OPS_DIR", str(ext))
     _reset()
     try:
@@ -71,7 +71,7 @@ def test_drop_in_op_is_discovered_and_dispatchable(tmp_path, monkeypatch):
 def test_invalid_drop_in_is_skipped(tmp_path, monkeypatch):
     ext = tmp_path / "service_ops"
     ext.mkdir()
-    (ext / "broken.py").write_text("def build_op():\n    return object()\n")
+    (ext / "broken.py").write_text("def build_op():\n    return object()\n", encoding="utf-8")
     monkeypatch.setenv("CUTTLE_SERVICE_OPS_DIR", str(ext))
     _reset()
     try:
@@ -105,7 +105,7 @@ def test_project_action_dispatch_uses_registry(tmp_path, monkeypatch):
     action_dir.mkdir(parents=True)
     (action_dir / "discord-post.yaml").write_text(
         "name: discord.post\ntype: discord.post\nguild_id: '1'\n"
-        "channels:\n  general: '123'\n")
+        "channels:\n  general: '123'\n", encoding="utf-8")
     clear_pending_for_tests()
     token = encode_inline_action_payload(
         action_name="discord.post", project_path=str(tmp_path),

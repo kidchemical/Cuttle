@@ -1,0 +1,199 @@
+/* Studio reply threads (lane L6): the steer receipt under a steer bubble,
+   plus the Studio page backdrop and message bubble look (polish 1, bottom of file).
+   Owner: chat_threads.js (receipt markup). Every rule is under
+   :root.cuttle-studio, so Classic never sees these. Tokens from studio_tokens.css. */
+
+:root.cuttle-studio .chat-thread-receipt {
+    /* The label sits above the steer bubble (the mock's order), so the gap is below it. */
+    margin: 0 0 var(--studio-space-2, 8px);
+    color: var(--studio-ink);
+}
+
+:root.cuttle-studio .chat-thread-receipt-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--studio-text-base, 15px);
+    font-weight: var(--studio-weight-bold, 700);
+    line-height: var(--studio-leading-base, 1.5);
+    color: var(--studio-accent);
+}
+
+:root.cuttle-studio .chat-thread-receipt[data-state="undelivered"] .chat-thread-receipt-label {
+    color: var(--studio-ink-muted);
+}
+
+:root.cuttle-studio .chat-thread-receipt-icon {
+    font-size: 1em;
+    line-height: 1;
+}
+
+/* A steer is the user's bubble, so its label lines up with the bubble's right edge. */
+:root.cuttle-studio .message.user .chat-thread-receipt-label {
+    justify-content: flex-end;
+}
+
+:root.cuttle-studio .chat-thread-excerpt {
+    margin: var(--studio-space-2, 8px) 0 0;
+    padding: var(--studio-space-2, 8px) var(--studio-space-3, 12px);
+    border-left: 3px solid var(--studio-accent-soft);
+    border-radius: var(--studio-radius-sm, 10px);
+    background: var(--studio-accent-soft);
+}
+
+:root.cuttle-studio .chat-thread-excerpt-label {
+    font-size: var(--studio-text-2xs, 11px);
+    font-weight: var(--studio-weight-bold, 700);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--studio-ink-muted);
+}
+
+:root.cuttle-studio .chat-thread-excerpt-text {
+    margin: 4px 0 0;
+    font-size: var(--studio-text-sm, 13px);
+    line-height: var(--studio-leading-base, 1.5);
+    color: var(--studio-ink);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+/* Live THINKING box (chat_live_thinking.js): the running turn's reasoning,
+   open by default, a few lines tall, the older lines fading at the top.
+   A post-processed reply's "Original response" disclosure and the finished
+   turn's reasoning nested in it share the box: same wash, label and chevron. */
+:root.cuttle-studio .thinking-block--live,
+:root.cuttle-studio .response-original-block,
+:root.cuttle-studio .response-original-content > .thinking-block {
+    margin: 0 0 var(--studio-space-3, 12px);
+    padding: var(--studio-space-2, 8px) var(--studio-space-3, 12px);
+    border-radius: var(--studio-radius-md, 14px);
+    border: 0;
+    background: var(--studio-thinking-bg);
+    box-shadow: none;
+}
+
+:root.cuttle-studio .thinking-block--live > summary,
+:root.cuttle-studio .response-original-block > summary,
+:root.cuttle-studio .response-original-content > .thinking-block > summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    list-style: none;
+    cursor: pointer;
+    font-size: var(--studio-text-xs, 12px);
+    font-weight: var(--studio-weight-bold, 700);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--studio-ink-muted);
+}
+
+:root.cuttle-studio .thinking-block--live > summary::-webkit-details-marker,
+:root.cuttle-studio .response-original-block > summary::-webkit-details-marker,
+:root.cuttle-studio .response-original-content > .thinking-block > summary::-webkit-details-marker {
+    display: none;
+}
+
+:root.cuttle-studio .thinking-block--live > summary::before,
+:root.cuttle-studio .response-original-block > summary::before,
+:root.cuttle-studio .response-original-content > .thinking-block > summary::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    margin-left: 2px;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform var(--studio-dur-fast, 160ms) var(--studio-ease-out, ease-out);
+}
+
+:root.cuttle-studio .thinking-block--live[open] > summary::before,
+:root.cuttle-studio .response-original-block[open] > summary::before,
+:root.cuttle-studio .response-original-content > .thinking-block[open] > summary::before {
+    transform: rotate(45deg);
+}
+
+:root.cuttle-studio .thinking-block--live .thinking-live-body {
+    max-height: calc(1.5em * 4 + 4px);
+    margin-top: 6px;
+    overflow-y: auto;
+    scrollbar-width: none;
+    font-size: var(--studio-text-md, 16px);
+    line-height: var(--studio-leading-base, 1.5);
+    font-style: italic;
+    color: var(--studio-ink-muted);
+}
+
+:root.cuttle-studio .thinking-block--live .thinking-live-body::-webkit-scrollbar {
+    display: none;
+}
+
+:root.cuttle-studio .thinking-block--live .thinking-live-body.is-clipped {
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.5em);
+    mask-image: linear-gradient(to bottom, transparent 0, #000 1.5em);
+}
+
+/* Finished reasoning: the live body's type, full height (the turn is over). */
+:root.cuttle-studio .response-original-content > .thinking-block .thinking-inner {
+    margin-top: 6px;
+    padding: 0;
+    border-top: 0;
+    font-size: var(--studio-text-md, 16px);
+    line-height: var(--studio-leading-base, 1.5);
+    font-style: italic;
+    color: var(--studio-ink-muted);
+}
+
+:root.cuttle-studio .response-original-content {
+    margin-top: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    :root.cuttle-studio .thinking-block--live > summary::before,
+    :root.cuttle-studio .response-original-block > summary::before,
+    :root.cuttle-studio .response-original-content > .thinking-block > summary::before {
+        transition: none;
+    }
+}
+
+/* Page backdrop and message bubbles. The backdrop is a soft accent wash drawn
+   as an image over the theme's own page colour, so themes keep their page and a
+   video wallpaper (background: transparent !important) still shows through.
+   Bubbles keep the theme's colours; Studio adds the large radius, the diffuse
+   shadow and the roomier padding.
+   Owner of the bubble look in Studio: this file. Classic rules in chat_page.css are untouched. */
+:root.cuttle-studio .chat-main {
+    background-image: var(--studio-backdrop);
+}
+
+:root.cuttle-studio .message.assistant .message-content {
+    background: var(--studio-bubble-bot-bg);
+    color: var(--studio-bubble-bot-ink);
+    border: 0;
+    border-radius: var(--studio-bubble-radius);
+    border-bottom-left-radius: var(--studio-bubble-tail);
+    box-shadow: var(--studio-bubble-shadow);
+    padding: var(--studio-bubble-padding);
+}
+
+:root.cuttle-studio .message.user .message-content {
+    background: var(--studio-bubble-user-bg);
+    color: var(--studio-bubble-user-ink);
+    border-radius: var(--studio-bubble-radius);
+    border-bottom-right-radius: var(--studio-bubble-tail);
+    box-shadow: var(--studio-bubble-user-shadow);
+    padding: var(--studio-bubble-padding);
+}
+
+/* Narrow panes and phones: chat_page.css lifts a message's parts into one wrapping
+   flex row. The receipt label and the excerpt each take a full row, in DOM order
+   around the bubble (the label before it, the excerpt after it). */
+@container chat-transcript (max-width: 560px) {
+    :root.cuttle-studio .message:not(.system) .chat-thread-receipt,
+    :root.cuttle-studio .message:not(.system) .chat-thread-excerpt {
+        flex: 1 1 100%;
+        order: 2;
+        min-width: 0;
+        margin: 0;
+    }
+}

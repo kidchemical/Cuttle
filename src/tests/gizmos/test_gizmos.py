@@ -157,6 +157,17 @@ def test_usage_metric_config_validates_and_defaults():
     assert set(catalog.get("usage_meter").options()["metrics"]) == {"auto", "amount", "percent"}
 
 
+def test_usage_size_config_validates_and_stays_out_of_default_configs():
+    norm = catalog.get("usage_meter").normalize_config
+    assert "size" not in norm({"agent": "codex"}, None)
+    assert norm({"agent": "codex", "size": "micro"}, None)["size"] == "micro"
+    assert norm({"agent": "codex"}, {"size": "pico"})["size"] == "pico"
+    assert "size" not in norm({"agent": "codex", "size": "regular"}, {"size": "micro"})
+    with pytest.raises(ValueError):
+        norm({"agent": "codex", "size": "huge"}, None)
+    assert catalog.get("usage_meter").options()["sizes"] == ["regular", "micro", "pico"]
+
+
 def test_vendor_failure_is_an_error_not_an_exception():
     assert usage.normalize_codex({"success": False, "error": "login"}, NOW) == {"error": "login"}
     assert usage.normalize_claude(None, NOW)["error"]

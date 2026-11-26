@@ -90,6 +90,31 @@ def parse_billing_prefix(prompt: str):
     return m.group(1).lower(), rest
 
 
+def bare_billing_command(prompt: str) -> Optional[str]:
+    """``subscription`` / ``api`` when the whole message is a bare ``/use-…`` token.
+
+    A bare token pins this chat's billing order (same as the agent chip's
+    Billing choice); with text after it, it bills that one message instead.
+    """
+    m = _BILLING_PREFIX_RE.match(prompt or "")
+    if m and not (prompt or "")[m.end():].strip():
+        return m.group(1).lower()
+    return None
+
+
+def pin_reply(mode: str) -> str:
+    """One-line confirmation for a chat billing pin."""
+    if mode == "subscription":
+        return "This chat now bills the Claude subscription first."
+    why = api_ready()
+    line = "This chat now bills Anthropic API credit first."
+    if why == "no_key":
+        return line + " No API key is set (Settings → Providers), so turns still use the subscription."
+    if why == "over_budget":
+        return line + " The monthly API budget is spent, so turns use the subscription until it resets."
+    return line
+
+
 def is_api_refusal(text: str) -> bool:
     return bool(_API_REFUSED_RE.search(text or ""))
 
@@ -388,18 +413,24 @@ def available() -> str:
 # ── Claude Code usage meter: optional "API credit" row (config ``api_credit``) ──
 
 def credit_status(now: Optional[float] = None) -> str:
-    """One line for the meter: off / no key / standby / active / budget spent."""
+    """Short state of the API-credit route for the meter's info tooltip.
+
+    "ready" = the automatic fallback is armed but idle: turns run on the
+    subscription and only move to API credit if it hits its limit.
+    """
+    if default_billing() == "api" and not api_ready():
+        return "API first"
     state = available()
     if state == "disabled":
         return "fallback off"
     if state == "no_key":
-        return "no Anthropic key in Settings → Providers"
+        return "no API key"
     if state == "over_budget":
-        return "monthly budget spent"
+        return "budget spent"
     until = exhausted_until(now)
     if until:
-        return "in use until the subscription resets " + datetime.fromtimestamp(until).strftime("%a %H:%M")
-    return "standby (subscription in use)"
+        return "covering the subscription until " + datetime.fromtimestamp(until).strftime("%a %H:%M")
+    return "fallback ready"
 
 
 def merge_claude_usage(snap: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]:
@@ -424,6 +455,46 @@ def merge_claude_usage(snap: Dict[str, Any], now: Optional[float] = None) -> Dic
     extras["api_credit"] = (f"{usd(spent['usd'])}" + (f" of ${cap:,.0f}" if cap else "")
                             + f" this month ({spent['turns']} turns) · {credit_status(now)}")
     out["extras"] = extras
+    out["billing"] = billing_info(snap, now)
     if out.get("blocked") and not available():
         out.update(blocked=False, unblock_at=None, primary_window="api_credit")
+    return out
+
+
+# What a Claude meter shows (gizmo config ``billing``): the subscription
+# windows, the API-credit row, both, or whichever side is billing right now.
+BILLING_VIEWS = ("subscription", "api", "both", "current")
+
+
+def active_billing(snap: Optional[Dict[str, Any]] = None, now: Optional[float] = None) -> str:
+    """The side a chat without its own Billing pin bills right now."""
+    if default_billing() == "api" and not api_ready():
+        return "api"
+    if (exhausted_until(now) or (snap or {}).get("blocked")) and not available():
+        return "api"
+    return "subscription"
+
+
+def billing_info(snap: Optional[Dict[str, Any]] = None, now: Optional[float] = None) -> Dict[str, Any]:
+    return {"agent": "claude", "prefer": default_billing(), "api_ready": api_ready() or "ready",
+            "active": active_billing(snap, now)}
+
+
+def claude_usage_view(snap: Dict[str, Any], view: str, now: Optional[float] = None) -> Dict[str, Any]:
+    """The Claude usage snapshot shaped for one meter ``view`` (BILLING_VIEWS)."""
+    now = time.time() if now is None else now
+    view = view if view in BILLING_VIEWS else "subscription"
+    shown = active_billing(snap, now) if view == "current" else view
+    if shown == "subscription":
+        out = dict(snap or {})
+        out["billing"] = billing_info(snap, now)
+    else:
+        out = merge_claude_usage(snap, now)
+    if shown == "api":
+        row = [w for w in out["windows"] if w.get("id") == "api_credit"]
+        spent = api_ready() == "over_budget"
+        out.update(windows=row, primary_window="api_credit", plan="API", blocked=spent,
+                   unblock_at=row[0]["reset_at"] if spent and row else None,
+                   extras={"api_credit": out["extras"]["api_credit"]})
+    out["billing"] = {**out["billing"], "view": view, "shown": shown}
     return out

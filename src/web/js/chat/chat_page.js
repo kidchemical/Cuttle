@@ -212,9 +212,10 @@
         if (!wrap || !text) return;
         supervision.setSession(sessionId);
         orchestration.setSession(sessionId);
+        execNode.setSession(sessionId);
         composerLock.setSession(sessionId);
         if (sessionId == null || sessionId === '') {
-            wrap.hidden = true;
+            wrap.hidden = !execNode.draftNode();
             text.textContent = '';
             wrap.removeAttribute('title');
             updateChatSessionStarButton(null);
@@ -346,13 +347,13 @@
             archived: isChatSessionArchived(sid), canArchive: isAuthMode(),
             subagentGroup: historyPanel.historySubagentGroupOwnedBy(sid) }),
         extraItems: (sid, icons) => [gitPush.menuHtml(icons), supervision.menuHtml(sid, icons.subagents),
-            orchestration.menuHtml(sid, icons.subagents), composerLock.menuHtml(sid)],
+            orchestration.menuHtml(sid, icons.subagents), execNode.menuHtml(sid, icons.subagents), composerLock.menuHtml(sid)],
         currentSession: () => session.current(), closeHistoryMenu: () => historyPanel.closeMenu(),
         afterFill: (dropdown) => gitPush.refreshMenuMode(dropdown),
     });
     // Chat supervision chip/badge/dialog (experimental `chat_supervision`).
     const supervision = CuttleChatSupervision.create({
-        doc: document, fetch: (u, o) => fetch(u, o), now: () => Date.now(), escapeHtml: escapeHtmlInline,
+        doc: document, fetch: (u, o) => fetch(u, o), now: () => Date.now(), escapeHtml: escapeHtmlInline, isStudio: studioOn,
         onSupervised: (sid, on, by) => composerLock.setSupervised(sid, on, by),
         enabledFlags: fetchEnabledExperimentalFlags, openChat: (sid) => loadChatSession(sid),
         closeMenus: () => closeAllSessionMenus(), confirm: (m) => window.confirm(m),
@@ -366,6 +367,15 @@
         sendMessage: (text) => sendMessage({ text }), closeMenus: () => closeAllSessionMenus(), confirm: (m) => window.confirm(m),
         navigate: (page) => (window.parent !== window ? window.parent.postMessage({ type: 'cuttle-navigate', page }, '*') : window.location.assign(page)),
         toast: (m, k) => (window.showToast || function () {})(m, k), viewportWidth: () => window.innerWidth, openChat: (sid) => loadChatSession(sid),
+        setInterval: (f, ms) => window.setInterval(f, ms), clearInterval: (t) => window.clearInterval(t),
+    });
+
+    // Execution node chip + dialog: which machine runs this chat's agent (experimental `exec_nodes`).
+    const execNode = CuttleChatExecNode.create({
+        doc: document, fetch: (u, o) => fetch(u, o), escapeHtml: escapeHtmlInline, enabledFlags: fetchEnabledExperimentalFlags,
+        authSessionId: toAuthDbSessionId, isOwner: () => window.CuttleAuth?.getUser()?.role === 'owner',
+        closeMenus: () => closeAllSessionMenus(), refreshHeader: () => updateChatSessionTitle(session.current()),
+        agentId: () => contextGauge.stickyAgentId(), toast: (m, k) => (window.showToast || function () {})(m, k),
         setInterval: (f, ms) => window.setInterval(f, ms), clearInterval: (t) => window.clearInterval(t),
     });
 
@@ -494,6 +504,7 @@
             getProjectPath: function () {
                 return (currentProject && currentProject.path) ? String(currentProject.path) : '';
             },
+            getProjectName: function () { return currentProject && currentProject.name; },
         })
         : null;
 
@@ -2529,6 +2540,8 @@
             u = u.slice(1, -1).trim();
         }
         if (/^(https?:|file:|vscode:|cursor:)/i.test(u)) return u;
+        // Cuttle-served files ([report](/output/…)) are web links on this origin.
+        if (/^\/output\//.test(u) && typeof location !== 'undefined') return location.origin + u;
         // Agents sometimes emit /g:/Dev/... (slash + drive)
         let m = u.match(/^\/([a-zA-Z]:)([\\/].*)$/);
         if (m) return windowsPathToFileUrl(m[1] + m[2]);
@@ -2857,6 +2870,8 @@
         chipCategoryClass: slashCommandChipCategoryClass,
     });
 
+    // Tray frame (?peek=1): one class lets tray.css drop the chrome around the transcript.
+    if (new URLSearchParams(location.search).has('peek')) document.documentElement.classList.add('cuttle-peek-frame');
     // Fleet-card peek drawer; off inside a peek frame so drawers never nest.
     let peekCtl = null;
     const subagentPeek = () => (window.CuttleChatSubagentPeek && !new URLSearchParams(location.search).has('peek')
@@ -2864,6 +2879,8 @@
         : null);
 
     // Idle chat's background work (waits, watches, schedules, owned processes): chat_background_work.js.
+    // The running turn's reasoning in its live bubble: owned by chat_live_thinking.js.
+    const liveThinking = CuttleChatLiveThinking.create({ doc: document, currentSession: () => session.current(), sessionIdsEqual, formatThinking: (t) => CuttleChatMessages.formatThinkingInner(t, structuredRenderDeps()), afterPaint: () => transcriptNav.autoScrollChatToBottom() });
     const backgroundWork = CuttleChatBackgroundWork.create({ win: window, currentSession: () => session.current(), sessionIdsEqual, isBusy: () => isLoadingThisSession(), openChat: (sid) => loadChatSession(sid) });
     // Media thumbs, lightbox and image Copy / Save menu: owned by chat_media.js.
     // Host-document listeners ride the frame teardown signal.
@@ -2926,6 +2943,10 @@
                 if (slashPaletteSupplement.harnessAgentsPath !== path) return;
                 slashPaletteSupplement.harnessAgents =
                     j && j.success && Array.isArray(j.agents) ? j.agents : [];
+                // Studio bubble headers take their identity colour from this catalog (chat_work_panel.js).
+                if (window.CuttleWorkPanel && slashPaletteSupplement.harnessAgents.length) {
+                    CuttleWorkPanel.setCatalog(slashPaletteSupplement.harnessAgents);
+                }
             })
             .catch(() => {
                 if (slashPaletteSupplement.harnessAgentsPath === path) {
@@ -3335,7 +3356,7 @@
         'opencode-model', 'opencode-effort', 'opencode-cmd',
         'codex-model', 'codex-effort', 'codex-cmd',
         'claude-model', 'claude-effort', 'claude-cmd',
-        'deepseek-cmd', 'antigravity-cmd',
+        'deepseek-cmd', 'antigravity-cmd', 'antigravity-model', 'antigravity-effort',
     ];
 
     const MODEL_STAR_SPEC_BY_CATEGORY = {
@@ -3350,6 +3371,7 @@
         'codex-effort': { agent: 'codex', kind: 'effort' },
         'claude-model': { agent: 'claude', kind: 'model' },
         'claude-effort': { agent: 'claude', kind: 'effort' },
+        'antigravity-model': { agent: 'antigravity', kind: 'model' }, 'antigravity-effort': { agent: 'antigravity', kind: 'effort' },
     };
 
     function loadAgentCapabilities() {
@@ -3705,6 +3727,7 @@
      */
     function attachAgentIdentityToRequest(requestBody) {
         agentBilling.attachToRequest(requestBody);
+        execNode.attachToRequest(requestBody);
         return agentControls.attachAgentIdentityToRequest(requestBody);
     }
 
@@ -4043,7 +4066,25 @@
         );
     }
 
-    function messageHeaderBadgesHtml(chipList, isError, project) {
+    /** Studio display is on for this page (chat_display.js: pref AND the cached flag). */
+    function studioOn() {
+        return !!(window.CuttleChatDisplay && CuttleChatDisplay.isStudio());
+    }
+
+    /**
+     * Agent badge in a bubble header. Studio: identity dot + name, plus "Working"
+     * while the turn runs (CuttleWorkPanel). A failed turn keeps the Classic chip
+     * so its error styling still shows. Classic: the chip, unchanged.
+     */
+    function agentHeaderChipsHtml(agent, failed, working) {
+        const panel = window.CuttleWorkPanel;
+        if (!agent.length || failed || !studioOn() || !panel) {
+            return slashCommandChipsHeaderHtml(agent, failed, true);
+        }
+        return agent.map((c) => panel.agentHeaderHtml(c.category, { label: c.label, working })).join('');
+    }
+
+    function messageHeaderBadgesHtml(chipList, isError, project, working) {
         const projectHtml = projectChipHtml(project, { header: true });
         const ordered = sortChipsAgentThenCommand(chipList || []);
         const failed = !!isError;
@@ -4051,7 +4092,7 @@
         const command = ordered.filter((c) => !isAgentHeaderChip(c));
         return (
             projectHtml +
-            slashCommandChipsHeaderHtml(agent, failed, true) +
+            agentHeaderChipsHtml(agent, failed, !!working) +
             slashCommandChipsHeaderHtml(command, failed)
         );
     }
@@ -4115,6 +4156,7 @@
                 const isOpenCode = isStickyOpenCodeAgentChip(chip);
                 const isCodex = isStickyCodexAgentChip(chip);
                 const isClaude = isStickyAgentChip(chip, 'claude');
+                const pinH = isStickyAgentChip(chip, composerChipAgentId(chip)) ? agentControls.harnessPins(composerChipAgentId(chip)) : null;
                 const museModel = (slashPaletteSupplement.museModel || '').trim();
                 const museEffortBadge = (slashPaletteSupplement.museEffort || '').trim();
                 const hermesModel = (slashPaletteSupplement.hermesModel || '').trim();
@@ -4159,6 +4201,8 @@
                         claudeModel ? prettyClaudeModelLabel(claudeModel) : '',
                         claudeEffortBadge
                     ) || chip.label;
+                } else if (pinH) {
+                    displayLabel = pinH.badgeLabel() || chip.label;
                 }
                 if (orchestrateChip.isChip(chip)) displayLabel = orchestrateChip.label(chip);
                 const safeLabel = escapeHtmlInline(displayLabel);
@@ -4189,6 +4233,8 @@
                 } else if (isClaude && claudeModel) {
                     tipBase += ' · model `' + claudeModel + '` · /claude model … to change';
                     if (claudeEffortBadge) tipBase += ' · effort `' + claudeEffortBadge + '`';
+                } else if (pinH) {
+                    tipBase += pinH.tooltip();
                 }
                 const tip = escapeHtmlInline(tipBase).replace(/"/g, '&quot;');
                 const catClass = slashCommandChipCategoryClass(
@@ -4197,7 +4243,7 @@
                 const labelInner = slashChipLabelInnerHtml(displayLabel);
                 // Agent badges: multi-tone segments (model truncates; effort stays).
                 // Bare agent chips still skip hyphen-chop.
-                const noShortenClass = (isCursor || isMuse || isHermes || isOpenCode || isCodex || isClaude || labelInner.segmented)
+                const noShortenClass = (isCursor || isMuse || isHermes || isOpenCode || isCodex || isClaude || pinH || labelInner.segmented)
                     ? ' slash-command-chip--no-shorten'
                     : '';
                 const segmentedClass = labelInner.segmented
@@ -4273,6 +4319,7 @@
             agentControls.loadClaudeModelsForPalette();
             agentControls.loadClaudeEffortForPalette();
         }
+        agentControls.loadActiveHarnessPins();
         row.querySelectorAll('.slash-chip-remove').forEach((btn) => {
             btn.addEventListener('click', () => {
                 const i = parseInt(btn.getAttribute('data-chip-index'), 10);
@@ -4315,14 +4362,14 @@
             opencode: { build: (opts) => agentControls.buildOpenCodeModelPaletteItems('model', opts), load: () => agentControls.loadOpenCodeModelsForPalette(true), set: persistOpenCodeModelSelection, current: () => String(S.opencodeModel || '').toLowerCase() },
             codex: { build: (opts) => agentControls.buildCodexModelPaletteItems('model', opts), load: () => agentControls.loadCodexModelsForPalette(true), set: persistCodexModelSelection, current: () => String(S.codexModel || '').toLowerCase() },
             claude: { build: (opts) => agentControls.buildClaudeModelPaletteItems('model', opts), load: () => agentControls.loadClaudeModelsForPalette(true), set: persistClaudeModelSelection, current: () => String(S.claudeModel || '').toLowerCase() },
-        }[id];
+        }[id] || (agentControls.harnessPins(id) && agentControls.harnessPins(id).menuSpec().models);
         const efforts = {
             muse: { build: () => agentControls.buildMuseEffortPaletteItems('effort'), load: () => agentControls.loadMuseEffortForPalette(), set: persistMuseEffortSelection, current: () => String(S.museEffort || '').toLowerCase(), repaint: repaintMuseUserBadges },
             hermes: { build: () => agentControls.buildHermesEffortPaletteItems('effort'), load: () => agentControls.loadHermesEffortForPalette(), set: persistHermesEffortSelection, current: () => String(S.hermesEffort || '').toLowerCase(), repaint: repaintHermesUserBadges },
             opencode: { build: () => agentControls.buildOpenCodeEffortPaletteItems('effort'), load: () => agentControls.loadOpenCodeEffortForPalette(), set: persistOpenCodeEffortSelection, current: () => String(S.opencodeEffort || '').toLowerCase(), repaint: repaintOpenCodeUserBadges },
             codex: { build: () => agentControls.buildCodexEffortPaletteItems('effort'), load: () => agentControls.loadCodexEffortForPalette(), set: persistCodexEffortSelection, current: () => String(S.codexEffort || '').toLowerCase(), repaint: repaintCodexUserBadges },
             claude: { build: () => agentControls.buildClaudeEffortPaletteItems('effort'), load: () => agentControls.loadClaudeEffortForPalette(), set: persistClaudeEffortSelection, current: () => String(S.claudeEffort || '').toLowerCase(), repaint: repaintClaudeUserBadges },
-        }[id];
+        }[id] || (agentControls.harnessPins(id) && agentControls.harnessPins(id).menuSpec().efforts);
         if (!models && !efforts) return null;
         return { models: models || null, efforts: efforts || null, billing: agentBilling.spec(id) };
     }
@@ -4494,7 +4541,7 @@
             renderSlashChips('chat', document.getElementById('chatInput'));
             return null;
         }
-        const stickyCmd = CuttleChatComposer.stickyCommandAfterSend({ message }, {
+        const stickyCmd = CuttleChatComposer.stickyCommandAfterSend({ message, chips: slashCtx.chat.chips.concat(slashCtx.welcome.chips) }, {
             stickyOf: getStickySlashCommandFromMessage,
         });
         if (!stickyCmd) {
@@ -4626,6 +4673,7 @@
         seedOpenCodeSupplementFromSessionData(data, sessionId);
         seedCodexSupplementFromSessionData(data, sessionId);
         seedClaudeSupplementFromSessionData(data, sessionId);
+        agentControls.seedHarnessPinsFromSessionData(data, sessionId);
         applySharedComposerSelection(data, sessionId);
     }
 
@@ -5135,6 +5183,7 @@
                 effort
             );
         }
+        if (agentControls.harnessPins(id)) return agentControls.harnessPins(id).badgeLabel();
         return '';
     }
 
@@ -5148,6 +5197,7 @@
         if (id === 'opencode') return /^opencode$/i.test(lab);
         if (id === 'codex') return /^codex$/i.test(lab);
         if (id === 'claude') return /^claude(\s+code)?$/i.test(lab);
+        if (agentControls.harnessPins(id)) return agentControls.harnessPins(id).isBareLabel(lab);
         return false;
     }
 
@@ -5186,7 +5236,8 @@
                 || paletteCat === 'hermes-model' || paletteCat === 'hermes-effort' || paletteCat === 'hermes-cmd'
                 || paletteCat === 'opencode-model' || paletteCat === 'opencode-effort' || paletteCat === 'opencode-cmd'
                 || paletteCat === 'codex-model' || paletteCat === 'codex-effort' || paletteCat === 'codex-cmd'
-                || paletteCat === 'claude-model' || paletteCat === 'claude-effort' || paletteCat === 'claude-cmd')
+                || paletteCat === 'claude-model' || paletteCat === 'claude-effort' || paletteCat === 'claude-cmd'
+                || /^antigravity-(model|effort|cmd)$/.test(paletteCat))
                 ? paletteCat
                 : (id || paletteCat || c.category || 'command');
             if (label === String(c.label || '').trim() && nextCat === c.category) return c;
@@ -5388,7 +5439,7 @@
                 slashPaletteSupplement.claudeModel,
                 slashPaletteSupplement.claudeEffort
             );
-            return slash;
+            return agentControls.enrichHarnessPinsSlash(slash);
         }
         const preferred = (slashPaletteSupplement.preferredModel || 'auto').trim() || 'auto';
         // Synthetic run carries the requested model so enrichSlashCommandWithCursorRun
@@ -6169,7 +6220,7 @@
             ? currentTypingSlashMeta()
             : null;
         const chips = meta && meta.chips ? collapseCursorSlashChips(meta.chips) : [];
-        const html = messageHeaderBadgesHtml(chips, false, currentProject);
+        const html = messageHeaderBadgesHtml(chips, false, currentProject, true);
         ['typing-indicator', 'typing-indicator-remote'].forEach((id) => {
             const el = document.getElementById(id);
             if (!el) return;
@@ -6193,7 +6244,7 @@
      * Keep the in-memory auth session + last /messages hydrate in sync with the
      * chip the user just picked. reconcileChatProject() prefers
      * lastHydratedSessionProject over local prefs; leaving it stale (e.g. Cuttle
-     * from open) made /project → Escape Purgatory snap back on send/reload.
+     * from open) made /project → Demo Game snap back on send/reload.
      */
     function rememberSessionProject(sessionId, proj) {
         if (sessionId == null || sessionId === '') return;
@@ -6457,7 +6508,7 @@
             reconcileChatProject();
         }
         // Always re-bind path from the live projects list when we have an id/name.
-        // Stale localStorage often keeps name "Escape Purgatory" with path Cuttle.
+        // Stale localStorage often keeps name "Demo Game" with path Cuttle.
         const rebound = CuttleChatProject.rebindProjectToRegistry(currentProject, projects);
         assignChatProject(rebound.proj);
         if (rebound.changed && session.current()) persistProjectForCurrentSession();
@@ -7080,6 +7131,8 @@
             ensureLocalTypingIndicator(statusLabel);
             try { subagentLaunchers.paintLive(); } catch (_) {}
         }
+        try { liveThinking.sync(live, sessionId); } catch (_) {}
+        cacheLiveSteers(live, sessionId);
 
         if (live.status && (isLoadingThisSession() || document.getElementById('typing-indicator-remote'))) {
             updateTypingStatus(live.status);
@@ -7716,6 +7769,7 @@
         const disclosure = el.querySelector('.supervised-activity-disclosure, .supervised-activity-card');
         if (disclosure) wireSupervisedActivityCard(disclosure);
         try { subagentLaunchers.mountForMessage(el, msg.role, opts); } catch (_) {}
+        replyThreads.stampSteer(el, msg);
         if (changed && notifyTerminal && opts.supervised_terminal) {
             showSupervisedJumpNotification({
                 task_id: opts.supervised_task_id,
@@ -8403,7 +8457,11 @@
                     4000
                 );
                 const data = await response.json();
-                if (data && data.success) return data;
+                if (data && data.success) {
+                    try { liveThinking.sync(data, sessionId); } catch (_) {}
+                    cacheLiveSteers(data, sessionId);
+                    return data;
+                }
             } catch (_) {}
             return null;
         })().finally(() => {
@@ -8637,6 +8695,7 @@
                             } else {
                                 claimed.dataset.messageId = String(mid);
                                 claimed.dataset.rawContent = String(msg.content || '');
+                                replyThreads.stampSteer(claimed, msg);
                             }
                         }
                         continue;
@@ -10976,6 +11035,7 @@
         if (role === 'user' && opts.steered) {
             messageDiv.classList.add('is-steered');
             if (opts.steer_idle) messageDiv.dataset.steerIdle = '1'; // new message, not a thread reply
+            if (opts.steer) messageDiv.__cuttleSteer = opts.steer; // receipt data (no markup); chat_threads.js mounts it in Studio only
         }
         if (
             role === 'assistant'
@@ -11012,7 +11072,7 @@
         }
         const ts = resolveMessageTimestamp(opts.timestamp);
         const timeAgo = formatTimeAgo(ts);
-        const timeLabel = timeAgo === 'now' ? 'Just now' : 'Sent ' + timeAgo + ' ago';
+        const timeLabel = CuttleChatMessages.messageTimestampLabel(timeAgo);
         const sc = normalizeSlashCommandStored(opts.slash_command || (role === 'assistant' ? CuttleChatMessages.routingAgentSlash(opts.routing_badge) : null));
         let project = projectFromMessageOpts(opts, projects, currentProject);
         if (!project && opts.message_id == null && currentProject) {
@@ -11043,7 +11103,7 @@
             const baseSc = hasStoredChips
                 ? sc
                 : (parentSpeaker ? null : slashCommandMetaFromUserMessage(content));
-            const userSc = hasStoredChips || parentSpeaker ? baseSc : enrichSlashCommandWithClaudeModel(enrichSlashCommandWithCodexModel(
+            const userSc = hasStoredChips || parentSpeaker ? baseSc : agentControls.enrichHarnessPinsSlash(enrichSlashCommandWithClaudeModel(enrichSlashCommandWithCodexModel(
                 enrichSlashCommandWithOpenCodeModel(
                     enrichSlashCommandWithHermesModel(
                         enrichSlashCommandWithMuseModel(
@@ -11059,7 +11119,7 @@
                 ),
                 slashPaletteSupplement.codexModel,
                 slashPaletteSupplement.codexEffort
-            ), slashPaletteSupplement.claudeModel, slashPaletteSupplement.claudeEffort);
+            ), slashPaletteSupplement.claudeModel, slashPaletteSupplement.claudeEffort));
             const chips = (userSc && userSc.chips)
                 ? normalizeAgentSlashChips(userSc.chips, null)
                 : [];
@@ -11252,7 +11312,7 @@
             `<a class="message-query-log-link message-icon-btn is-pending" href="/query_log.html" ` +
             `data-query-pending="1" aria-disabled="true" ` +
             `title="Query log appears once the agent starts working">${QUERY_LOG_ICON}</a>` +
-            `</div></div>`
+            `${getShareRefButtonHtml()}</div></div>`
         );
     }
 
@@ -11370,6 +11430,15 @@
         copyText: copyTextToClipboard,
     });
 
+    // Live steers of the chat on screen (steer receipts in chat_threads.js), from the latest live-status payload.
+    // Called from the live-status pollers, which run after this block has been evaluated.
+    let liveSteerCache = null;
+    function cacheLiveSteers(live, sid) {
+        liveSteerCache = { sessionId: String(sid), steers: Array.isArray(live.steers) ? live.steers : [], turnId: String(live.query_id || '') };
+        try { replyThreads.refreshReceipts(); } catch (_) {}
+    }
+    const liveSteersNow = () => (liveSteerCache && sessionIdsEqual(liveSteerCache.sessionId, session.current()) ? liveSteerCache : null);
+
     // Steers, follow-ups and sub-agent replies fold under their turn's bubble
     // (chat_threads.js; experimental `chat_reply_threads`, default on).
     const replyThreads = CuttleChatThreads.create({
@@ -11377,6 +11446,9 @@
         sessionId: () => session.current(), storage: localStorage, escapeHtml: escapeHtmlInline,
         renderHandleLink: renderChatHandleLink, avatarHtml: profileAvatarInnerHtml,
         isFollowingLatest: () => transcriptNav.isFollowingLatest(), revealTop: (el) => transcriptNav.revealMessageTop(el),
+        isStudio: () => !!(window.CuttleChatDisplay && CuttleChatDisplay.isStudio()),
+        liveSteers: () => (liveSteersNow() || {}).steers || null,
+        liveTurnId: () => (liveSteersNow() || {}).turnId || '',
     });
     replyThreads.start(true);
     replyThreads.syncFlag((u, o) => fetch(u, o));
@@ -11518,7 +11590,7 @@
             const chips = slashMeta && slashMeta.chips
                 ? collapseCursorSlashChips(slashMeta.chips)
                 : [];
-            return messageHeaderBadgesHtml(chips, false, currentProject);
+            return messageHeaderBadgesHtml(chips, false, currentProject, true);
         })();
         
         typingDiv.innerHTML = `
@@ -11806,6 +11878,7 @@
                 chip.classList.add('slash-command-chip--error');
                 chip.setAttribute('aria-label', 'Stopped command: ' + (chip.dataset.fullLabel || chip.textContent));
             });
+            globalThis.CuttleWorkPanel && globalThis.CuttleWorkPanel.markStopped(bubble);
             const link = bubble.querySelector('.message-query-log-link');
             if (link) {
                 // Stop can beat query-id creation: retain a usable index link.
@@ -12401,6 +12474,8 @@
     // Initialize on page load
     document.addEventListener('DOMContentLoaded', function() {
         LOG('DOMContentLoaded: Chat page initializing');
+        // Refresh the cached chat_studio_display flag so Studio can turn on (chat_display.js).
+        window.CuttleChatDisplay && (CuttleChatDisplay.reloadOnFlip(), CuttleChatDisplay.syncFlag());
         CuttleUsageLive.start(formatMessage);
 
         // Initialize theme
@@ -12651,7 +12726,7 @@
                 const ts = parseInt(el.dataset.ts, 10);
                 if (!ts) return;
                 const ago = formatTimeAgo(ts);
-                el.textContent = ago === 'now' ? 'Just now' : 'Sent ' + ago + ' ago';
+                el.textContent = CuttleChatMessages.messageTimestampLabel(ago);
             });
             refreshHistoryItemTimes();
         }, 60000);

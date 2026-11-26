@@ -34,17 +34,19 @@ and multi-pane chat SSE — browser will not reproduce those freezes.
 single-instance lock, so stop only the Host Electron UI first. Never kill the
 daemon or Flask; they keep running. Tell the user their window will relaunch.
 
+Close the Cuttle Host window using its normal UI controls, preserving the daemon.
+Confirm it has closed before launching a debug instance. Do not stop every
+Electron process: other applications may use Electron too.
+
 Linux (this repo's launcher forwards extra args):
 
 ```bash
-pkill -f -- '--class=CuttleHost' || true
 setsid .cuttle/scripts/launch-cuttle-host.sh --remote-debugging-port=9333 >/dev/null 2>&1 &
 ```
 
 Windows:
 
 ```powershell
-Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Process -FilePath ".\electron\node_modules\electron\dist\electron.exe" `
   -ArgumentList ".","--remote-debugging-port=9333" -WorkingDirectory ".\electron"
 ```

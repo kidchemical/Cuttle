@@ -83,6 +83,12 @@ out.stickKeep = A.stickyCommandAfterSend({ message: '/cursor' }, { stickyOf });
 out.stickPrompt = A.stickyCommandAfterSend({ message: '/cursor fix it' }, { stickyOf });
 out.stickNone = A.stickyCommandAfterSend({ message: 'hello' }, { stickyOf });
 out.stickNoDep = A.stickyCommandAfterSend({ message: '/cursor' }, null);
+// misordered/unknown head keeps the staged badge (CH-002602-8)
+out.stickFromChips = A.stickyCommandAfterSend({ message: '/use-subscription /claude hi',
+  chips: [{ prefix: '/use-subscription ' }, { prefix: '/claude' }] }, { stickyOf });
+const agentId = (c) => (/^\\/(cursor|codex|claude)\\b/i.exec(String(c.prefix || '')) || [])[1] || '';
+out.agentLeads = A.composeMessageWithSlashChip({ body: 'hi',
+  chips: [{ prefix: '/use-subscription ' }, { prefix: '/claude ' }] }, { agentId });
 // send-dispatch plan
 const P = (o) => A.composerSendPlan(Object.assign(
   { guardSet: false, generating: false, generatingBeforeHeal: false, sendable: true,
@@ -176,6 +182,8 @@ def test_control_lane_text_and_sticky_resolution():
     assert res["stickKeep"] == {"prefix": "/cursor ", "label": "cursor"}
     assert res["stickPrompt"] == {"prefix": "/cursor ", "label": "cursor"}
     assert res["stickNone"] is None  # page clears all chips
+    assert res["stickFromChips"] == {"prefix": "/claude ", "label": "claude"}
+    assert res["agentLeads"] == "/claude /use-subscription hi"
     assert res["stickNoDep"] is None
 
 

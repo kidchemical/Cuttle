@@ -300,6 +300,16 @@ def pipeline_fallback_result(message: str = "") -> Dict[str, Any]:
     token = (str(message or "").strip().split() or [""])[0]
     if token.startswith("/") and len(token) > 1:
         shown = token if len(token) <= 60 else token[:57] + "…"
+        if token.lower() in ("/use-api", "/use-subscription"):
+            return {
+                'success': False,
+                'type': 'unknown_command',
+                'error': 'unknown_command',
+                'response': (
+                    f'Nothing ran: `{shown}` goes after the agent — `/claude {shown}` pins this chat, '
+                    f'`/claude {shown} …` bills one message.'
+                ),
+            }
         return {
             'success': False,
             'type': 'unknown_command',
@@ -1118,7 +1128,7 @@ _HELP_TEXT = """**🦑 Cuttle Web Chat Commands**
 **Agent CLI commands:**
 • `/claude "prompt"` - Claude Code CLI
 • `/opencode "prompt"` - OpenCode CLI (`opencode run`, resumes per chat)
-• `/antigravity "prompt"` - Google Antigravity CLI (`agy`, auto-installs, resumes per chat)
+• `/antigravity "prompt"` - Google Antigravity CLI (`agy -p`, resumes per chat; `/antigravity model|effort|usage`)
 • `/cursor "prompt"` - Cursor Agent CLI (`agent -p`)
 • `/codex "prompt"` - OpenAI Codex CLI (`codex exec`, resumes per chat)
 • `/muse "prompt"` - Meta Muse Code CLI (`muse exec`, resumes per chat; native Windows / macOS / Linux)
@@ -1476,6 +1486,7 @@ def build_harness_stream_turn(
     imports the entry module.
     """
     from api.chat_coordinator import PreparedAgentTurn, StreamTurnIO
+    from api.chat_turn_persist import discard_steered_user_receipt
 
     def _format_shortcut(kind, sel):
         if kind == "harness_empty_prompt":
@@ -1494,7 +1505,10 @@ def build_harness_stream_turn(
         ),
         notify_mobile=lambda b: notify_mobile(session_id, b),
         format_shortcut=_format_shortcut,
-        persist_steered_user=lambda meta: (persist_user_turn(session_id, meta) if auth_user else None),
+        # No auth user → no row is written, so the steer receipt has nothing to
+        # live on: drop it instead of retaining the turn's tracker forever.
+        persist_steered_user=lambda meta: (persist_user_turn(session_id, meta) if auth_user
+                                           else discard_steered_user_receipt(meta)),
     )
     prepared = PreparedAgentTurn(
         message=message_content, session_id=session_id,
@@ -1533,6 +1547,7 @@ def run_harness_sync_turn(
         PreparedAgentTurn,
         submit_agent_turn,
     )
+    from api.chat_turn_persist import discard_steered_user_receipt
 
     def _guarded_saver():
         saver = make_saver(session_id, project_path=project_path)
@@ -1558,7 +1573,10 @@ def run_harness_sync_turn(
         should_save=lambda b: bool(auth_user and result_kept_for_history(b)),
         notify_mobile=lambda b: notify_mobile(session_id, b),
         format_shortcut=_unreachable,
-        persist_steered_user=lambda meta: (persist_user_turn(session_id, meta) if auth_user else None),
+        # No auth user → no row is written, so the steer receipt has nothing to
+        # live on: drop it instead of retaining the turn's tracker forever.
+        persist_steered_user=lambda meta: (persist_user_turn(session_id, meta) if auth_user
+                                           else discard_steered_user_receipt(meta)),
     )
     out = submit_agent_turn(
         PreparedAgentTurn(

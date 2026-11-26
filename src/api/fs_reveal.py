@@ -1,4 +1,4 @@
-"""Open local files with desktop associations or reveal them in the file manager."""
+"""Open local files and folders with desktop associations or reveal them in the file manager."""
 from __future__ import annotations
 
 import os
@@ -60,6 +60,7 @@ def _launch_default_app(argv: list[str]) -> None:
     proc = subprocess.Popen(
         argv, env=desktop_launch_environment(), stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE, text=True, close_fds=True,
+        encoding="utf-8", errors="replace",
     )
     try:
         _, stderr = proc.communicate(timeout=2)
@@ -158,19 +159,22 @@ def reveal_in_file_manager(url_or_path: str) -> Dict[str, Any]:
 
 
 def open_in_default_app(url_or_path: str) -> Dict[str, Any]:
-    """Open a local file with the operating system's registered application."""
+    """Open a local file with its registered application, or a folder in the file manager."""
     path = parse_local_path(url_or_path)
     p = Path(path)
-    if not p.exists() or not p.is_file():
-        raise FileNotFoundError(f"file does not exist: {path}")
+    is_dir = p.is_dir()
+    if not is_dir and not p.is_file():
+        raise FileNotFoundError(f"path does not exist: {path}")
     resolved = str(p.resolve(strict=True))
+    # A folder goes through the same association lookup as a file: that is the
+    # user's file manager (Explorer on Windows, e.g. Nemo via inode/directory on Linux).
     if sys.platform == "win32":
         os.startfile(resolved)  # type: ignore[attr-defined]
     elif sys.platform == "darwin":
         _launch_default_app(["open", resolved])
     else:
         _launch_default_app(["xdg-open", resolved])
-    return {"path": resolved, "platform": sys.platform}
+    return {"path": resolved, "kind": "directory" if is_dir else "file", "platform": sys.platform}
 
 
 def reveal_path_or_error(url_or_path: str) -> tuple[Optional[Dict[str, Any]], Optional[str], int]:

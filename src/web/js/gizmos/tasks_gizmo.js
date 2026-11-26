@@ -1,4 +1,14 @@
-/* Tasks gizmos — scoped composer dock, controlled through the Gizmos API. */
+/* Tasks gizmos — scoped composer dock, controlled through the Gizmos API.
+ *
+ * Also the one Tasks row renderer: `taskRowHtml` is shared by this dock and the
+ * Studio work panel (chat_work_panel.js). Pure apart from `create`.
+ *
+ * Studio (L4): an item with `in_progress` gets `is-in-progress` (the glowing,
+ * unticked checkbox); an `owner` renders as dot + name through `ownerHtml`
+ * (default: escaped label). A list shown by a work panel in the chat is hidden
+ * here while Studio is on, and `cuttle-work-lists-changed` tells the panels
+ * when the lists change. Classic markup is unchanged: none of the Studio
+ * hooks add anything when `showOwner` is off. */
 (function (global) {
     'use strict';
 
@@ -24,12 +34,91 @@
         return { done: done, total: total };
     }
 
+    function displayTitle(title, projectName) {
+        title = String(title || 'Tasks');
+        if (!projectName) return title;
+        var prefix = projectName + ':';
+        var trimmed = title.trim();
+        if (!trimmed.toLowerCase().startsWith(prefix.toLowerCase())) return title;
+        return trimmed.slice(prefix.length).trimStart() || title;
+    }
+
+    /** Escaped owner label; the work panel swaps in dot + name (see chat_work_panel.js). */
+    function defaultOwnerHtml(owner) {
+        return '<span class="chat-widget-task-owner">' + esc(owner && owner.label) + '</span>';
+    }
+
+    /**
+     * One Tasks item as a list row. `opts`: shared (editable checkbox), studio
+     * (Studio hooks: glowing `is-in-progress` class and the owner under the text),
+     * ownerHtml(owner) → html, childrenHtml (nested list, already rendered).
+     * `short` (the in-chat work panel) shows the item's short `label` when it
+     * has one, and the full text as the app tooltip; the dock keeps the full text.
+     * With `studio` off the markup is the Classic row, byte for byte. Pure.
+     */
+    function taskRowHtml(item, opts) {
+        opts = opts || {};
+        var id = esc(item.id || '');
+        var text = esc(item.text || '');
+        var done = !!item.done;
+        var studio = !!opts.studio;
+        var inProgress = studio && !done && item.in_progress === true;
+        var shared = !!opts.shared;
+        var disabled = shared ? '' : ' disabled';
+        var textHtml = '<div class="chat-widget-task-text">' + text + '</div>';
+        var body = textHtml;
+        if (opts.short) {
+            textHtml = '<div class="chat-widget-task-text" data-tooltip="' + text + '">' + (item.label ? esc(item.label) : text) + '</div>';
+        }
+        if (studio) {
+            // Studio: the owner sits on the text's line, right-aligned (dot + name, muted).
+            var owner = (item.owner && typeof item.owner === 'object')
+                ? '<span class="chat-widget-task-owner">'
+                    + (typeof opts.ownerHtml === 'function' ? opts.ownerHtml(item.owner) : defaultOwnerHtml(item.owner))
+                    + '</span>'
+                : '';
+            body = '<div class="chat-widget-task-line">' + textHtml + owner + '</div>';
+        }
+        return (
+            '<li class="chat-widget-task' + (done ? ' is-done' : '') + (inProgress ? ' is-in-progress' : '')
+            + '" data-item-id="' + id + '">' +
+            '<input type="checkbox" ' + (done ? 'checked ' : '') + disabled +
+            ' aria-label="' + (shared ? 'Toggle task' : 'Agent-managed task') + '"/>' +
+            '<div style="flex:1;min-width:0">' +
+            body +
+            (opts.childrenHtml || '') +
+            '</div></li>'
+        );
+    }
+
+    /** Lists as the page last saw them (tasks only), for the work panels. */
+    var latestLists = [];
+    var lastListsSig = '';
+
+    /** Work panels repaint from this when the lists change (chat_subagent_launchers.js). */
+    function notifyPanels() {
+        if (typeof document === 'undefined' || !document.dispatchEvent || typeof CustomEvent !== 'function') return;
+        document.dispatchEvent(new CustomEvent('cuttle-work-lists-changed'));
+    }
+
+    function activeLists() {
+        return latestLists.slice();
+    }
+
     function create(options) {
         options = options || {};
         var root = options.root || document;
         var getSessionId = options.getSessionId || function () { return null; };
         var getProjectPath = options.getProjectPath || function () { return ''; };
+        var getProjectName = options.getProjectName || function () { return ''; };
         var fetchFn = options.fetchFn || fetch;
+        var isStudio = options.isStudio || function () {
+            return !!(global.CuttleChatDisplay && global.CuttleChatDisplay.isStudio());
+        };
+        var ownerHtml = options.ownerHtml || function (owner) {
+            var panel = global.CuttleWorkPanel;
+            return panel && typeof panel.ownerHtml === 'function' ? panel.ownerHtml(owner) : defaultOwnerHtml(owner);
+        };
         var navigate = options.navigate || function (page) {
             if (global.parent && global.parent !== global) global.parent.postMessage({ type: 'cuttle-navigate', page: page }, '*');
             else global.location.assign(page);
@@ -88,45 +177,66 @@
             return String(w.session_id || '') !== sid;
         }
 
-        function renderTaskItems(items, shared) {
+        function renderTaskItems(items, shared, studio) {
             if (!items || !items.length) {
                 return '<li class="chat-widget-task"><span class="chat-widget-task-text">(empty)</span></li>';
             }
             return items.map(function (item) {
-                var id = esc(item.id || '');
-                var text = esc(item.text || '');
-                var done = !!item.done;
                 var kids = item.children || [];
                 var nested = kids.length
-                    ? '<ul class="chat-widget-task-list">' + renderTaskItems(kids, shared) + '</ul>'
+                    ? '<ul class="chat-widget-task-list">' + renderTaskItems(kids, shared, studio) + '</ul>'
                     : '';
-                var disabled = shared ? '' : ' disabled';
-                return (
-                    '<li class="chat-widget-task' + (done ? ' is-done' : '') + '" data-item-id="' + id + '">' +
-                    '<input type="checkbox" ' + (done ? 'checked ' : '') + disabled +
-                    ' aria-label="' + (shared ? 'Toggle task' : 'Agent-managed task') + '"/>' +
-                    '<div style="flex:1;min-width:0">' +
-                    '<div class="chat-widget-task-text">' + text + '</div>' +
-                    nested +
-                    '</div></li>'
-                );
+                return taskRowHtml(item, { shared: shared, studio: studio, ownerHtml: ownerHtml, childrenHtml: nested });
             }).join('');
         }
 
-        function render() {
+        /** Tasks lists a work panel in this page already shows (Studio hides their dock card). */
+        function panelShownIds() {
+            // No prototype: a list id such as "constructor" must not read as present.
+            var ids = Object.create(null);
+            var scope = (root && root.querySelectorAll) ? root : document;
+            if (!scope || !scope.querySelectorAll) return ids;
+            scope.querySelectorAll('.work-panel .work-list[data-list-id]').forEach(function (el) {
+                ids[el.getAttribute('data-list-id')] = true;
+            });
+            return ids;
+        }
+
+        function render(focusWidgetId) {
             var el = ensureStrip();
-            if (!el) return;
+            var studio = !!isStudio();
             var tasks = (widgets || []).filter(function (w) {
                 return w && w.type === 'tasks' && (w.status || 'active') === 'active';
             });
-            if (!tasks.length) {
-                el.hidden = true;
-                if (lastRenderedHtml) el.innerHTML = '';
-                lastRenderedHtml = '';
-                return;
+            latestLists = tasks;
+            // Work panels repaint only when the lists really changed (not on every poll).
+            var listsSig = JSON.stringify(tasks);
+            if (listsSig !== lastListsSig) {
+                lastListsSig = listsSig;
+                notifyPanels();
             }
+            // Studio: a list the turn's work panel already shows is not repeated in the
+            // dock. A shared list stays, because the panel is read-only and the dock is
+            // where the user ticks its items. Classic never filters.
+            var dock = tasks;
+            if (studio) {
+                var inPanel = panelShownIds();
+                dock = tasks.filter(function (w) {
+                    if (String(w.edit_mode || 'agent').toLowerCase() === 'shared') return true;
+                    return !inPanel[String(w.id)];
+                });
+            }
+            if (el) {
+                if (!dock.length) {
+                    el.hidden = true;
+                    if (lastRenderedHtml) el.innerHTML = '';
+                    lastRenderedHtml = '';
+                }
+            }
+            if (!el || !dock.length) return;
             el.hidden = false;
-            var html = tasks.map(function (w) {
+            var projectName = String(getProjectName() || '').trim();
+            var html = dock.map(function (w) {
                 var payload = w.payload || {};
                 var items = payload.items || [];
                 var counts = countTasks(items);
@@ -138,41 +248,32 @@
                     ? 'Linked to this chat from another chat. Manage its chats in the Tasks app.'
                     : 'Pin to this chat or whole project';
                 var editLabel = shared ? 'Shared' : 'Agent';
-                var title = esc(w.title || 'Tasks');
+                var title = esc(displayTitle(w.title, linkedHere ? '' : projectName));
                 var desc = String(w.description || '').trim();
-                var infoBtn = desc
-                    ? (
-                        '<button type="button" class="chat-widget-info" data-widget-info ' +
-                        'aria-label="About this list" data-tooltip="' + esc(desc) + '">' +
-                        '<span class="chat-widget-info-mark" aria-hidden="true">i</span>' +
-                        '</button>'
-                    )
-                    : '';
                 return (
                     '<div class="chat-widget' + (isOpen ? ' is-expanded' : '') +
                     (shared ? '' : ' is-agent-managed') +
                     '" data-widget-id="' + esc(w.id) + '">' +
-                    '<div class="chat-widget-header">' +
                     '<button type="button" class="chat-widget-toggle" data-widget-toggle aria-expanded="' + (isOpen ? 'true' : 'false') + '">' +
                     '<span class="chat-widget-chevron" aria-hidden="true"></span>' +
                     '<span class="chat-widget-title">' + title + '</span>' +
                     '<span class="chat-widget-meta">' + counts.done + '/' + counts.total + '</span>' +
                     '</button>' +
-                    infoBtn +
+                    '<div class="chat-widget-body" ' + (isOpen ? '' : 'hidden') + '>' +
+                    '<div class="chat-widget-actions">' +
                     '<button type="button" class="chat-widget-scope" data-widget-edit data-tooltip="Agent-managed (default) or Shared (you can check boxes)">' +
                     editLabel +
                     '</button>' +
                     '<button type="button" class="chat-widget-scope" data-widget-scope data-tooltip="' + esc(scopeTip) + '">' +
                     scopeLabel +
                     '</button>' +
-                    '<button type="button" class="chat-widget-archive" data-widget-manage data-tooltip="Open in the Tasks app" aria-label="Open in the Tasks app">↗</button>' +
-                    '<button type="button" class="chat-widget-archive" data-widget-archive data-tooltip="Archive">✕</button>' +
+                    '<button type="button" class="chat-widget-action" data-widget-manage>Open in Tasks</button>' +
+                    '<button type="button" class="chat-widget-action" data-widget-archive>Archive</button>' +
                     '</div>' +
-                    '<div class="chat-widget-body" ' + (isOpen ? '' : 'hidden') + '>' +
                     (desc
                         ? '<p class="chat-widget-desc">' + esc(desc) + '</p>'
                         : '') +
-                    '<ul class="chat-widget-task-list">' + renderTaskItems(items, shared) + '</ul>' +
+                    '<ul class="chat-widget-task-list">' + renderTaskItems(items, shared, studio) + '</ul>' +
                     '</div></div>'
                 );
             }).join('');
@@ -191,11 +292,15 @@
             el.innerHTML = html;
             lastRenderedHtml = html;
             el.querySelectorAll('[data-widget-id]').forEach(function (card) {
-                var position = positions.get(card.getAttribute('data-widget-id'));
+                var id = card.getAttribute('data-widget-id');
+                var position = positions.get(id);
                 var body = card.querySelector('.chat-widget-body');
                 if (position && body) {
                     body.scrollTop = position.top;
                     body.scrollLeft = position.left;
+                }
+                if (id === focusWidgetId) {
+                    card.querySelector('[data-widget-toggle]').focus({ preventScroll: true });
                 }
             });
             el.scrollTop = top;
@@ -309,13 +414,7 @@
                 var wid = card.getAttribute('data-widget-id');
                 if (t.closest('[data-widget-toggle]')) {
                     expanded[wid] = !expanded[wid];
-                    render();
-                    return;
-                }
-                if (t.closest('[data-widget-info]')) {
-                    // Keep list collapsed/expanded as-is; tooltip is CSS/hover.
-                    ev.preventDefault();
-                    ev.stopPropagation();
+                    render(wid);
                     return;
                 }
                 if (t.closest('[data-widget-edit]')) {
@@ -381,6 +480,15 @@
 
         bind();
 
+        // A work panel mounted or removed in the chat (Studio) changes which lists the dock shows.
+        if (typeof document !== 'undefined' && document.addEventListener) {
+            document.addEventListener('cuttle-work-panels-changed', function () { render(); });
+        }
+        // Studio switched on or off: the owner line and the panel hiding follow at once.
+        if (!options.isStudio && global.CuttleChatDisplay && typeof global.CuttleChatDisplay.onChange === 'function') {
+            global.CuttleChatDisplay.onChange(function () { render(); });
+        }
+
         return {
             refresh: refresh,
             onRevision: onRevision,
@@ -390,5 +498,7 @@
         };
     }
 
-    global.CuttleTaskGizmos = { create: create };
+    var api = { create: create, taskRowHtml: taskRowHtml, countTasks: countTasks, activeLists: activeLists };
+    global.CuttleTaskGizmos = api;
+    if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : this);

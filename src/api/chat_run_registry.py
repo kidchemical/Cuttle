@@ -551,7 +551,10 @@ def end_run(session_id, query_id: Optional[str] = None, proc=None) -> None:
             # The turn is over and its own CLI has exited; whatever is still
             # alive detached on purpose (e.g. VBCSCompiler). Not work in flight.
             _detach_leftovers(entry, session_id)
-        if not entry["procs"] and not entry.get("pids"):
+        # A turn without a local process (it runs on an execution node, or has
+        # not spawned yet) still owns this entry's cancel event: a superseded
+        # turn ending must not unregister the one that replaced it.
+        if not entry["procs"] and not entry.get("pids") and not entry["query_ids"]:
             for k in keys:
                 _runs.pop(k, None)
     try:
@@ -590,9 +593,11 @@ def has_live_process(session_id) -> bool:
             return False
         _prune_dead_procs(entry)
         if not entry["procs"] and not entry.get("pids"):
-            # No live procs — drop the empty entry so cancel/history stay accurate.
-            for k in keys:
-                _runs.pop(k, None)
+            # No live procs — drop the empty entry so cancel/history stay accurate
+            # (kept while a turn is registered: Stop needs its cancel event).
+            if not entry.get("query_ids"):
+                for k in keys:
+                    _runs.pop(k, None)
             return False
         return True
 
@@ -610,9 +615,10 @@ def active_run_session_ids() -> List[str]:
             _prune_dead_procs(entry)
             if not entry["procs"] and not entry.get("pids"):
                 # Sweep empty aliases for this entry
-                for kk, vv in list(_runs.items()):
-                    if vv is entry:
-                        _runs.pop(kk, None)
+                if not entry.get("query_ids"):
+                    for kk, vv in list(_runs.items()):
+                        if vv is entry:
+                            _runs.pop(kk, None)
                 continue
             # Registry stores every alias (478 / db_session_478 / CH-000478).
             # Collapse to one canonical id or restart drain double-counts.
@@ -693,6 +699,7 @@ def kill_pid_tree(pid, keep=()) -> bool:
                 capture_output=True,
                 text=True,
                 timeout=15,
+                encoding="utf-8", errors="replace",
             )
             killed = True
         else:
@@ -723,6 +730,7 @@ def kill_pid_tree(pid, keep=()) -> bool:
                         capture_output=True,
                         text=True,
                         timeout=10,
+                        encoding="utf-8", errors="replace",
                     )
                 else:
                     os.kill(child_i, 9)

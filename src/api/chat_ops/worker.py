@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 
-from api.chat_ops import rules, service, store, transport
+from api.chat_ops import display_care, rules, service, store, transport
 
 _lock = threading.Lock()
 _thread = None
@@ -199,13 +199,16 @@ def undelivered_section(undelivered):
     return lines
 
 
-def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None, changes=None):
+CHECKIN_USER_MSG_CHARS = 400
+
+
+def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None, changes=None, system=None):
     """The check-in turn as markdown: it renders as a readable Cuttle bubble in the
     supervisor chat and reads as a brief to the agent. Full data: `status --json`."""
     handle = snap['handle']
-    # A UI-made supervisor chat has no history to pin its agent; the prefix does.
-    lines = [(f"/{cfg['agent']} " if cfg.get('agent') else '')
-             + f"**Supervision check-in for {handle}**: {_STATE_TEXT.get(snap['state'], snap['state'])}."]
+    # Check-ins never force a schedule-stored agent: dispatch pins them to the
+    # supervisor chat's own current agent via service.pin_to_chat_agent.
+    lines = [f"**Supervision check-in for {handle}**: {_STATE_TEXT.get(snap['state'], snap['state'])}."]
     where = [f"branch `{snap['branch']}`" if snap.get('branch') else '',
              f"checkout `{snap['execution_path']}`" if snap.get('execution_path') else '']
     if any(where):
@@ -229,6 +232,9 @@ def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None, chang
     if violations:
         lines += ['', '**Rule violations:**'] + [f'- {v}' for v in violations]
     lines += undelivered_section(snap.get('undelivered'))
+    if system:
+        from api.chat_ops.system_care import section
+        lines += section(system)
     if checkpoint:
         from api.chat_ops.checkpoints import checkin_section
         lines += checkin_section(*checkpoint)
@@ -252,6 +258,20 @@ def checkin_text(cfg, snap, violations, stalled_min=None, checkpoint=None, chang
                   'with the Cuttle briefing and recent transcript instead.']
     for w in snap.get('warnings') or []:
         lines.append(f'Note: {w}')
+    user_msgs = snap.get('recent_user_messages') or []
+    if user_msgs:
+        rendered = []
+        for msg in user_msgs[-5:]:
+            u_text = ' '.join(str(msg.get('text') or msg.get('content') or '').split())
+            if not u_text:
+                continue
+            if len(u_text) > CHECKIN_USER_MSG_CHARS:
+                u_text = u_text[:CHECKIN_USER_MSG_CHARS].rstrip() + '…'
+            tag = ' *(live steer)*' if msg.get('steered') else ''
+            rendered.append(f'- {u_text}{tag}')
+        if rendered:
+            lines += ['', f'**Recent user messages to {handle} (since its last reply — do not contradict these):**']
+            lines += rendered
     reply = (snap.get('latest_reply') or {})
     text = reply.get('text') or ''
     if text:
@@ -276,7 +296,7 @@ def _git_head(path):
         return ''
     try:
         out = subprocess.run(['git', '-C', path, 'rev-parse', 'HEAD'], capture_output=True,
-                             text=True, timeout=10)
+                             text=True, timeout=10, encoding="utf-8", errors="replace")
     except (OSError, subprocess.SubprocessError):
         return ''
     return out.stdout.strip() if out.returncode == 0 else ''
@@ -375,7 +395,8 @@ def _violations(op, branch, path, *, db=None, commands=()):
     forbidden = cfg.get('forbidden_branches') or []
     if forbidden and path:
         worktrees = rules.worktree_branches(path) if commands else {}
-        for sid, command in commands:
+        for sid, entry in commands:
+            command = entry[0] if isinstance(entry, tuple) else entry
             if rules.forbidden_command(command, forbidden, worktrees):
                 moved.append(f'CH-{sid:06d} ran a git write against a forbidden branch: `{command[:2000]}`')
         tips = rules.branch_tips(path, forbidden)
@@ -477,7 +498,7 @@ def _incident_supervisor(profile_id, db, row, cfg, snap, violations, checkpoint=
     if row.get('project_path'):
         db.set_session_project(chat, uid, project_id=row.get('project_id'),
                                project_name=row.get('project_name'), project_path=row.get('project_path'))
-    text = checkin_text({**cfg, 'agent': agent}, snap, violations, checkpoint=checkpoint)
+    text = f'/{agent} ' + checkin_text(cfg, snap, violations, checkpoint=checkpoint)
     payload = {'text': text}
     if model or effort:
         payload['agent_pins'] = {agent: {'model': model, 'effort': effort}}
@@ -551,8 +572,19 @@ def guard_check(op, db=None, request=None, *, trigger='', commands=()):
         return False  # already raised; the interval check repeats it
     snap = service.snapshot(row['id'], actor, db=db, request=request or transport.request,
                             task_pick=service.task_pick(cfg))
-    store.record_check(op['id'], 'violation', {'state': snap['state'], 'branch': snap['branch'],
-                                               'violations': violations, 'trigger': trigger})
+    detail = {'state': snap['state'], 'branch': snap['branch'],
+              'violations': violations, 'trigger': trigger}
+    trees = rules.worktree_branches(path) if path else {}
+    for _sid, entry in commands:
+        command, failed = entry if isinstance(entry, tuple) else (entry, False)
+        matched = next((b for b in cfg.get('forbidden_branches', [])
+                        if rules.forbidden_command(command, [b], trees)), None)
+        if matched:
+            detail.update(command=command, branch=matched)
+            if failed:
+                detail['blocked'] = True
+            break
+    store.record_check(op['id'], 'violation', detail)
     if _respond(op, db, actor, row, snap, [v for v in violations if v not in reported]):
         store.create('checkin', actor, actor, {'text': checkin_text(cfg, snap, violations), 'schedule_id': op['id']})
     store.patch_result(op['id'], guard_reported=violations)
@@ -578,6 +610,9 @@ def _check_in(op, db, actor, sid, request):
         moved = []
     children = _children_progress(db, sid)
     signature = _signature(snap, violations, children)
+    # System care (setting ``system``): leftover processes and machine memory, measured here.
+    from api.chat_ops import system_care
+    care = system_care.read(cfg, sid, snap['state'], op.get('result') or {}, children=[c[0] for c in children])
     nxt = time.time() + cfg['every']
     seen = {'state': snap['state'], 'branch': snap['branch'], 'violations': violations,
             'tasks': [{'title': t['title'], 'done': t['done'], 'total': t['total']} for t in snap['tasks']]}
@@ -605,6 +640,11 @@ def _check_in(op, db, actor, sid, request):
     told = previous.get('stuck_reported') or []
     new_stuck = [i for i in stuck_ids if i not in told]
     tracking['stuck_reported'] = [i for i in told if i in stuck_ids]
+    tracking.update(care['tracking'])
+    seen.update(care['seen'])
+    seen['process_snapshot'] = {'measured': care.get('measured', False),
+                                'leftover': [{k: r.get(k) for k in ('name', 'pid', 'create_time', 'rss')}
+                                             for r in care['leftover']]}
     if stuck_ids:
         seen['undelivered'] = len(stuck_ids)
     if stalled:
@@ -623,7 +663,7 @@ def _check_in(op, db, actor, sid, request):
         return
     # A working target or an unchanged picture costs no supervisor tokens;
     # a picture whose wake the supervisor never answered is not "seen".
-    if not violations and not briefing and not stalled and not changes and not new_stuck and (
+    if not violations and not briefing and not stalled and not changes and not new_stuck and not care['alert'] and (
             snap['state'] in ('busy', 'waiting_background')
             or (signature == previous.get('signature') and not failure)):
         reason = snap['state'] if snap['state'] in ('busy', 'waiting_background') else 'unchanged'
@@ -632,8 +672,8 @@ def _check_in(op, db, actor, sid, request):
                                             'last_seen': seen, 'skipped': reason, 'guard_reported': found}, due=nxt)
         return
     if _template_nudge(op, cfg, snap, previous, request, db=db, actor=actor, quiet=not (
-            violations or briefing or stalled or changes or failure or new_stuck),
-            result={**previous, **tracking, 'signature': signature, 'last_check': time.time(),
+            violations or briefing or stalled or changes or failure or new_stuck or care['alert']),
+            seen=seen, result={**previous, **tracking, 'signature': signature, 'last_check': time.time(),
                     'last_seen': seen, 'guard_reported': found}, due=nxt):
         return
     active = _active_checkins(actor, op['id'])
@@ -643,7 +683,8 @@ def _check_in(op, db, actor, sid, request):
                        {**seen, 'already_waiting': bool(active), **({'retry': True} if failure else {})})
     # A moved forbidden branch is reported once, so it never waits behind a queued check-in.
     if not active or moved:
-        text = checkin_text(cfg, snap, violations, stalled_min=seen.get('stalled_min'), changes=changes)
+        text = checkin_text(cfg, snap, violations, stalled_min=seen.get('stalled_min'), changes=changes,
+                            system=care)
         store.create('checkin', actor, actor, {'text': text, 'schedule_id': op['id']})
         if changes:
             store.clear_pending_changes(op['id'], (cfg.get('pending_changes') or {}).get('rev'))
@@ -652,7 +693,7 @@ def _check_in(op, db, actor, sid, request):
                                         'guard_reported': found}, due=nxt)
 
 
-def _template_nudge(op, cfg, snap, previous, request, *, db, actor, quiet, result, due):
+def _template_nudge(op, cfg, snap, previous, request, *, db, actor, quiet, result, due, seen):
     """``nudge: template``: send an idle chat its next open Tasks item without a
     supervisor turn. Only when nothing else needs judgment (``quiet``), and at most
     ``TEMPLATE_NUDGE_LIMIT`` times in a row without Tasks progress; then the
@@ -670,7 +711,7 @@ def _template_nudge(op, cfg, snap, previous, request, *, db, actor, quiet, resul
     except Exception as exc:
         store.record_check(op['id'], 'error', {'entry': 'nudge', 'error': str(exc)[:300]})
         return False
-    store.record_check(op['id'], 'nudged', {'state': snap['state'], 'streak': streak, 'text': text[:300]})
+    store.record_check(op['id'], 'nudged', {**seen, 'state': snap['state'], 'streak': streak, 'text': text[:300]})
     store.finish(op['id'], 'pending', {**result, 'template_nudges': streak, 'nudge_tasks': tsig}, due=due)
     return True
 
@@ -851,6 +892,7 @@ def _loop():
             _background_tick()
         except Exception as exc:
             print(f'[CHAT OPS] pump failed: {type(exc).__name__}', flush=True)
+        display_care.sync()
 
 
 def ensure_started():

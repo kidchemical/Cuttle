@@ -81,7 +81,7 @@ def cwd_alias_candidates(cwd: str) -> list:
         p = Path(cwd).resolve()
     except Exception:
         return out
-    # Cuttle git root ↔ src/; Unity (Escape Purgatory) git root ↔ source/
+    # Cuttle git root ↔ src/; Unity (Demo Game) git root ↔ source/
     if p.name.lower() in ("src", "source") and p.parent.exists():
         _add(str(p.parent))
     for child_name in ("src", "source"):
@@ -236,8 +236,8 @@ def load_cursor_resume_binding(
     2. Same-repo aliases (git root ↔ ``src/`` / ``source/``)
 
     Never follow a resume saved under a *different* project. The chat project
-    chip is cwd; switching Cuttle → Escape Purgatory must start a new CLI
-    session rather than pinning ``--workspace`` to the old repo (CH-000164).
+    chip is cwd; switching Cuttle → Demo Game must start a new CLI
+    session rather than pinning ``--workspace`` to the old repo.
     Model prefs may still inherit across cwd via ``load_cursor_agent_options``.
     """
     if not cuttle_session_id or not str(cuttle_session_id).strip():

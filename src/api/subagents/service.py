@@ -604,6 +604,19 @@ def spawn(
     except Exception:
         pass
     _preflight_pins(specs)
+    if any(s.node for s in specs):
+        # Before any child chat exists: an unknown node fails the spawn, not a turn.
+        from api.exec_nodes import service as _nodes
+
+        for s in specs:
+            if s.node and (not _nodes.enabled() or _nodes.node(s.node) is None):
+                raise SubagentError(
+                    f"child {s.title!r}: execution node {s.node!r} is not available "
+                    "(`python -m api.exec_nodes list`)")
+    try:
+        extras.preflight_task_refs(specs, user_id=user_id, db=db)
+    except ValueError as exc:
+        raise SubagentError(str(exc)) from exc
     _preflight_budget(specs, int(parent_session_id), db,
                       tier_checked={n["child"] - 1 for n in budget_notes})
     collect_n = normalize_collect(collect)
@@ -667,6 +680,11 @@ def spawn(
             avatar=spec.avatar,
             agent_profile_id=spec.profile_id or None,
         )
+        if spec.node:
+            # Runs on that machine from its first turn (api.exec_nodes).
+            from api.exec_nodes.service import set_binding as _bind_node
+
+            _bind_node(sid, spec.node)
         prompt = spec.message
         child = store.insert_child(
             db,
@@ -683,6 +701,8 @@ def spawn(
     # api.chat_turn_row) or the manual anchor: the cards ride that bubble now.
     # Nothing to bind to yet → the pinned background card until a row of that turn is saved.
     bind_new_batch(db, batch, anchor_message_id=anchor_message_id)
+    for item in created:
+        extras.assign_child_task(db, item["child"], batch)
     extras.ensure_parent_tasks(db, batch)
     extras.write_watch(batch)
 

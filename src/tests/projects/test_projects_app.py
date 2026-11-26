@@ -279,7 +279,7 @@ def test_branch_preference_and_switch_are_separate_owner_actions(app_context):
     import subprocess
     c, db, pm, pid, folder, owner, other = app_context
     def git(*args):
-        return subprocess.run(['git', '-C', str(folder), *args], check=True, capture_output=True, text=True).stdout.strip()
+        return subprocess.run(['git', '-C', str(folder), *args], check=True, capture_output=True, text=True, encoding="utf-8").stdout.strip()
     git('init', '-b', 'main')
     git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'Initial')
     login(c, db, other)

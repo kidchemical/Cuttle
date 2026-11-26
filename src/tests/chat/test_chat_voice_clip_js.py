@@ -33,6 +33,7 @@ def _node(script: str, *files: str) -> None:
     proc = subprocess.run(
         ["node", "-e", script, *[str(CHAT_JS / f) for f in files]],
         capture_output=True, text=True, timeout=30,
+        encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr
 

@@ -15,7 +15,7 @@ from api.jev.rank import _doc_summaries, _read_doc_body
 
 def put(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
 
 
 @pytest.fixture

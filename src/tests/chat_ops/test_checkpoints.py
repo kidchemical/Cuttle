@@ -96,11 +96,11 @@ def test_tests_checkpoint_fires_on_the_chosen_outcome_only(chats, monkeypatch):
 def test_watched_paths_baseline_then_new_matches(chats, repo):
     db, _owner, sup, target, _child = chats
     (repo / "api").mkdir()
-    (repo / "api" / "old.yaml").write_text("x")  # already dirty when the watch starts
+    (repo / "api" / "old.yaml").write_text("x", encoding="utf-8")  # already dirty when the watch starts
     _schedule(chats, {"watched_paths": {"regex": r"^api/"}})
     assert triggers.run_checkpoints([(target, "edit", False)], [], db=db, request=_host) == 0  # baseline
-    (repo / "api" / "schema.yaml").write_text("y")
-    (repo / "notes.md").write_text("z")
+    (repo / "api" / "schema.yaml").write_text("y", encoding="utf-8")
+    (repo / "notes.md").write_text("z", encoding="utf-8")
     assert triggers.run_checkpoints([(target, "edit", False)], [], db=db, request=_host) == 1
     text = _checkins(sup)[0]["payload"]["text"]
     assert "`api/schema.yaml`" in text and "old.yaml" not in text and "notes.md" not in text

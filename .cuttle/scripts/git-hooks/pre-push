@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cuttle pre-push secret gate.
+"""Cuttle pre-push gate: secrets, then tests.
 
 Runs on every `git push` (terminal, hamburger "Git push" menu, and the
 `git.push` chat action card all shell out to plain `git push`, so this one
@@ -12,6 +12,9 @@ Checks, in order:
   2. gitleaks over the pushed commits (when the binary is installed).
   3. Built-in high-signal regex scan of every introduced commit version.
   4. SQLite committed-cell inspection (bounded; never reads live databases).
+  5. Tests (core.prepush_tests): a branch push runs the quality suite plus the
+     tests touching the changed files; a vX.Y.Z tag needs a recorded
+     release-check pass. CUTTLE_PREPUSH_TESTS=0 skips this check only.
 
 Only NEW commits being pushed are scanned, never full history.
 
@@ -167,11 +170,13 @@ def main() -> int:
 
     blocked, warnings = [], []
     gitleaks = None if os.environ.get('CUTTLE_PREPUSH_NO_GITLEAKS') else _find_gitleaks()
+    pushed_refs = []
     for parts in lines:
         if len(parts) < 4 or parts[1].startswith('0' * 7):
             continue
         local_sha, remote_sha = parts[1], parts[3]
         base, commits = _pushed_commits(local_sha, remote_sha)
+        pushed_refs.append((parts[2], local_sha, remote_sha, base, commits))
         if not commits:
             continue
         try:
@@ -189,6 +194,13 @@ def main() -> int:
             print(f'pre-push hook: {len(approved)} findings matched reviewed source-specific exceptions')
     except (OSError, ValueError, TypeError):
         blocked.append(finding('pre-push', 'Scanner exception policy could not be validated'))
+    if not blocked:
+        # Secrets first: a leak blocks before minutes of tests.
+        try:
+            from core.prepush_tests import gate
+            blocked.extend(gate(pushed_refs))
+        except Exception as exc:  # a broken gate must not make every push impossible
+            warnings.append(f'test gate could not run: {exc}')
     if blocked:
         print(HOOK_FIRST_LINE + ' — ' + ', '.join(sorted({f['hook'] for f in blocked})))
         for item in blocked[:15]:

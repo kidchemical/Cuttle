@@ -121,8 +121,9 @@ code, .path-text { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Re
 .projects-dialog .logout-confirm-btn { display: block; min-height: 0; }
 .projects-dialog .logout-confirm-submit:hover { background: var(--popup-accent); }
 /* .logout-confirm-btn doubled: auth_modal.css colors submits via :is(.a.b, …). */
-.projects-dialog .logout-confirm-btn.projects-dialog-danger,
-.projects-dialog .logout-confirm-btn.projects-dialog-danger:hover { background: var(--error-border, #e53e3e); color: #fff; }
+/* Same AA-safe red as the chat Delete confirm (white text stays >= 4.5:1). */
+.projects-dialog .logout-confirm-btn.projects-dialog-danger { background: #dc2626; color: #fff; }
+.projects-dialog .logout-confirm-btn.projects-dialog-danger:hover { background: #b91c1c; color: #fff; }
 .projects-dialog .projects-dialog-note { margin: 0; font-size: 13px; color: var(--popup-muted); }
 .projects-dialog .auth-modal-subtitle:empty { display: none; }
 :focus-visible { outline: 2px solid var(--project-accent); outline-offset: 3px; }

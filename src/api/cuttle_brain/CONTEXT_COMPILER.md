@@ -28,7 +28,7 @@ inspect the envelope. Day-to-day, Flask injects it — no extra round-trip.
 3. **Project rules** — `{project}/.cuttle/rules/*.md` (always-on guidelines for that project; for the Cuttle repo itself this is Cuttle-only rules, never guest etiquette).
 4. **Profile** — `standard` today; room for coordination / supervision later.
 5. **Runtime** — inventory of commands/docs/actions/skills (global + project); optional handoff delta; chat-store hint.
-6. **Ranked context (optional)** — one selected skill/doc snippet preloaded for this prompt. Judge: Jev by default (`python -m api.jev rank`), or the executor chosen for **Context ranking** in Settings → Background helpers (any model API, or a tool-less one-turn agent CLI; `api.background_helpers` task `context`). Always-on rules still win on conflict.
+6. **Ranked context (optional)** — one selected skill/doc named for this prompt as a pointer (title, one line, path; `jev/thresholds.py` `RANK_INJECT_MODE = "excerpt"` pastes the body instead). Judge: Jev by default (`python -m api.jev rank`), or the executor chosen for **Context ranking** in Settings → Background helpers (any model API, or a tool-less one-turn agent CLI; `api.background_helpers` task `context`). Always-on rules still win on conflict. The ranker only ever adds a skippable pointer; it does not decide which rules or inventory a turn receives. Graded on 54 live pointers (2026-11-22): 39% right, 44% harmless, 17% wrong, with confidence not separating right from wrong; a plain word-overlap picker scored about 9% right on the same requests.
 7. **User request** — the actual turn prompt (never truncated by the compiler).
 
 ## The envelope is a directory
@@ -37,16 +37,26 @@ Inline only what an agent cannot know to look up: prohibitions and the pointer
 that names the owner. Everything else is listed, not copied — runbooks by name
 and one-line trigger, skills by a clipped summary and path, Tasks lists by
 title/progress (a chat's own list adds its next open items; `python -m
-api.gizmos tasks get <id>` has the rest). A runbook named in the core contract's
+api.gizmos tasks get <id>` has the rest). More than 12 project docs are a
+count plus the folder; the ranker still sees every name. A pointer needs less
+"extra context would help" evidence than an excerpt (`NEEDS_POINTER_NOUL`). A runbook named in the core contract's
 directory is not repeated in the inventory. Measure a fresh `hello` envelope
 before and after any change (`meta.layer_chars`).
+
+## Bare turns
+
+A plain-chat target gets the typed request and nothing else: no envelope,
+handoff, delta or prompt preference (`bare.py`). Switch it on per harness with
+`context: bare` in the agent manifest, or per model with `settings.json →
+context.bare_models` (`"agent:model-glob"`, e.g. `"opencode:g4f/*"`). The turn
+is recorded with mode `bare`.
 
 ## How this relates to `.cuttle/`
 
 | Path | Role vs compiler |
 |---|---|
 | `{Cuttle}/.cuttle_global/rules/` | **Always-on global** guidelines — compiled for every registered project. |
-| `<home>/personal/` (Cuttle home) | **Install-local global overlay** (gitignored) — same layout; personal markdown appends as a delta, other files win by basename. |
+| `<home>/personal/` (Cuttle home) | **Install-local global overlay** (gitignored) — same layout; rule and doc Markdown appends as a delta, commands and actions replace by declared name, and skills replace by directory id. A personal rule with no tracked twin compiles whole under an `Install-local (personal/rules/…)` marker, so an agent can say where it came from. Role-specific guidance (supervisors, sub-agents) is not a rule: see `rule-authoring.md`. |
 | `{project}/.cuttle/rules/` | **Always-on project** guidelines — compiled after global rules. |
 | `{Cuttle}/.cuttle/rules/` | **Cuttle-repo-only** rules — compiled only when the chat targets Cuttle itself. |
 | `commands/*.md` | **On-demand** via `/name` expand (`project_commands`). Listed in inventory; not dumped every turn. |
@@ -58,8 +68,7 @@ before and after any change (`meta.layer_chars`).
 
 Native vendor files (Cursor skills, etc.) stay optional compatibility —
 never the Cuttle source of truth. The repo-level agent brief `AGENTS.md` is
-**not a compiler layer**: the Brain never injects it; only vendor CLIs that read
-it natively (e.g. Claude Code, Hermes) see it.
+**not a compiler layer**: the Brain never injects it; it is available to harnesses that load repository instructions or open the file.
 
 ## Hot-swap / resume
 
@@ -93,7 +102,8 @@ See `context_delta.py`.
 
 Every harness turn appends a row to `<home>/brain/context_metrics.db`
 (`metrics.py`): briefing mode, size per layer, handoff size, agent-reported
-window fill and limit, compaction. The **Context** dashboard reads it
+window fill and limit, compaction, and what the context ranker picked
+(`ranked`: choice, confidence, injected ids). The **Context** dashboard reads it
 (`python -m api.cuttle_brain metrics list|backfill`).
 
 ## Transport
@@ -108,7 +118,7 @@ When the CLI has no separate system channel, the compiler still demarcates:
   speaking / do not acknowledge” contract
 * user text under `## User request`
 
-Live smoke `test_live_no_envelope_narration` (CH-000150-8) fails replies that
+Live smoke `test_live_no_envelope_narration` fails replies that
 meta-talk the briefing instead of answering the short user ask.
 
 

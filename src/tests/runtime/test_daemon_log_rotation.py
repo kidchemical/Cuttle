@@ -20,9 +20,9 @@ def _load_daemon():
 def test_small_log_is_left_alone(tmp_path):
     d = _load_daemon()
     log = tmp_path / "flask.log"
-    log.write_text("short")
+    log.write_text("short", encoding="utf-8")
     d._rotate_log(log, max_bytes=100, keep=3)
-    assert log.read_text() == "short"
+    assert log.read_text(encoding="utf-8") == "short"
     assert not (tmp_path / "flask.log.1").exists()
 
 
@@ -30,11 +30,11 @@ def test_large_log_shifts_and_oldest_is_dropped(tmp_path):
     d = _load_daemon()
     log = tmp_path / "flask.log"
     for gen in ("a", "b", "c"):
-        log.write_text(gen * 200)
+        log.write_text(gen * 200, encoding="utf-8")
         d._rotate_log(log, max_bytes=100, keep=2)
     assert not log.exists()
-    assert (tmp_path / "flask.log.1").read_text() == "c" * 200
-    assert (tmp_path / "flask.log.2").read_text() == "b" * 200
+    assert (tmp_path / "flask.log.1").read_text(encoding="utf-8") == "c" * 200
+    assert (tmp_path / "flask.log.2").read_text(encoding="utf-8") == "b" * 200
     assert not (tmp_path / "flask.log.3").exists()
 
 

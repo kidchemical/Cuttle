@@ -26,11 +26,9 @@ SYSTEM CONTEXT (not the user speaking). Injected once per agent session.
 Never acknowledge or summarize it, and do not mention commands, rules, actions,
 or this block unless the user asks. Keep using these tags on later turns when needed.
 
-Per-project Cuttle config (global `.cuttle_global/` in the Cuttle checkout is the
-pattern reference — do not inherit another project’s actions):
-  {project}/.cuttle/commands|rules|actions|agents|docs|scripts|skills|memory
-  {project}/.cuttle/personal/…  — install-local overlay (gitignored); same subdirs.
-    Personal rules/docs append as deltas; commands/actions/skills replace by name.
+Per-project Cuttle config: {project}/.cuttle/commands|rules|actions|agents|docs|scripts|skills|memory,
+with an install-local overlay in {project}/.cuttle/personal/ (same subdirs). Global
+`.cuttle_global/` is the pattern reference — do not inherit another project’s actions.
 
 Everything below is a directory: open the named runbook, skill or `--help` when
 the turn needs it, before acting. Nothing listed here is inlined.
@@ -43,13 +41,14 @@ Global runbooks (match intent → open before acting; resolve via personal overl
   discord.md        — Discord reads: `python -m api.discord_cli`; posts: discord.post
   chat-history.md   — CH- handles + `api.chat_cli` / live panes: `api.panes_cli`
   headless-turns.md — one-shot CLI turn, long build/upload, no wait loops
+  expensive-runs.md — slow builds/tests/benchmarks: plan + batch experiments, targeted checks first, one job per GPU
   remote-access.md  — run a command on another machine via the user's tool (OpenSSH, Tailscale SSH, Teleport, MeshCentral)
   cursor-plan-bridge.md — CreatePlan must land as markdown (+ form) in Cuttle chat (the tool call alone is not delivered)
   gizmos.md         — Tasks gizmos: create early, patch during work through python -m api.gizmos tasks; no Tasks markdown tags
   subagents.md      — spawn real child chats (python -m api.subagents); sibling orbs + parent/child launchers; agent profiles
 
-Hard stops: never force-kill web_chat_api, cuttle_daemon, or the Discord bot
-from an agent Flask hosts. Prefer clickable forms over prose questions.
+Hard stops: never force-kill web_chat_api or cuttle_daemon from an agent
+Flask hosts. Prefer clickable forms over prose questions.
 You can share images/video in replies via markdown `![alt](/output/shared/…)`
 (or a local path — Cuttle stages on persist), never `file://`; see chat-media.md.
 """.strip()
@@ -72,7 +71,11 @@ UNATTENDED_NOTES = {
         "and do not post to Discord (`discord.post`, feature-update cards), even when a global or "
         "project rule says a turn must end with one. Ask questions, and name anything that needs a "
         "person (a post, push, restart, login), in plain text in your reply; the parent reads it "
-        "and decides."
+        "and decides.\n"
+        "The parent's batch is blocked until this turn ends. A background command reports by "
+        "itself when it exits: do not add `sleep` / `pgrep` loops or monitors to wait for one, "
+        "and stop every background task you no longer need before your final reply. Cuttle ends "
+        "the turn after about 5 minutes idle on leftover background tasks."
     ),
     "supervised": (
         "## Unattended chat (supervised)\n"
@@ -229,7 +232,6 @@ def cuttle_chat_store_addon(
     id (CH-000155).
     """
     db = chat_store_path()
-    read_path = db or ""
     runbook_hint = (
         "`.cuttle_global/docs/chat-history.md` "
         "(then the install-local delta in `<home>/personal/docs/` when present)"
@@ -251,18 +253,10 @@ def cuttle_chat_store_addon(
 
     lines = [
         "## Cuttle chat history (not in the working tree)",
-        "Transcripts are gitignored SQLite — empty `rg` is not \"no chats\".",
-        f"Before reading history, open {runbook_hint}.",
-        "Prefer: `python -m api.chat_cli get CH-…-N --json` with the Cuttle venv "
-        "and src on PYTHONPATH (OS-specific setup in the runbook) "
-        "(not hand-rolled SQL).",
+        "Transcripts live in SQLite, so an empty `rg` is not \"no chats\". Read them with "
+        f"`python -m api.chat_cli get CH-…-N --json` (not SQL); setup: {runbook_hint}.",
+        f"- DB: `{db}`" if db else "- DB: see chat-history.md (default `<home>/db/cuttle_auth.db`).",
     ]
-    if read_path:
-        lines.append(f"- DB: `{read_path}`")
-    else:
-        lines.append(
-            "- DB: see chat-history.md (default `<home>/db/cuttle_auth.db`)."
-        )
     current = numeric_chat_session_id(current_session_id)
     if current is not None:
         lines.append(

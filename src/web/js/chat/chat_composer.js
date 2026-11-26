@@ -149,7 +149,16 @@
         const d = deps || {};
         const stickyOf = typeof d.stickyOf === 'function' ? d.stickyOf : null;
         if (!stickyOf) return null;
-        return stickyOf(String(p.message || '')) || null;
+        const fromMessage = stickyOf(String(p.message || ''));
+        if (fromMessage) return fromMessage;
+        // The message head was not an agent (an unknown or misordered
+        // command): keep the badge that was staged instead of wiping it.
+        const chips = Array.isArray(p.chips) ? p.chips : [];
+        for (let i = 0; i < chips.length; i++) {
+            const hit = chips[i] && stickyOf(String(chips[i].prefix || ''));
+            if (hit) return hit;
+        }
+        return null;
     }
 
     /**
@@ -236,6 +245,12 @@
             const winner = agents.filter(Boolean).pop();
             if (winner) chips = chips.filter((c, i) => !agents[i] || agents[i] === winner);
         }
+        // The agent badge always leads: a nested pick staged before a restored
+        // badge sent "/use-subscription /claude …", which no agent matched
+        // (CH-002602-8).
+        const AGENT_HEAD = /^\/(?:cursor|muse|hermes|codex|opencode|claude|deepseek|antigravity)(?:\s|$)/i;
+        const heads = chips.filter((c) => AGENT_HEAD.test(String(c.prefix || '')));
+        if (heads.length) chips = heads.concat(chips.filter((c) => heads.indexOf(c) < 0));
         const prefixPart = chips.map((c) => c.prefix).join('');
         if (!body) {
             const t = prefixPart.replace(/\s+$/, '').trim();

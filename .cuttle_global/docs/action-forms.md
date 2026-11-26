@@ -82,6 +82,11 @@ The server (`rewrite_action_forms` → `merge_qa_resume_specs`) folds 2+ Q&A res
 cards in one reply into a single `form` with one Submit as a safety net, but
 emit the combined form yourself. Side-effect cards (real `action`) are never merged.
 
+**A typed reply closes the card.** When the user answers in chat instead of
+clicking, the earlier one-shot card locks as "Ignored". Treat their message as
+the answer, and never point back to an old card as still open. Anything still
+undecided goes on a new card in this reply (restart cards are exempt; see below).
+
 ```xml
 <cuttle_action_form>
 {
@@ -267,7 +272,7 @@ recipe remains for standalone callers. Native `/restart` and the owner-only
 restart endpoint are independent recovery paths.
 
 
-Never kill Flask, the daemon, or the Discord bot (`kill`/`pkill`, `taskkill`/`Stop-Process`) from an agent
+Never kill Flask or the daemon (`kill`/`pkill`, `taskkill`/`Stop-Process`) from an agent
 Flask is hosting. After Python changes need a restart, emit the stub (preferred —
 any agent, any project):
 

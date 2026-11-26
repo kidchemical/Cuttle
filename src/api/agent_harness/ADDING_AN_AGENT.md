@@ -46,7 +46,8 @@ sandbox; containment is the opt-in gate plus the rules below.
   (lowercased, `_` → `-`, must match `[a-z0-9]+(-[a-z0-9]+)*`); `slash` is
   canonicalized the same way and must match `/[a-z0-9]+(-[a-z0-9]+)*`.
   Anything else (e.g. `slash: "/"`, `Evil Agent/`) is skipped **without
-  importing** `adapter.py`. Unknown `capabilities_inject` / `env_profile` /
+  importing** `adapter.py`. `context: bare` sends the typed request with no
+  Cuttle briefing (plain-chat targets; `api.cuttle_brain.bare`). Unknown `capabilities_inject` / `env_profile` /
   `activity` values fall back to defaults instead of failing.
 - **Load-once (source-keyed).** Each external `adapter.py` executes once per
   process; editing the manifest or any Python source (including nested helpers) reloads it on
@@ -83,7 +84,7 @@ sandbox; containment is the opt-in gate plus the rules below.
 Every item below already burned dogfood time. The ADD process and smoke suite exist to
 catch them *before* the user does.
 
-### 0. Project chip is cwd (CH-000164)
+### 0. Project chip is cwd
 
 The chat project chip is the working directory for **every** agent. The kernel
 (`resolve_harness_cwd`) maps that path to a folder (including Unity `source/` /
@@ -94,7 +95,7 @@ Do **not**:
 
 - fall back to `os.getcwd()` (Flask's cwd is Cuttle) when the chip path exists
 - pin `--workspace` / CLI cwd to whichever folder last saved a `--resume` UUID
-  for this chat — that kept Escape Purgatory chips running inside Cuttle
+  for this chat
 - reimplement `abspath` + `isdir` + `getcwd` in a new adapter
 
 Call `api.agent_harness.cwd.resolve_harness_cwd`. Same-repo aliases (`src/` /
@@ -105,7 +106,7 @@ Call `api.agent_harness.cwd.resolve_harness_cwd`. Same-repo aliases (`src/` /
 `test_kernel_rejects_adapter_cwd_from_another_project`) covers current **and**
 future bundled agents.
 
-### 1. Windows `.cmd` / `.bat` shims vs native `.exe` (ERR-20260816-007 + Cursor `%*`)
+### 1. Windows `.cmd` / `.bat` shims vs native `.exe`
 
 `shutil.which("tool")` on Windows often returns `tool.CMD` (npm / installer shim). That
 shim re-parses argv through `cmd.exe` (`%*`), which:
@@ -128,7 +129,7 @@ Cuttle prepends the Context Compiler envelope on first turns — a short argv ca
 smoke must send a long pad + **end sentinel** and assert the adapter did not put the
 sentinel on argv.
 
-### 3. Resume stores must coerce session ids (ERR-20260816-001, ERR-20260816-009)
+### 3. Resume stores must coerce session ids
 
 DB `chat_session_id` is an **int**. The kernel normalizes to `str` once
 (`normalize_chat_session_id`), but stores must still `str(...)` defensively. Copying a
@@ -146,7 +147,7 @@ while badges and run history still looked healthy. Two rules came out of it:
   If your store hides its map file behind something other than `_map_file()`, the
   contract test fails on purpose: expose it so tests can isolate state.
 
-### 4. Auth ≠ install; never leak raw stderr (ERR-2/3/6)
+### 4. Auth ≠ install; never leak raw stderr
 
 CLI present ≠ authenticated. Shape failures to **one actionable line**; emit
 `<cuttle_action_form>` for allowlisted key sync (never ask the LLM to paste secrets).
@@ -250,6 +251,7 @@ only** so a missing CLI answers with an actionable message:
 
 ```yaml
 icon: "○"  # optional single-glyph Settings tile; empty falls back to the label initial
+color: "#4f46e5"  # identity dot in chat (Studio look); #rrggbb only, empty = neutral grey
 executable_names: [tool-name]
 missing_cli_hint: >-
   Install Tool and ensure `tool` is on PATH (see https://…/docs/).
@@ -278,7 +280,7 @@ Keep this surface stable. New agents = new folders, not new kernel APIs.
 `chat_session_id` is an **opaque string** at the adapter boundary. The kernel coerces the
 DB int (and `db_session_*` aliases) once via `normalize_chat_session_id`. Still coerce with
 `str(...)` in stores defensively — copying an old pattern without that is how
-`'int' object has no attribute 'strip'` keeps recurring (ERR-20260816-001).
+`'int' object has no attribute 'strip'` keeps recurring.
 
 On Windows npm CLIs, resolve executables with `win_cli.which_preferring_native` (or equivalent)
 and transport long prompts losslessly.
@@ -291,10 +293,6 @@ Optional `schema_version` in the manifest (default `1`) is reserved for rare pro
 > **on the model and scope the person adding the agent chose**. Do not hand a new agent to the
 > user as the first tester. Every issue the user hits that a 30-second smoke test would have
 > caught is a process failure — open an issue for it.
-
-This exists because the Gemini pilot shipped without a test: the user hit
-`'int' object has no attribute 'strip'` (ERR-20260816-001) on turn one, then a raw wall of CLI
-auth stack traces (ERR-2/3). Both were catchable before handoff.
 
 ## Ask before you spend (required)
 
@@ -393,7 +391,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
      the *target* agent’s resume when present.
    - Offline, **argv level**: run two turns through the real dispatch with a fake CLI and
      assert turn 2's argv carries the resume flag. A store round trip alone passes while the
-     command line silently omits `--resume` (ERR-20260816-009) — see
+     command line silently omits `--resume` — see
      `test_cursor_run_saves_resume_then_passes_it_on_the_next_turn`.
    - Live (gated): two-turn smoke — turn 1 stores a nonce, turn 2 with the same
      `chat_session_id` asks for it and must get it back (proves native resume works).
@@ -418,7 +416,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
    | Scope | What it runs |
    |---|---|
    | `min` / `one_shot` | One short “reply pong” turn |
-   | `envelope` | Fresh session + short ask; fails CH-000150-8 envelope narration |
+   | `envelope` | Fresh session + short ask; checks that the reply answers the user without narrating the briefing |
    | `resume` | Two-turn nonce recall (skipped if `resume: false`) |
    | `long_pad` | One >2,800-character prompt with an end sentinel (**opt-in**) |
    | `full` | All of the above |
@@ -438,7 +436,7 @@ Put the cheap id in `smoke_model` so a forgotten env still does not spend Pro.
 | `muse` | `muse exec` (WSL) | `--prompt-file` for long prompts; `/muse model` in adapter |
 | `claude` | `claude -p` | per-chat `--resume`; `/claude model [refresh]` + `/claude effort` pins → `--model` / `--effort`; catalog from SDK `initialize` (no turn) |
 | `opencode` | `opencode run` | native CLI authentication |
-| `antigravity` | `agy` | user-managed install (BYO-CLI) |
+| `antigravity` | `agy -p` | stdin `--input-format stream-json` (lossless), `--dangerously-skip-permissions`; `--conversation` resume validated against agy's store (a stale id silently starts fresh); `/antigravity model [refresh]` + `/antigravity effort` → `--model <family>` / `--effort` (catalog from `agy models`, grouped per family); quota via headless `/usage` + `/credits` JSON; generic `HARNESS_PIN_SPECS` composer controls |
 | `hermes` | `hermes chat -Q -q` | local or OpenRouter via config.yaml; `requires_cloud: false`; per-chat `--resume` + state.db status poll |
 | `deepseek` | `dsh --profile headless` | Flash by default (`smoke_model` = Flash); no native per-chat resume; needs `DEEPSEEK_API_KEY`. Tentacle for DeepSeek Harness — steal kernel ideas separately ([`MODULARITY.md`](../../../docs/guides/MODULARITY.md)); do not treat dsh as Cuttle’s core. |
 

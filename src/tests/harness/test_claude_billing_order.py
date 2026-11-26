@@ -164,3 +164,35 @@ def test_billing_pin_round_trip(tmp_path, monkeypatch):
     assert store.load_claude_billing("5") == "api"
     assert store.save_claude_billing("5", "default") is None
     assert store.load_claude_billing("5") is None
+
+
+# ── bare token pins the chat ────────────────────────────────────────────────
+
+def test_bare_use_token_pins_the_chat_without_a_turn(cfg, monkeypatch, tmp_path):
+    from api.agent_harness.agents.claude.adapter import Adapter
+
+    saved = {}
+    monkeypatch.setattr("scripts.utilities.claude_cli_session_store.save_claude_billing",
+                        lambda sid, mode: saved.__setitem__(str(sid), mode))
+    assert fb.bare_billing_command("/use-subscription") == "subscription"
+    assert fb.bare_billing_command(" /USE-API \n") == "api"
+    assert fb.bare_billing_command("/use-api fix it") is None
+    out = Adapter().handle_meta("/use-subscription", cwd=str(tmp_path), chat_session_id="7002")
+    assert out.success and "subscription first" in out.output and saved == {"7002": "subscription"}
+    assert Adapter().handle_meta("/use-api fix it", cwd=str(tmp_path), chat_session_id="7002") is None
+
+
+def test_credit_status_names_the_idle_fallback(cfg):
+    settings, _ = cfg
+    settings["agent_billing_fallback"]["claude"]["enabled"] = True
+    assert fb.credit_status() == "fallback ready"
+    settings["agent_billing_fallback"]["claude"]["prefer"] = "api"
+    assert fb.credit_status() == "API first"
+    assert fb.merge_claude_usage({"windows": []})["billing"]["prefer"] == "api"
+
+
+def test_misordered_billing_token_names_its_place():
+    from api.chat_turn_workflow import pipeline_fallback_result
+
+    res = pipeline_fallback_result("/use-subscription /claude hi")
+    assert res["success"] is False and "`/claude /use-subscription`" in res["response"]

@@ -117,3 +117,27 @@ Preview or apply by hand with Cuttle stopped:
 PYTHONPATH=src .venv/bin/python -m core.runtime_data          # preview
 PYTHONPATH=src .venv/bin/python -m core.runtime_data --apply
 ```
+
+## Moving the current home to another drive
+
+In **Settings → Data → Storage location**, an owner can see the physical data
+folder, schedule a new absolute folder on the server, or cancel a pending move.
+Choose a new folder under an existing parent on a mounted local drive. Use a
+filesystem that preserves permissions and links. POSIX hosts use rsync with
+ACL, extended attribute and fsync support. Windows uses Robocopy and a directory
+junction. The agent-ops equivalent is `python -m api.storage location` with
+`--destination PATH` or `--cancel`.
+
+After scheduling, exit the host via the tray and relaunch it (or stop and start
+the headless daemon). Before loading dotenv or opening logs, the daemon copies
+and verifies the home, switches the original path to a directory link, then
+retires the old files. Existing launch paths and stored file references keep
+working. The UI reports copy errors against the original home. If interrupted,
+the next startup recovers the switch or reports a partial destination for
+inspection. Reconnect a missing active drive before launching the host.
+
+The version-1 move journal and lock live beside the launch path so they remain
+available during a switch. Removing the UI/CLI or migration code after a
+completed move leaves a normal directory link. Separately redirected stores
+(such as `CUTTLE_AGENT_EVENTS_DIR`), OS-level IPC outside the home and vendor
+agent profiles stay at their configured locations.

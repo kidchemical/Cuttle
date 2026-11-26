@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -128,6 +129,54 @@ def is_stale(store: GraphStore) -> bool:
     return bool(recorded) and recorded != git_head(store.execution_path)
 
 
+_REFRESH_LOCK = "refresh.lock"
+_REFRESH_LOCK_TTL_S = 900.0
+
+
+def ensure_fresh(ctx: ResolvedContext, *, provider_id: Optional[str] = None) -> Dict[str, Any]:
+    """Re-extract before a read when the checkout's HEAD moved past the index.
+
+    Fail-open: a failed refresh, or one already running for this store, is
+    reported and the read answers from the index it has."""
+    store = store_for(ctx, provider_id)
+    if not provider_for(provider_id).is_indexed(store) or not is_stale(store):
+        return {"refreshed": False}
+    lock = store.root / _REFRESH_LOCK
+    try:
+        if lock.is_file() and time.time() - lock.stat().st_mtime > _REFRESH_LOCK_TTL_S:
+            lock.unlink()
+        os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except FileExistsError:
+        return {"refreshed": False, "stale": True, "refresh_skipped": "another refresh is running"}
+    except OSError as exc:
+        return {"refreshed": False, "stale": True, "refresh_error": str(exc)[:200]}
+    started = time.monotonic()
+    try:
+        update(ctx, provider_id=provider_id)
+        try:
+            # The vault is a view of the graph: regenerate it with the graph (no model call).
+            export_obsidian(ctx, provider_id=provider_id)
+        except Exception:
+            pass
+        return {"refreshed": True, "refresh_seconds": round(time.monotonic() - started, 1)}
+    except Exception as exc:
+        return {"refreshed": False, "stale": True, "refresh_error": str(exc)[:200]}
+    finally:
+        try:
+            lock.unlink()
+        except OSError:
+            pass
+
+
+def usage_summary(provider_id: Optional[str] = None, *, days: int = 30) -> Dict[str, Any]:
+    from api.knowledge_graph import usage
+
+    info = get_provider_info(provider_id)
+    if info is None:
+        raise KnowledgeGraphError(f"provider {provider_id or default_provider_id()!r} not registered")
+    return usage.summary(store_root_path(info), days=days)
+
+
 def index(ctx: ResolvedContext, *, provider_id: Optional[str] = None,
           force: bool = False) -> Dict[str, Any]:
     store = store_for(ctx, provider_id)
@@ -237,7 +286,7 @@ def _project_docs(root: str, *, limit: int = 400, max_bytes: int = 512_000) -> L
     base = Path(root)
     try:
         out = subprocess.run(["git", "-C", str(base), "ls-files", "-z", "--", "*.md"],
-                             capture_output=True, text=True, timeout=15)
+                             capture_output=True, text=True, timeout=15, encoding="utf-8", errors="replace")
         rels = [r for r in out.stdout.split("\0") if r] if out.returncode == 0 else []
     except (OSError, subprocess.SubprocessError):
         rels = []

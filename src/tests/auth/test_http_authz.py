@@ -911,7 +911,10 @@ def test_agent_router_options_requires_owner(tmp_path, monkeypatch):
     )
     live = ctx["client"].get("/api/agent-router/options?live=1", environ_base=LAN)
     assert live.status_code == 200, live.get_json()
-    assert live.get_json()["agent_models"]["opencode"] == ["openrouter/deepseek/v9"]
+    # Live ids come first; manifest ids the live list omits stay after them.
+    opencode = live.get_json()["agent_models"]["opencode"]
+    assert opencode[0] == "openrouter/deepseek/v9"
+    assert set(data["agent_models"]["opencode"]) <= set(opencode)
 
 
 def test_worker_bearer_cannot_read_router_options(tmp_path, monkeypatch):
@@ -1111,13 +1114,13 @@ def test_session_project_persist_and_isolation(tmp_path, monkeypatch):
     ctx["client"].set_cookie("session_token", ctx["other_token"])
     res = ctx["client"].patch(
         f"/api/auth/sessions/{ctx['other_sid']}",
-        json={"project_id": 7, "project_name": "Epochs", "project_path": "E:\\Game Dev\\Epochs"},
+        json={"project_id": 7, "project_name": "Sample Project", "project_path": "E:\\Game Dev\\Sample Project"},
         environ_base=LAN,
     )
     assert res.status_code == 200, res.get_json()
     stored = get_auth_db().get_session_project(ctx["other_sid"])
     assert stored and stored.get("project_id") == 7
-    assert stored.get("project_name") == "Epochs"
+    assert stored.get("project_name") == "Sample Project"
     res = ctx["client"].patch(
         f"/api/auth/sessions/{ctx['sid']}",
         json={"project_id": 9},

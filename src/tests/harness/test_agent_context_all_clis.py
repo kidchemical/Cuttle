@@ -505,6 +505,7 @@ def test_compact_supported_agents_mocked(agent_id, monkeypatch):
     monkeypatch.setattr(ac, "_compact_codex", _ok)
     monkeypatch.setattr(ac, "_compact_hermes", _ok)
     monkeypatch.setattr(ac, "_compact_claude", _ok)
+    monkeypatch.setattr(ac, "_compact_antigravity", _ok)
 
     result = ac.compact_agent_context(
         chat_session_id=42, agent_id=agent_id, cwd=str(_REPO)
@@ -524,7 +525,7 @@ def test_compact_unavailable_agents_rejected(agent_id):
     assert "unsupported" in err or "no headless compact" in err or "compact" in err
 
 
-def test_antigravity_gauge_without_compact(monkeypatch):
+def test_antigravity_gauge_offers_native_compact(monkeypatch):
     monkeypatch.setattr(ac, "lookup_catalog_context_limit", lambda _m: None)
     monkeypatch.setattr(ac, "_load_resume_id", lambda *_a, **_k: "agy-conv-1")
     monkeypatch.setattr(ac, "_resolve_model_for_agent", lambda *_a, **_k: "gemini-flash")
@@ -544,12 +545,16 @@ def test_antigravity_gauge_without_compact(monkeypatch):
     )
     assert st["success"] is True
     assert st["used_tokens"] == 40_000
-    assert st["compact_available"] is False
+    # Headless `agy -p "/compact" --conversation …` is the documented path.
+    assert st["compact_available"] is True
+    seen = {}
+    monkeypatch.setattr(ac, "_compact_antigravity",
+                        lambda cwd, rid, sid=None: seen.update(rid=rid) or {"success": True, "method": "compact"})
+    monkeypatch.setattr(ac, "get_agent_context_status", lambda **_k: {"success": True})
     result = ac.compact_agent_context(
         chat_session_id=1, agent_id="antigravity", cwd=str(_REPO)
     )
-    assert result["success"] is False
-    assert "compact" in (result.get("error") or "").lower()
+    assert result["success"] is True and seen["rid"] == "agy-conv-1"
 
 
 def test_hermes_compact_available(monkeypatch):

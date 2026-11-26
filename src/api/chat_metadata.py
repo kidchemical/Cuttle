@@ -187,7 +187,7 @@ def user_badge_metadata(message_text: str, session_id, identity: Optional[dict] 
     import re as _re
 
     text = str(message_text or '').lstrip()
-    m = _re.match(r'^/(muse|hermes|opencode|codex|claude|cursor)\b', text, _re.IGNORECASE)
+    m = _re.match(r'^/(muse|hermes|opencode|codex|claude|antigravity|cursor)\b', text, _re.IGNORECASE)
     if not m:
         return None
     agent = m.group(1).lower()
@@ -341,6 +341,33 @@ def user_badge_metadata(message_text: str, session_id, identity: Optional[dict] 
             label += f' · {effort}'
             meta += f' · effort {effort}'
         return {'slash_command': {'chips': [{'label': label, 'meta': meta, 'category': 'codex'}]}}
+    if agent == 'antigravity':
+        model, effort = (ident_model, ident_effort) if ident is not None else ('', '')
+        if ident is None:
+            try:
+                from api.agent_harness.agents.antigravity.session_store import (
+                    load_antigravity_effort,
+                    load_antigravity_model,
+                )
+                if sid:
+                    model = str(load_antigravity_model(sid) or '').strip()
+                    effort = str(load_antigravity_effort(sid) or '').strip()
+            except Exception:
+                pass
+            if not model or not effort:
+                sm, se = _starred(aid='antigravity')
+                model, effort = model or sm, effort or se
+        try:
+            from api.agent_harness.agents.antigravity.model_catalog import antigravity_model_label
+            label_model = antigravity_model_label(model) if model else model
+        except Exception:
+            label_model = model
+        label = 'Antigravity' + (f' - {label_model}' if label_model else '')
+        meta = '/antigravity' + (f' · model {model}' if model else '')
+        if effort:
+            label += f' · {effort}'
+            meta += f' · effort {effort}'
+        return {'slash_command': {'chips': [{'label': label, 'meta': meta, 'category': 'antigravity'}]}}
     if agent == 'claude':
         model = effort = ''
         if ident is not None:

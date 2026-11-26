@@ -89,6 +89,10 @@ class ChildSpec:
     # Orchestrator tier to pick from ("worker", a tier label or id); resolved to a
     # member with budget left before any chat exists (api.orchestrator.service).
     tier: str = ""
+    # Explicit Tasks assignment, "<gizmo>:<item>" (spec.parse_task_ref).
+    task: str = ""
+    # Execution node the child runs on ("" = this host; api.exec_nodes).
+    node: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -137,6 +141,9 @@ class ChildRecord:
     card_pending: bool = False
     # The parent turn a follow-up round was sent in (api.chat_turn_id).
     card_turn_id: str = ""
+    # The Tasks item this child was assigned to (empty when none).
+    task_gizmo_id: str = ""
+    task_item_id: str = ""
 
     def handle(self) -> str:
         return chat_handle(self.session_id)

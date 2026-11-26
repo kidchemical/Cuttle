@@ -1,5 +1,7 @@
 # Agent ops CLIs (global)
 
+Chat handles in the examples are fictional. Substitute handles from the current installation.
+
 Cuttle’s product UI is the daemon + web/Electron chat. Separately, agents
 need **stable shell verbs** for local ops (transcripts, workers, brain, Discord REST, …).
 
@@ -17,7 +19,7 @@ agent toolkit.
 
 | Domain | Module | Doc |
 |---|---|---|
-| Agent activity / database policies | `python -m api.agent_events` / `python -m api.storage` | `agent-events.md` |
+| Agent activity / database policies / host storage location | `python -m api.agent_events` / `python -m api.storage` (including `location`) | `agent-events.md`, [Cuttle home](../../docs/architecture/cuttle-home.md) |
 | Agent review (Keep / Undo agent hunks) | `python -m api.agent_review` (list, show, keep, undo) | Cuttle `.cuttle/docs/experimental-features.md` |
 | Chat handles / transcripts | `python -m api.chat_cli` | `chat-history.md` |
 | Message / inspect / supervise an existing chat | `python -m api.chat_cli` (status, snapshot, send, stop, supervise, operations) | `chat-history.md` |
@@ -25,8 +27,10 @@ agent toolkit.
 | Model API provider catalogs | `python -m api.model_providers` (list, models, inspect) | Cuttle `.cuttle/docs/model-providers.md` |
 | Background helper execution catalogs | `python -m api.background_helpers` (list, models, inspect; no inference) | Cuttle `.cuttle/docs/model-providers.md` |
 | Experimental flags | `python -m api.experimental` (list, get, set, reset) | Cuttle `.cuttle/docs/experimental-features.md` |
+| Execution nodes (experimental `exec_nodes`; which machine runs a chat's agent) | `python -m api.exec_nodes` (list, show, set, node) | `feature/exec_nodes/docs/execution-nodes.md` (loaded while enabled) |
 | Secret vault (experimental `secret_vault`; use secrets without reading them) | `python -m api.secret_vault` (status, list, request, run) | `feature/secret_vault/docs/secret-vault.md` (loaded while enabled) |
 | Tasks gizmos | `python -m api.gizmos tasks` | `gizmos.md` |
+| Media shared in chats | `python -m api.media_library list [--chat CH-…] [--kind image\|video] [--available] [--json]` | `chat-media.md` |
 | Cuttle QA / promo accounts | `python -m api.fixture_accounts` | Cuttle project `.cuttle/docs/fixture-accounts.md` |
 | Discord reads | `python -m api.discord_cli` | `discord.md` (posts stay on `discord.post`) |
 | External service ops (action types) | `python -m api.service_ops list` | `commands-and-actions.md` |
@@ -58,7 +62,7 @@ Cuttle-as-MCP-server (`run_cuttle_mcp.py`, Tools-page pack toggles, pipeline MCP
 From the Cuttle repo root with the **project venv** (not bare `python`):
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m api.chat_cli get CH-000430-99 --json
+PYTHONPATH=src .venv/bin/python -m api.chat_cli get CH-900003-99 --json
 ```
 
 Put flags after the verb. `PYTHONPATH=src` resolves the package under `src/api`;
@@ -79,7 +83,7 @@ the path and use the Windows interpreter; for example:
 
 ```powershell
 $env:PYTHONPATH = "src"
-.\.venv\Scripts\python.exe -m api.chat_cli get CH-000430-99 --json
+.\.venv\Scripts\python.exe -m api.chat_cli get CH-900003-99 --json
 ```
 
 Use PowerShell backticks for multiline continuation and single-quoted JSON

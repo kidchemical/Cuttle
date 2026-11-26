@@ -84,7 +84,7 @@ register_flag(FlagSpec(
 
 register_flag(FlagSpec(
     id="chat_supervision", label="Chat supervision",
-    description="Show chat supervision in the UI: a header chip in the supervisor chat (target, interval, next check, check history, pause/cancel), a \"Supervised by\" badge with branch-rule warnings in the worker chat, queued messages, a \"Supervise this chat…\" menu action, and schedules on the Jobs page. Agent commands (python -m api.chat_cli supervise/send) work regardless.",
+    description="Show chat supervision in the UI: a header chip in the supervisor chat (target, interval, next check, check history, pause/cancel), a \"Supervised by\" badge with branch-rule warnings in the worker chat, queued messages, a \"Supervise this chat…\" menu action, schedules on the Jobs page, and Apps → Supervision (everything running, plus the defaults new supervisions start from). Agent commands (python -m api.chat_cli supervise/send) work regardless.",
     default=False, category="agents", risk="low", since="0.0.0", needs_restart=False,
 ))
 
@@ -111,9 +111,17 @@ register_flag(FlagSpec(
 
 register_flag(FlagSpec(
     id="chat_quote_clips", label="Quote clips",
-    description="Select text in a chat message to get a small toolbar above it (Agree, Disagree, Explain, Investigate, Do this, Reply). A button adds the selected text with that reply to the composer as a removable clip; add several, then send them with your message.",
+    description="Select text in a chat message to get a small toolbar above it (Agree, Disagree, Explain, Investigate, Do this, Reply). A button adds the selected text with that reply to the composer as a removable clip (click a clip to edit its reply); add several, then send them with your message.",
     # Default on: low-risk UI; a clip is removable and is sent as ordinary message text.
     default=True, category="chat", risk="low", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
+    id="chat_studio_display", label="Studio chat display",
+    description="Adds a Studio option to Settings → Appearance → Display: a second chat look with a new type scale, layered cards, agent colour dots and the Studio layout pieces as they ship. Classic stays the default look. Turning this off returns every chat to Classic.",
+    # Default off: a second look is opt-in. The per-browser Display choice is
+    # only offered while this flag is on.
+    default=False, category="chat", risk="low", since="0.0.0", needs_restart=False,
 ))
 
 register_flag(FlagSpec(
@@ -226,4 +234,10 @@ register_flag(FlagSpec(
     description="Run a chat in its own git worktree and branch instead of the shared checkout, so parallel chats cannot fight over one working tree. Worktrees live under the Cuttle home unless you choose a folder (Settings → Agents → Worktrees, also per project); Cuttle refuses to create one that would leave the drive short of free space.",
     # Default on: only offers the option; each worktree is still created on purpose.
     default=True, category="agents", risk="medium", since="0.0.0", needs_restart=False,
+))
+
+register_flag(FlagSpec(
+    id="exec_nodes", label="Execution nodes",
+    description="Run a chat's agent CLI on another paired machine. Each chat gets a node selector in its header; the chat, its history and settings stay on this Cuttle host. A machine becomes a node when it is paired in Jobs → Devices, runs the Cuttle client daemon and turns agent execution on in its own settings. Off: every chat runs on this host.",
+    default=False, category="agents", risk="medium", since="0.0.0", needs_restart=False, context_bundle=True,
 ))

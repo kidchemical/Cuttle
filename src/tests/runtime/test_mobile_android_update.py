@@ -6,6 +6,8 @@ from pathlib import Path
 import json
 import zipfile
 
+import os
+
 import pytest
 
 from api import mobile_android_update as apk
@@ -194,9 +196,8 @@ def test_event_stream_drains_while_foreground():
     assert "sleepQuiet(2500)" not in src or "Keep polling while the UI is open" in src
 
 
-def test_offline_login_is_default_when_pc_down():
-    main = (REPO / "apps" / "mobile" / "src" / "main.js").read_text(encoding="utf-8")
-    html = (REPO / "apps" / "mobile" / "index.html").read_text(encoding="utf-8")
+def test_styled_error_page_is_shown_when_pc_down():
+    vite = (REPO / "apps" / "mobile" / "vite.config.js").read_text(encoding="utf-8")
     java = (
         REPO
         / "apps"
@@ -211,10 +212,15 @@ def test_offline_login_is_default_when_pc_down():
         / "mobile"
         / "MainActivity.java"
     ).read_text(encoding="utf-8")
-    assert "get('offline')" in main or "offline') === '1'" in main
-    assert "offline-login" in html
-    assert "server-fab" in main
-    assert "index.html?offline=1" in java
+    # The shared page ships in the APK and replaces the old inline/offline screens.
+    assert "src/web/error_page.html" in vite and "dist/error_page.html" in vite
+    assert '"https://localhost/error_page.html"' in java
+    offline = java.split("private void showOfflineLogin(", 1)[1].split("\n    }\n", 1)[0]
+    assert "showErrorPage(" in offline
+    page = java.split("private void showErrorPage(", 1)[1].split("\n    }\n", 1)[0]
+    for param in ('"kind", "network"', '"platform", "android"', '"code"', '"url"', '"attempt"'):
+        assert param in page
+    assert "loadDataWithBaseURL" not in java.split("private void showError(", 1)[1].split("\n    }\n", 1)[0]
 
 
 def test_ios_suppresses_foreground_banners():
@@ -310,6 +316,7 @@ def test_automatic_rebuild_installs_locked_dependencies_before_sync(monkeypatch,
 
     monkeypatch.setattr(apk.subprocess, "run", run)
     monkeypatch.setattr(apk, "publish_gradle_apk", publish)
+    monkeypatch.setattr(apk, "mobile_source_hash", lambda: "a" * 20)
     apk._run_rebuild("a" * 20)
     assert calls[0][0][1:] == ["ci"]
     assert calls[0][1]["cwd"] == str(apk.MOBILE_DIR)
@@ -324,6 +331,58 @@ def test_automatic_rebuild_installs_locked_dependencies_before_sync(monkeypatch,
         assert published == ["a" * 20]
         assert apk._rebuild_state["exitCode"] == 0
 
+
+
+def test_rebuild_never_publishes_a_build_whose_sources_changed_mid_build(monkeypatch, tmp_path):
+    """A ``git stash`` / ``pop`` during Gradle leaves the same hash but stale classes."""
+    from types import SimpleNamespace
+    src = tmp_path / "Notify.java"
+    src.write_text("new", encoding="utf-8")
+    published, gradle_envs = [], []
+    monkeypatch.setattr(apk, "_rebuild_command", lambda: ["fixture-gradle"])
+    monkeypatch.setattr(apk, "_rebuild_state", {})
+    monkeypatch.setattr(apk, "hash_input_files", lambda: [src])
+    monkeypatch.setattr(apk, "mobile_source_hash", lambda: "b" * 20)
+    monkeypatch.setattr(apk, "_await_quiet_sources", lambda: None)
+
+    def run(argv, **kwargs):
+        if argv == ["fixture-gradle"]:
+            gradle_envs.append(kwargs["env"].get("CUTTLE_ANDROID_PUBLISH"))
+            if len(gradle_envs) == 1:  # stash + pop while the first build compiles
+                src.write_text("new", encoding="utf-8")
+                os.utime(src, ns=(src.stat().st_mtime_ns + 10**9,) * 2)
+        return SimpleNamespace(returncode=0, stderr="", stdout="")
+
+    monkeypatch.setattr(apk.subprocess, "run", run)
+    monkeypatch.setattr(apk, "publish_gradle_apk", lambda d: published.append(d) or tmp_path / "ok.apk")
+    apk._run_rebuild("b" * 20)
+    assert gradle_envs == ["0", "0"]
+    assert published == ["b" * 20]
+    assert apk._rebuild_state["exitCode"] == 0
+
+
+def test_rebuild_gives_up_while_sources_keep_changing(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    src = tmp_path / "Notify.java"
+    src.write_text("x", encoding="utf-8")
+    published = []
+    monkeypatch.setattr(apk, "mobile_source_hash", lambda: "c" * 20)
+    monkeypatch.setattr(apk, "_rebuild_command", lambda: ["fixture-gradle"])
+    monkeypatch.setattr(apk, "_rebuild_state", {})
+    monkeypatch.setattr(apk, "hash_input_files", lambda: [src])
+    monkeypatch.setattr(apk, "_await_quiet_sources", lambda: None)
+
+    def run(argv, **kwargs):
+        if argv == ["fixture-gradle"]:
+            src.write_text(src.read_text(encoding="utf-8") + "x", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stderr="", stdout="")
+
+    monkeypatch.setattr(apk.subprocess, "run", run)
+    monkeypatch.setattr(apk, "publish_gradle_apk", lambda d: published.append(d))
+    apk._run_rebuild("c" * 20)
+    assert published == []
+    assert apk._rebuild_state["exitCode"] == 1
+    assert "changed during the build" in apk._rebuild_state["error"]
 
 def test_android_rebuild_route_owner_only_and_kicks(tmp_path, monkeypatch):
     from api import web_chat_api as wca

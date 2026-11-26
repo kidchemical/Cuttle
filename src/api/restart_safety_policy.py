@@ -12,7 +12,7 @@ from typing import Any, Dict, List
 # Short block injected into agent prompts (Cursor/Codex/Hermes/Claude/Gemini).
 RESTART_SAFETY_BRIEF = """\
 Flask / daemon restart safety (Cuttle-managed processes):
-- NEVER taskkill / Stop-Process the Flask (web_chat_api), cuttle_daemon, or Discord bot processes to "restart" them.
+- NEVER taskkill / Stop-Process the Flask (web_chat_api) or cuttle_daemon processes to "restart" them.
 - Use `/restart graceful`, `/restart when-idle`, or `/restart force --yes` (or POST /api/flask/restart).
 - The daemon owns stop/start/health. Killing Flask from an agent destroys the chat delivering your reply.
 - Unrelated taskkill of non-Cuttle processes is fine.
@@ -60,6 +60,15 @@ HARNESS_COVERAGE: Dict[str, Dict[str, Any]] = {
             "cuttle_ui_capabilities / restart_safety_brief",
         ],
         "notes": "Claude Code may read AGENTS.md; no Cuttle shell intercept.",
+    },
+    "antigravity": {
+        "hard_enforcement": None,
+        "hard_path": None,
+        "advisory": [
+            "AGENTS.md",
+            "cuttle_ui_capabilities / restart_safety_brief (injected on /antigravity prompts)",
+        ],
+        "notes": "Antigravity CLI runs headless with approvals bypassed; no Cuttle shell gate, advisory only.",
     },
     "deepseek": {
         "hard_enforcement": None,

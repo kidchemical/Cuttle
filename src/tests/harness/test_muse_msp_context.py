@@ -18,7 +18,7 @@ def test_read_muse_msp_context_from_offline_snapshot(tmp_path, monkeypatch):
                 "usage": {"inputTokens": 27158, "outputTokens": 175},
             }}},
         },
-    }))
+    }), encoding="utf-8")
     ctx = store.read_muse_msp_context("offline-session")
     assert ctx is not None
     assert ctx["context_tokens"] == 27333
@@ -33,7 +33,7 @@ def test_muse_msp_missing_anchor_does_not_count_cache_twice(tmp_path, monkeypatc
                 "usage": {"inputTokens": 10000, "cachedTokens": 9000},
             }},
         }},
-    }))
+    }), encoding="utf-8")
     ctx = store.read_muse_msp_context("offline-session")
     assert ctx["context_tokens"] == 10000
 
@@ -47,7 +47,7 @@ def test_muse_msp_zero_anchor_uses_native_total(tmp_path, monkeypatch):
                 "usage": {"inputTokens": 10000, "outputTokens": 100, "cachedTokens": 9000},
             }},
         }},
-    }))
+    }), encoding="utf-8")
     assert store.read_muse_msp_context("offline-session")["context_tokens"] == 10100
 
 

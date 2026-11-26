@@ -90,3 +90,68 @@ def clear_antigravity_resume_id(cwd: str, cuttle_session_id: Optional[str]) -> N
         data = _load()
         if data.pop(_key(cwd, cuttle_session_id), None) is not None:
             _save(data)
+
+
+# ── per-chat pins (palette / ``/antigravity model|effort``) ────────────────
+# Keys never end in ``\x1f<sid>`` so the resume suffix scan cannot match them.
+
+def _pin_key(kind: str, cuttle_session_id: Any) -> Optional[str]:
+    sid = str(cuttle_session_id).strip() if cuttle_session_id is not None else ""
+    return f"pin:{kind}:{sid}" if sid else None
+
+
+def _load_pin(kind: str, cuttle_session_id: Any) -> Optional[str]:
+    key = _pin_key(kind, cuttle_session_id)
+    if not key:
+        return None
+    with _lock:
+        raw = _load().get(key)
+    return raw.strip() if isinstance(raw, str) and raw.strip() else None
+
+
+def _save_pin(kind: str, cuttle_session_id: Any, value: Optional[str]) -> Optional[str]:
+    key = _pin_key(kind, cuttle_session_id)
+    if not key:
+        return None
+    text = str(value or "").strip()
+    with _lock:
+        data = _load()
+        if text:
+            data[key] = text
+        elif data.pop(key, None) is None:
+            return None
+        _save(data)
+    return text or None
+
+
+def load_antigravity_model(cuttle_session_id: Any) -> Optional[str]:
+    return _load_pin("model", cuttle_session_id)
+
+
+def save_antigravity_model(cuttle_session_id: Any, model: Optional[str]) -> Optional[str]:
+    """Pin (or, with a falsy model, unpin) the Antigravity model for this chat."""
+    return _save_pin("model", cuttle_session_id, model)
+
+
+def load_antigravity_effort(cuttle_session_id: Any) -> Optional[str]:
+    found = _load_pin("effort", cuttle_session_id)
+    return found.lower() if found else None
+
+
+def save_antigravity_effort(cuttle_session_id: Any, effort: Optional[str]) -> Optional[str]:
+    """Pin (or, with a falsy effort, unpin) ``--effort`` for this chat."""
+    return _save_pin("effort", cuttle_session_id, str(effort or "").strip().lower())
+
+
+def load_antigravity_context(cuttle_session_id: Any) -> Optional[Dict[str, Any]]:
+    """Last model call's prompt occupancy (``step_update.usage``), not turn billing."""
+    raw = _load_pin("context", cuttle_session_id)
+    try:
+        data = json.loads(raw) if raw else None
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def save_antigravity_context(cuttle_session_id: Any, snapshot: Optional[Dict[str, Any]]) -> None:
+    _save_pin("context", cuttle_session_id, json.dumps(snapshot) if snapshot else "")

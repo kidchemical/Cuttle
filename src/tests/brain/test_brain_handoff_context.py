@@ -546,6 +546,29 @@ def test_context_dashboard_payload():
     assert any(r["name"] == "00-safety.md" for r in p["rules"])
 
 
+def test_context_metrics_record_what_the_ranker_picked():
+    """Only the ranked layer's size was stored, so its picks could not be audited."""
+    import time
+
+    from api.cuttle_brain.metrics import fetch_turns, record_turn
+    from api.dashboards.context import cuttle_context
+
+    now = time.time()
+    pick = {"choice": "doc:chat-media.md", "confidence": 0.8, "injected": ["doc:chat-media.md"],
+            "excerpt": False, "skipped": False, "error": None}
+    record_turn(ts=now - 2, chat_session_id="9", agent_id="codex", mode="full",
+                envelope_chars=9000, ranked=pick, query_id="rk1")
+    record_turn(ts=now - 1, chat_session_id="9", agent_id="codex", mode="full", envelope_chars=9000,
+                ranked={"choice": "doc:git.md", "confidence": 0.2, "injected": [], "skipped": False},
+                query_id="rk2")
+    record_turn(ts=now, chat_session_id="9", agent_id="codex", mode="full", envelope_chars=9000,
+                ranked={"skipped": True}, query_id="rk3")
+    assert [t["ranked"] for t in fetch_turns(since_ts=now - 10) if t["query_id"] == "rk1"] == [pick]
+    p = cuttle_context(range_id="7d")
+    assert p["stats"]["ranked_judged"] == 2 and p["stats"]["ranked_injected"] == 1
+    assert p["ranked_picks"] == [{"id": "doc:chat-media.md", "count": 1}]
+
+
 def test_context_dashboard_excludes_handoff_from_briefing_size():
     """A full envelope that also carries an injected transcript still reports
     the *briefing* size, and the transcript is itemized by handoff mode."""

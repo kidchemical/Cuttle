@@ -1,7 +1,7 @@
-/* Orchestrator + Agents + Tasks Apps (shared skin). Loaded after page_controls.css, so
+/* Orchestrator + Agents + Tasks + Supervision Apps (shared skin). Loaded after page_controls.css, so
    form controls start from the shared app-page skin and only diverge where
    these pages need a distinct surface (title inputs, ladder, steppers). */
-body[data-page="orchestrator"], body[data-page="agents"], body[data-page="tasks"] {
+body[data-page="orchestrator"], body[data-page="agents"], body[data-page="tasks"], body[data-page="supervision"] {
     --orch-text: var(--text-primary, #e2e8f0);
     --orch-muted: var(--text-secondary, #a0aec0);
     --orch-accent: var(--accent-color, #8b5cf6);
@@ -13,6 +13,13 @@ body[data-page="orchestrator"], body[data-page="agents"], body[data-page="tasks"
     --orch-good: var(--success-border, #3fb950);
     --orch-warn: var(--warning-border, #d29922);
     --orch-bad: var(--error-border, #f56565);
+    /* The theme's status and accent tones are border and fill colours: as text
+       they are too faint on light themes and near-invisible on the monochrome
+       ones. Text uses these, pulled toward the theme's text colour. */
+    --orch-good-text: color-mix(in srgb, var(--orch-good) 55%, var(--orch-text));
+    --orch-warn-text: color-mix(in srgb, var(--orch-warn) 55%, var(--orch-text));
+    --orch-bad-text: color-mix(in srgb, var(--orch-bad) 55%, var(--orch-text));
+    --orch-accent-text: color-mix(in srgb, var(--orch-accent) 55%, var(--orch-text));
     --role-worker: #38b2ac;
     --role-escalation: #ed8936;
     --role-expert: #9f7aea;
@@ -49,8 +56,8 @@ body:is([data-page="agents"], [data-page="orchestrator"], [data-page="tasks"]) .
     border-color: transparent; color: var(--text-inverse, #fff);
 }
 .orch-page button.primary:hover:not(:disabled) { background: var(--orch-accent); border-color: transparent; }
-html.midnight-mode:not(.theme-custom) .orch-page button.primary { color: #111; }
-.orch-page button.danger { background: transparent; border-color: transparent; color: var(--orch-bad); }
+html.midnight-mode:not(.theme-custom) .orch-page button.primary { color: #000; }
+.orch-page button.danger { background: transparent; border-color: transparent; color: var(--orch-bad-text); }
 .orch-page button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--orch-bad) 12%, transparent); border-color: transparent; }
 .orch-page button svg { width: 16px; height: 16px; flex: none; }
 .orch-page .orch-icon-btn {
@@ -59,7 +66,7 @@ html.midnight-mode:not(.theme-custom) .orch-page button.primary { color: #111; }
     color: var(--orch-muted); font-size: 13px; border-radius: 6px;
 }
 .orch-page .orch-icon-btn:hover:not(:disabled) { color: var(--orch-text); background: var(--orch-hover); border-color: transparent; }
-.orch-page .orch-icon-btn.is-danger:hover:not(:disabled) { color: var(--orch-bad); background: color-mix(in srgb, var(--orch-bad) 12%, transparent); }
+.orch-page .orch-icon-btn.is-danger:hover:not(:disabled) { color: var(--orch-bad-text); background: color-mix(in srgb, var(--orch-bad) 12%, transparent); }
 .orch-page .orch-icon-btn:disabled { opacity: .3; }
 .orch-grow { flex: 1 1 auto; }
 .orch-page button.orch-small-btn { min-height: 28px; padding: 3px 10px; font-size: 12px; }
@@ -118,7 +125,7 @@ body.compact-shell-page .orch-page .orch-sidebar input[type=search] { height: 36
     background: color-mix(in srgb, var(--orch-accent) 18%, transparent);
     color: var(--orch-accent); font-size: 11px; font-weight: 650;
 }
-.orch-dot-count.is-bad { background: color-mix(in srgb, var(--orch-bad) 16%, transparent); color: var(--orch-bad); }
+.orch-dot-count.is-bad { background: color-mix(in srgb, var(--orch-bad) 16%, transparent); color: var(--orch-bad-text); }
 .orch-ladder-dots { display: flex; flex-direction: column; gap: 3px; }
 .orch-ladder-dot { width: 14px; height: 4px; border-radius: 2px; background: var(--orch-muted); }
 .orch-ladder-dot.role-worker { background: var(--role-worker); }
@@ -138,14 +145,14 @@ body.compact-shell-page .orch-page .orch-sidebar input[type=search] { height: 36
 .orch-block-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .orch-tag {
     display: inline-flex; align-items: center; height: 20px; padding: 0 8px;
-    border-radius: 999px; background: var(--orch-hover); color: var(--orch-muted);
+    border-radius: 999px; background: var(--orch-hover); color: color-mix(in srgb, var(--orch-muted) 55%, var(--orch-text));
     font-size: 10.5px; font-weight: 600; letter-spacing: .02em; white-space: nowrap;
 }
-.orch-tag.is-accent { background: color-mix(in srgb, var(--orch-accent) 16%, transparent); color: var(--orch-accent); }
+.orch-tag.is-accent { background: color-mix(in srgb, var(--orch-accent) 16%, transparent); color: var(--orch-accent-text); }
 .orch-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; }
 .orch-status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.orch-status.is-ok { color: var(--orch-good); }
-.orch-status.is-bad { color: var(--orch-bad); }
+.orch-status.is-ok { color: var(--orch-good-text); }
+.orch-status.is-bad { color: var(--orch-bad-text); }
 .orch-status.is-pending { color: var(--orch-muted); }
 
 /* Big inline-editable title + id line. */
@@ -348,7 +355,7 @@ body.compact-shell-page .orch-page input.orch-tier-name:is(:hover, :focus) { bor
 }
 .orch-member.is-default { border-color: color-mix(in srgb, var(--role) 45%, var(--orch-border)); background: color-mix(in srgb, var(--role) 6%, var(--orch-subtle)); }
 .orch-member.is-missing { border-color: color-mix(in srgb, var(--orch-bad) 55%, transparent); }
-.orch-member.is-missing .orch-member-pin { color: var(--orch-bad); }
+.orch-member.is-missing .orch-member-pin { color: var(--orch-bad-text); }
 .orch-member.is-empty { justify-content: center; padding: 14px; border-style: dashed; background: transparent; color: var(--orch-muted); font-size: 12px; }
 .orch-member-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .orch-member-name { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; font-size: 13px; font-weight: 600; }
@@ -371,7 +378,7 @@ body.compact-shell-page .orch-page input.orch-tier-name:is(:hover, :focus) { bor
 .orch-tier.is-drop-before > .orch-tier-card { box-shadow: 0 -3px 0 0 var(--orch-accent); }
 .orch-tier.is-drop-after > .orch-tier-card { box-shadow: 0 3px 0 0 var(--orch-accent); }
 .orch-tier.is-drop-denied > .orch-tier-card { border-color: color-mix(in srgb, var(--orch-bad) 55%, transparent); }
-.orch-tier-hint.is-off { margin: -4px 0 10px; color: var(--orch-bad); }
+.orch-tier-hint.is-off { margin: -4px 0 10px; color: var(--orch-bad-text); }
 /* On/off switch for a tier member (native checkbox, styled). */
 .orch-switch { position: relative; flex: 0 0 auto; width: 30px; height: 18px; cursor: pointer; }
 .orch-switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
@@ -445,7 +452,7 @@ body.compact-shell-page .orch-page .orch-tags-input input:focus-visible { outlin
 .orch-tag-chip {
     display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 4px 0 9px;
     border-radius: 999px; font-family: var(--font-mono, monospace); font-size: 11.5px;
-    background: color-mix(in srgb, var(--orch-bad) 12%, transparent); color: var(--orch-bad);
+    background: color-mix(in srgb, var(--orch-bad) 12%, transparent); color: var(--orch-bad-text);
 }
 .orch-page .orch-tag-chip button { min-height: 18px; width: 18px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: inherit; font-size: 10px; }
 .orch-page .orch-tag-chip button:hover:not(:disabled) { background: color-mix(in srgb, var(--orch-bad) 20%, transparent); }
@@ -476,9 +483,9 @@ body.compact-shell-page .orch-page input.orch-target { width: 150px; height: 30p
 .orch-savebar.is-dirty { border-color: color-mix(in srgb, var(--orch-accent) 55%, var(--orch-border)); }
 .orch-savebar-state { min-width: 0; font-size: 12.5px; color: var(--orch-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .orch-savebar-state::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 8px; border-radius: 50%; background: currentColor; vertical-align: 1px; }
-.orch-savebar-state.is-ok { color: var(--orch-good); }
-.orch-savebar-state.is-dirty { color: var(--orch-accent); }
-.orch-savebar-state.is-bad { color: var(--orch-warn); }
+.orch-savebar-state.is-ok { color: var(--orch-good-text); }
+.orch-savebar-state.is-dirty { color: var(--orch-accent-text); }
+.orch-savebar-state.is-bad { color: var(--orch-warn-text); }
 .orch-savebar-state strong { font-weight: 650; }
 
 /* ── Small screens ───────────────────────────────────────────────── */

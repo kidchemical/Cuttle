@@ -533,7 +533,7 @@ def test_script_button_then_submit_only_resumes_after_stop(tmp_path, monkeypatch
     ctx = _ctx(tmp_path, monkeypatch)
     actions = tmp_path / '.cuttle/actions'
     actions.mkdir(parents=True)
-    (actions / 'capture.yaml').write_text('name: capture.run\ntype: shell\nrun: echo capture\nreplay: reusable\n')
+    (actions / 'capture.yaml').write_text('name: capture.run\ntype: shell\nrun: echo capture\nreplay: reusable\n', encoding="utf-8")
     monkeypatch.setattr(af, '_run_one', lambda *a, **k: {'success': True, 'response': 'Capture saved: capture.csv'})
     spec = {'mode': 'form', 'resume': True, 'session_id': f"db_session_{ctx['owner_sid']}",
             'buttons': [{'id': 'start', 'action': 'capture.run'}],

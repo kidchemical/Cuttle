@@ -10,7 +10,7 @@ flag (default off). Tasks are established chat functionality and remain
 available through their scoped Gizmos API/CLI when this flag is off.
 
 The first type is **`usage_meter`**: plan budget left for one agent (Codex,
-Claude Code, Cursor) plus when the tightest window resets, or when a
+Claude Code, Cursor, Antigravity) plus when the tightest window resets, or when a
 blocked account unblocks. **OpenRouter** is a prepaid dollar balance rather
 than a plan window, so it shows a credit-balance **readout** (no reset). It is
 the same data as `/usage`, normalized, for the plan agents.
@@ -36,6 +36,7 @@ PYTHONPATH=src .venv/bin/python -m api.gizmos list
 PYTHONPATH=src .venv/bin/python -m api.gizmos create usage_meter --agent claude --dock titlebar
 PYTHONPATH=src .venv/bin/python -m api.gizmos create usage_meter --agent codex --id codex-meter --dock float --x 0.8 --y 0.05
 PYTHONPATH=src .venv/bin/python -m api.gizmos update codex-meter --show used --window weekly --title "Codex weekly"
+PYTHONPATH=src .venv/bin/python -m api.gizmos update codex-meter --size micro
 PYTHONPATH=src .venv/bin/python -m api.gizmos move codex-meter --dock popout
 PYTHONPATH=src .venv/bin/python -m api.gizmos data codex-meter --refresh
 PYTHONPATH=src .venv/bin/python -m api.gizmos usage codex
@@ -45,15 +46,40 @@ PYTHONPATH=src .venv/bin/python -m api.gizmos remove codex-meter
 JSON out; exit `0` ok, `1` flag off, `2` invalid/not found. Writes bump a
 store revision the shell polls every few seconds, so open windows update with
 no restart and no chat message. Check `list` before creating a meter; do not
-create a second meter for an agent that already has one unless asked.
+create a second meter for an agent that already has one unless asked (two
+Claude meters with different `billing` views are a normal setup).
 
-`usage_meter` config: `agent` (`codex` | `claude` | `cursor` | `openrouter`),
+`usage_meter` config: `agent` (`codex` | `claude` | `cursor` | `antigravity` | `openrouter`),
 `window` (`tightest` or a window id from `usage <agent>`, e.g. `five_hour`, `weekly`),
 `show` (`remaining` | `used`), `metric` (`auto` | `amount` | `percent` — how the
 meter reads out; `amount` is only meaningful for a provider that reports
-dollars, otherwise it falls back to `percent`), `notify_on_unblock` (bool,
-default off).
+dollars, otherwise it falls back to `percent`), `size` (`regular` | `micro` |
+`pico` — footprint on the blade bar and float/pop-out: `regular` is the ring or
+card, `micro` a slim label · value over a thin horizontal bar, `pico` a
+two-letter tag and the bar only; the title bar pill ignores it),
+`notify_on_unblock` (bool, default off), and for `claude` only `billing`:
+
+| `billing` | Shows |
+|---|---|
+| `subscription` (default) | the plan windows |
+| `api` | the API-credit row only (blocked once the monthly budget is spent) |
+| `both` | plan windows plus the API-credit row |
+| `current` | whichever side the default billing uses right now: API when billing is API first, or while the fallback covers an exhausted subscription |
+
+`current` follows the install default, not a chat's own Billing pin. The old
+`api_credit: true` flag reads as `both`.
+
+```bash
+PYTHONPATH=src .venv/bin/python -m api.gizmos create usage_meter --agent claude --billing api --id claude-api
+```
+
 Changing the agent keeps a default title in step; a custom title sticks.
+
+Antigravity quota is per **model group** (Gemini, Claude and GPT, Argon), each
+with its own weekly and 5-hour window (`gemini_models_5h`,
+`claude_and_gpt_models_weekly`, … — list them with `usage antigravity`). The
+account reads as blocked only when every group is spent; pin `--window` to the
+group you actually run, since `tightest` picks the lowest across all groups.
 
 ### Notify when unblocked
 

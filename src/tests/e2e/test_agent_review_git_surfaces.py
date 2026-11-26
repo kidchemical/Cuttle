@@ -93,7 +93,7 @@ def _wait(page, predicate, timeout=6):
 
 
 def _commits(project):
-    return int(subprocess.run(["git", "rev-list", "--count", "HEAD"], cwd=project, capture_output=True, text=True).stdout)
+    return int(subprocess.run(["git", "rev-list", "--count", "HEAD"], cwd=project, capture_output=True, text=True, encoding="utf-8").stdout)
 
 
 def test_pending_strip_badges_keep_and_undo(agent_turn, page, project):

@@ -158,6 +158,14 @@ async def reap_and_confirm(proc, *, timeout: float = _REAP_CONFIRM_SEC) -> bool:
         return False
 
 
+# Once the CLI process has exited, its stdout is drained until it stays quiet
+# this long, and for at most the cap: a detached grandchild the agent started
+# (a server, a viewer) inherits the pipe, so EOF may never come and the
+# survivor may keep logging into it.
+EXITED_PIPE_QUIET_SEC = 2.0
+EXITED_PIPE_MAX_SEC = 10.0
+
+
 @dataclass
 class InterruptibleRunResult:
     """Outcome of ``run_interruptible`` — always carries whatever was buffered."""
@@ -229,6 +237,7 @@ async def run_interruptible(
     stderr_parts: List[bytes] = []
     timed_out_reason: Optional[str] = None
     was_cancelled = False
+    exited_at: Optional[float] = None
 
     async def _pump_stderr() -> None:
         stderr = getattr(proc, "stderr", None)
@@ -278,12 +287,22 @@ async def run_interruptible(
                 stdout = getattr(proc, "stdout", None)
                 if stdout is None:
                     break
+                if getattr(proc, "returncode", None) is not None:
+                    if exited_at is None:
+                        exited_at = time.monotonic()
+                    elif time.monotonic() - exited_at >= EXITED_PIPE_MAX_SEC:
+                        break
+                    poll = EXITED_PIPE_QUIET_SEC
                 try:
                     if line_mode:
                         chunk = await asyncio.wait_for(stdout.readline(), timeout=poll)
                     else:
                         chunk = await asyncio.wait_for(stdout.read(65536), timeout=poll)
                 except asyncio.TimeoutError:
+                    if exited_at is not None:
+                        # Exited and drained: do not wait for an EOF that a
+                        # surviving grandchild holding the pipe never sends.
+                        break
                     continue
                 except ValueError:
                     # Oversized line vs stream limit — drop and keep going.

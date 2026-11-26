@@ -137,18 +137,18 @@ PROJECTS_JS = Path(__file__).resolve().parents[2] / "web" / "js" / "projects" / 
 def test_projects_page_folder_defaults_to_cuttle_default_and_patches_one_project():
     script = (
         "const W = require(process.argv[1]);"
-        "const data = { available: true, effective: { path: '/galaxy/wt', usable: true, free_gb: 900 },"
-        " projects: [{ id: '14', root: '/galaxy/Game Dev', effective: { path: '/galaxy/Game Dev', usable: true, free_gb: 900 } },"
-        "            { id: '3', root: '', effective: { path: '/galaxy/wt', usable: true, free_gb: 900 } }] };"
+        "const data = { available: true, effective: { path: '/example/worktrees/demo', usable: true, free_gb: 900 },"
+        " projects: [{ id: '14', root: '/example/Game Projects', effective: { path: '/example/Game Projects', usable: true, free_gb: 900 } },"
+        "            { id: '3', root: '', effective: { path: '/example/worktrees/demo', usable: true, free_gb: 900 } }] };"
         "console.log(JSON.stringify({"
         " own: W.view(data, 14), def: W.view(data, 3), unknown: W.view(data, 99), off: W.view({ available: false }, 3),"
         " set: W.patchFor(14, ' /x '), clear: W.patchFor('3', '') }));"
     )
     out = json.loads(subprocess.run(["node", "-e", script, str(PROJECTS_JS)], capture_output=True, text=True,
                                     encoding="utf-8", timeout=60, check=True).stdout)
-    assert out["own"]["override"] == "/galaxy/Game Dev" and not out["own"]["usesDefault"]
-    assert out["def"]["usesDefault"] and out["def"]["effectiveText"].startswith("/galaxy/wt")
-    assert out["unknown"]["usesDefault"] and out["unknown"]["defaultText"].startswith("/galaxy/wt")
+    assert out["own"]["override"] == "/example/Game Projects" and not out["own"]["usesDefault"]
+    assert out["def"]["usesDefault"] and out["def"]["effectiveText"].startswith("/example/worktrees/demo")
+    assert out["unknown"]["usesDefault"] and out["unknown"]["defaultText"].startswith("/example/worktrees/demo")
     assert out["off"] == {"available": False}
     assert out["set"] == {"project_roots": {"14": "/x"}}
     assert out["clear"] == {"project_roots": {"3": ""}}

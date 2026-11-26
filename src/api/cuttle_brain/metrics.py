@@ -54,13 +54,16 @@ _COLUMNS = (
     "full_reason", "prompt_chars", "envelope_chars", "delta_chars",
     "handoff_chars", "handoff_messages", "handoff_mode", "layer_chars",
     "context_tokens", "context_limit", "compacted", "success", "query_id",
-    "source",
+    "source", "ranked",
 )
 
 # Columns added after the table shipped; ``connect`` backfills them on an
 # existing DB so old installs keep working without a destructive rebuild.
 _ADDED_COLUMNS = {
     "handoff_mode": "TEXT",
+    # Context-ranking outcome for the turn (JSON: choice, confidence, injected,
+    # skipped, error), so the judge's picks can be audited, not just their size.
+    "ranked": "TEXT",
 }
 
 
@@ -122,6 +125,7 @@ def _row(**fields: Any) -> Dict[str, Any]:
         "success": None if fields.get("success") is None else (1 if fields.get("success") else 0),
         "query_id": fields.get("query_id") or None,
         "source": fields.get("source") or "live",
+        "ranked": json.dumps(fields["ranked"]) if isinstance(fields.get("ranked"), dict) else None,
     }
 
 
@@ -200,6 +204,10 @@ def fetch_turns(*, since_ts: float, db_path: Optional[Path] = None) -> List[Dict
             d["layer_chars"] = json.loads(d["layer_chars"]) if d.get("layer_chars") else {}
         except ValueError:
             d["layer_chars"] = {}
+        try:
+            d["ranked"] = json.loads(d["ranked"]) if d.get("ranked") else None
+        except ValueError:
+            d["ranked"] = None
         out.append(d)
     return out
 

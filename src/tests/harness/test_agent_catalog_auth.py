@@ -92,7 +92,12 @@ def test_cli_authed_agent_is_ready_without_any_key(monkeypatch):
     assert row["ready"] is True
 
 
-def test_missing_cli_is_never_ready():
+def test_missing_cli_is_never_ready(monkeypatch):
+    # Readiness must not depend on whether this machine has `agy` installed.
+    from api.agent_harness.agents.antigravity import adapter as agy
+
+    monkeypatch.setattr(agy, "antigravity_executable", lambda: None)
+    cat.reload_catalog()
     row = next(r for r in cat.public_catalog() if r["id"] == "antigravity")
     assert row["available"] is False
     assert row["ready"] is False

@@ -115,7 +115,7 @@ def test_send_steers_a_live_turn(chats):
     out = service.send(_ch(target), "keep going", actor=_ch(sup), db=db, request=host)
     assert out["delivery"] == "steered"
     [op] = store.listing(sup)
-    assert op["state"] == "delivered" and op["result"] == {"steered": True}
+    assert op["state"] == "delivered" and op["result"] == {"steered": True, "confirmed": False}
     assert ("POST", "/api/chat-steer", target, {"message": "keep going", "chat_op_id": op["id"]}) in host.calls
     assert op["id"] not in [o["id"] for o in store.due()]
 
@@ -334,6 +334,17 @@ def test_send_follows_the_chats_latest_agent_over_a_stale_badge(chats):
     assert service.pin_to_chat_agent(db, row, "go") == "/claude go"
 
 
+def test_pin_to_chat_agent_respects_composer_switch_after_older_turns(chats):
+    """Switching the chat's composer agent after earlier turns must win over old history."""
+    db, owner, _sup, target, _foreign = chats
+    row = {"id": target, "user_id": owner}
+    db.add_message(target, "user", "/cursor old check-in")
+    db.add_message(target, "assistant", "ok")
+    db.set_composer_selection(target, owner, {"stickyChips": [{"prefix": "/antigravity", "label": "Antigravity"}]})
+    assert service.pin_to_chat_agent(db, row, "**Supervision check-in for CH-000002**") == (
+        "/antigravity **Supervision check-in for CH-000002**")
+
+
 def test_restart_verifies_sends_and_resumes_schedules(chats):
     db, _owner, sup, target, _foreign = chats
     send = _queued(chats)
@@ -402,7 +413,7 @@ def test_user_row_stores_only_well_formed_op_ids(chats):
 
 
 def _snap(state, *, branch="dev/multiplayer", reply_id=1, done=0):
-    return {"handle": "CH-000002", "state": state, "branch": branch, "execution_path": "/galaxy/wt",
+    return {"handle": "CH-000002", "state": state, "branch": branch, "execution_path": "/example/worktrees/demo",
             "warnings": [], "live": {"status": "working"}, "latest_reply": {"id": reply_id, "content": "…"},
             "tasks": [{"id": "plan", "title": "Tasks", "done": done, "total": 3}]}
 
@@ -436,7 +447,7 @@ def test_settings_change_is_told_once_in_the_next_check_in_even_mid_turn(chats, 
     checkins = _tick(chats, sched, _snap("busy"), monkeypatch)
     assert len(checkins) == 1
     text = checkins[0]["payload"]["text"]
-    assert "Settings changed since your last check-in** (by you)" in text and "new rules" in text
+    assert "Settings changed since your last check-in** (by the user)" in text and "new rules" in text
     assert "pending_changes" not in store.find(sched["id"])["payload"]
     store.finish(checkins[0]["id"], "done", {})
     assert len(_tick(chats, sched, _snap("busy"), monkeypatch)) == 1  # nothing new: no second wake
@@ -680,7 +691,20 @@ def test_history_is_pruned(chats):
     sched = _schedule(chats)
     for _ in range(store.HISTORY_KEEP + 5):
         store.record_check(sched["id"], "skipped", {"reason": "busy"})
-    assert len(store.checks(sched["id"], limit=500)) == store.HISTORY_KEEP
+    history = store.checks(sched["id"], limit=500)
+    assert len(history) == store.SKIPPED_KEEP
+    assert all(row["outcome"] == "skipped" for row in history)
+
+
+def test_skipped_history_does_not_displace_real_checks(chats):
+    sched = _schedule(chats)
+    for _ in range(5):
+        store.record_check(sched["id"], "stalled")
+    for _ in range(60):
+        store.record_check(sched["id"], "skipped")
+    history = store.checks(sched["id"], limit=500)
+    assert sum(row["outcome"] == "stalled" for row in history) == 5
+    assert sum(row["outcome"] == "skipped" for row in history) == store.SKIPPED_KEEP
 
 
 def test_pause_stops_checks_and_resume_checks_now(chats):
@@ -702,7 +726,8 @@ def test_agent_prefix_and_start_now_briefing(chats, monkeypatch):
     assert op["payload"]["agent"] == "cursor" and op["due"] <= time.time()
     checkins = _tick(chats, op, _snap("busy"), monkeypatch)
     assert len(checkins) == 1  # the briefing wakes even though the target is busy
-    assert checkins[0]["payload"]["text"].startswith("/cursor **Supervision check-in for CH-000002**")
+    # Check-ins never hardcode a schedule agent prefix; dispatch pins to the chat's own agent.
+    assert checkins[0]["payload"]["text"].startswith("**Supervision check-in for CH-000002**")
     store.finish(checkins[0]["id"], "done", {})
     assert len(_tick(chats, op, _snap("busy"), monkeypatch)) == 1  # later busy checks skip
     with pytest.raises(ValueError, match="Unknown agent"):
@@ -736,8 +761,9 @@ def test_start_supervisor_pins_model_effort_and_seeds_the_composer_chip(chats, m
     assert chips[0]["prefix"].strip() == "/codex" and chips[0]["category"] == "codex"
     with pytest.raises(ValueError, match="unknown model"):
         service.start_supervisor(_ch(target), user_id=owner, agent="codex", model="nope", instructions="x", db=db)
-    with pytest.raises(ValueError, match="Pick an agent"):
-        service.start_supervisor(_ch(target), user_id=owner, agent="", instructions="x", db=db)
+    # Starting without an agent pin is allowed: the new supervisor chat uses Cuttle's normal routing/composer.
+    unpinned = service.start_supervisor(_ch(target), user_id=owner, instructions="x", db=db)
+    assert unpinned["operation"]["payload"]["agent"] == ""
 
 
 def _list(db, owner, wid, *, sid=None, scope="session", project="", done=False):
@@ -776,25 +802,21 @@ def test_supervision_follows_only_the_picked_tasks_lists(chats):
 def test_update_supervision_edits_in_place_and_tells_the_supervisor(chats, monkeypatch):
     db, owner, sup, target, _foreign = chats
     pinned = []
-    monkeypatch.setattr("api.agent_harness.agent_models.check_agent_pin",
-                        lambda a, m="", e="", **k: None if m in ("", "terra") else f"unknown model {m}")
     monkeypatch.setattr("api.subagents.identity.pin_child_session",
                         lambda sid, spec, project_path="": pinned.append((sid, spec.agent, spec.model, spec.effort)))
     op = service.supervise(_ch(target), _ch(sup), instructions="watch", agent="cursor", every=900, db=db)["operation"]
     service.set_paused(op["id"], owner, True, indefinite=True, db=db)
-    # Unchanged fields (blank model on an older schedule included) are not edits.
-    assert service.update_supervision(op["id"], owner, {"every": 900, "model": "", "instructions": "watch"},
-                                      db=db)["updated"] == []
+    # Unchanged fields (and ignored supervisor agent/model/effort keys) are not edits.
+    assert service.update_supervision(op["id"], owner, {"every": 900, "agent": "codex", "model": "terra",
+                                                        "instructions": "watch"}, db=db)["updated"] == []
     out = service.update_supervision(op["id"], owner, {
         "every": 300, "agent": "codex", "model": "terra", "effort": "high", "instructions": "new rules",
         "forbidden_branches": "main, prod", "task_ids": ["plan"]}, db=db)
-    assert out["updated"] == ["agent", "effort", "every", "forbidden_branches", "instructions", "model", "task_ids"]
+    assert out["updated"] == ["every", "forbidden_branches", "instructions", "task_ids"]
     cfg = out["operation"]["payload"]
-    assert cfg["agent"] == "codex" and cfg["model"] == "terra" and cfg["every"] == 300
-    assert cfg["forbidden_branches"] == ["main", "prod"] and cfg["task_ids"] == ["plan"]
+    assert cfg["every"] == 300 and cfg["forbidden_branches"] == ["main", "prod"] and cfg["task_ids"] == ["plan"]
     assert out["operation"]["state"] == "paused"  # editing never resumes
-    assert pinned == [(sup, "codex", "terra", "high")]
-    assert db.get_composer_selection(sup, owner)["stickyChips"][0]["category"] == "codex"
+    assert pinned == []  # editing supervision never re-pins the supervisor chat's agent/model
     # An edit never spends a supervisor turn of its own: the user gets a timeline
     # notice, and the change waits on the schedule for its next check-in.
     assert [o for o in store.listing(sup) if o["kind"] == "checkin"] == []
@@ -803,16 +825,14 @@ def test_update_supervision_edits_in_place_and_tells_the_supervisor(chats, monke
     meta = notices[0]["metadata"]
     meta = json.loads(meta) if isinstance(meta, str) else meta
     assert meta["timeline_notice"]["type"] == "supervision" and meta["kind"] == "supervision-change"
-    assert "Focus" in meta["timeline_notice"]["detail"] and "by you" in meta["timeline_notice"]["detail"]
+    assert "Focus" in meta["timeline_notice"]["detail"] and "by the user" in meta["timeline_notice"]["detail"]
+    # An interval-only edit updates the timer and timeline without queuing a spurious wake/pending_changes entry.
     service.update_supervision(op["id"], owner, {"every": 600}, db=db)
     pending = store.find(op["id"])["payload"]["pending_changes"]
-    assert pending["rev"] == 2 and pending["sources"] == ["you"]
-    assert pending["updated"] == ["agent", "effort", "every", "forbidden_branches", "instructions", "model",
-                                  "task_ids"]
+    assert pending["rev"] == 1 and pending["sources"] == ["the user"]
+    assert pending["updated"] == ["every", "forbidden_branches", "instructions", "task_ids"]
     section = "\n".join(service.changes_section(store.find(op["id"])["payload"], _ch(target)))
-    assert "Settings changed since your last check-in** (by you)" in section and "Focus" in section
-    with pytest.raises(ValueError, match="unknown model"):
-        service.update_supervision(op["id"], owner, {"model": "nope"}, db=db)
+    assert "Settings changed since your last check-in** (by the user)" in section and "Focus" in section
     with pytest.raises(ValueError, match="also in the forbidden"):
         service.update_supervision(op["id"], owner, {"required_branch": "prod"}, db=db)
     with pytest.raises(ValueError, match="interval"):
@@ -820,6 +840,28 @@ def test_update_supervision_edits_in_place_and_tells_the_supervisor(chats, monke
     service.cancel(op["id"], owner, db=db)
     with pytest.raises(ValueError, match="live supervision"):
         service.update_supervision(op["id"], owner, {"every": 600}, db=db)
+
+
+def test_supervisor_self_edit_and_interval_only_edit_do_not_clobber_due(chats):
+    """Supervisor self-edits say 'by the supervisor' and never wake it 20 s later;
+    user interval-only edits also respect the new interval without a 20 s wake."""
+    db, owner, sup, target, _foreign = chats
+    op = service.supervise(_ch(target), _ch(sup), instructions="watch", every=900, db=db)["operation"]
+    now = time.time()
+    # Supervisor stretches its own interval to 2 h via edit-operation.
+    service.update_supervision(op["id"], owner, {"every": 7200}, source="the supervisor", db=db)
+    after = store.find(op["id"])
+    assert "pending_changes" not in after["payload"]
+    assert after["due"] > now + 300  # not clobbered to now + 20 s
+    notices = [m for m in db.get_messages(sup) if m["role"] == "system"]
+    assert len(notices) == 1
+    meta = json.loads(notices[0]["metadata"]) if isinstance(notices[0]["metadata"], str) else notices[0]["metadata"]
+    assert "by the supervisor" in meta["timeline_notice"]["detail"]
+    # User interval-only edit also does not clobber due to now + 20 s.
+    service.update_supervision(op["id"], owner, {"every": 3600}, source="the user", db=db)
+    after_user = store.find(op["id"])
+    assert "pending_changes" not in after_user["payload"]
+    assert after_user["due"] > now + 300
 
 
 def test_edit_route_and_cli(client, chats, monkeypatch, capsys):
@@ -957,13 +999,33 @@ def test_checkin_text_is_markdown_without_raw_json():
     snap["latest_reply"] = {"text": "Line one\n\nLine two"}
     cfg = {"agent": "cursor", "instructions": "Keep going.", "model_tiers": {"worker": ["cursor auto"]}}
     text = worker.checkin_text(cfg, snap, ["target is on forbidden branch 'main'"])
-    assert text.startswith("/cursor **Supervision check-in for CH-000002**: idle with open Tasks items.")
-    assert "Branch `dev/multiplayer` · checkout `/galaxy/wt`" in text
+    assert text.startswith("**Supervision check-in for CH-000002**: idle with open Tasks items.")
+    assert "Branch `dev/multiplayer` · checkout `/example/worktrees/demo`" in text
     assert "- target is on forbidden branch 'main'" in text and "- Tasks: 1/3 done" in text
     assert "> Line one\n>\n> Line two" in text and "- worker: cursor auto" in text
     assert "{" not in text and "\\n" not in text
     snap["latest_reply"] = {"text": "x" * (worker.CHECKIN_REPLY_CHARS + 10)}
     assert "(start)" in worker.checkin_text(cfg, snap, [])
+
+
+def test_checkin_includes_recent_user_steers_and_excludes_chat_ops_sends(chats):
+    db, _owner, sup, target, _foreign = chats
+    db.add_message(target, "user", "old prompt before reply")
+    db.add_message(target, "assistant", "previous reply")
+    db.add_message(target, "user", "/claude Btw you can wake the display", metadata={"steered": True})
+    db.add_message(target, "user", "Supervisor: skip GPU row", metadata={"origin": "chat_ops", "chat_op_id": "op1"})
+
+    st = service.status(f"CH-{target:06d}", f"CH-{sup:06d}", db=db, request=lambda *a, **k: {"generating": True})
+    msgs = st["recent_user_messages"]
+    assert len(msgs) == 1
+    assert "wake the display" in msgs[0]["text"]
+    assert msgs[0]["steered"] is True
+
+    text = worker.checkin_text({"instructions": ""}, st, [])
+    assert "**Recent user messages to" in text
+    assert "/claude Btw you can wake the display *(live steer)*" in text
+    assert "old prompt before reply" not in text
+    assert "Supervisor: skip GPU row" not in text
 
 
 # --- stall detection: what counts as progress, backoff, wording --------------
@@ -1180,12 +1242,13 @@ def test_supervision_digest_tells_both_chats_about_a_pause(chats):
     assert "auto-resumes" in service.supervision_digest(sup)
 
 
-def test_supervision_digest_tells_the_supervisor_how_to_change_its_model(chats):
-    """A supervisor once told the user the CLI could not change its check-in model."""
+def test_supervision_digest_tells_the_supervisor_how_to_change_its_schedule(chats):
+    """The digest names the schedule id and edit-operation --every without agent/model overrides."""
     _db, _owner, sup, target, _foreign = chats
     sched = _schedule(chats)
     mine = service.supervision_digest(sup)
-    assert f"edit-operation {sched['id']} --model" in mine and f"--as {_ch(sup)}" in mine
+    assert f"edit-operation {sched['id']} --every" in mine and f"--as {_ch(sup)}" in mine
+    assert "current agent" in mine and "--model" not in mine
     assert "edit-operation" not in service.supervision_digest(target)
 
 
@@ -1297,3 +1360,31 @@ def test_undelivered_send_wakes_the_supervisor_once_even_mid_turn(chats, monkeyp
     again = _tick(chats, sched, {**_snap("busy"), "undelivered": [stuck]}, monkeypatch)
     assert [c["id"] for c in again] == [checkins[0]["id"]]  # told once
     assert store.checks(sched["id"])[1]["outcome"] == "undelivered"
+
+
+def test_timeline_cli_handle_and_output(monkeypatch, capsys):
+    from api.chat_cli.cli import main
+    from api.chat_ops import timeline
+    cli_db = object()
+    monkeypatch.setattr('api.chat_cli.cli._open_db', lambda _: cli_db)
+    monkeypatch.setattr(service, 'context', lambda *a, **kw: None)
+    calls = []
+    def project(sid, **kwargs):
+        calls.append((sid, kwargs))
+        return {'items': [{'at': 42, 'kind': 'stalled', 'headline': 'Chat stalled'}]}
+    monkeypatch.setattr(timeline, 'project', project)
+    assert main(['timeline', 'CH-002620', '--limit', '3', '--before', '99', '--include-quiet']) == 0
+    assert capsys.readouterr().out == '42  stalled  Chat stalled\n'
+    # Names resolve against the DB the CLI opened, not the process default.
+    assert calls == [(2620, {'limit': 3, 'before': '99', 'include_quiet': True, 'db': cli_db})]
+    assert main(['timeline', 'CH-002620', '--json']) == 0
+    assert json.loads(capsys.readouterr().out)['items'][0]['kind'] == 'stalled'
+
+
+def test_timeline_route_requires_session_owner(client, chats, monkeypatch):
+    _flag(monkeypatch, True)
+    db, _, sup, _, foreign = chats
+    _schedule(chats)
+    assert client.get(f'/api/chat-ops/sessions/{sup}/timeline').status_code == 200
+    assert client.get(f'/api/chat-ops/sessions/{foreign}/timeline').status_code == 404
+    assert client.get('/api/chat-ops/sessions/99999999/timeline').status_code == 404

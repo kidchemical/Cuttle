@@ -17,8 +17,9 @@
    the active harness always attaches its current composer
    pins (dirty-only for the rest), the Codex pre-send fetch never
    clobbers a dirty pick, and badge effort prefers run data over
-   composer pins in muse → hermes → opencode → codex → claude order.
-   Also owns the Claude Code model/effort palette decisions (filter
+   composer pins in muse → hermes → opencode → codex → claude →
+   antigravity order. Also owns the badge-gated harness (Claude Code,
+   Antigravity) model/effort palette decisions (filter
    normalization, row mapping, effort levels, seed patch, fetch gates,
    response normalization, labels) as pure functions over explicit
    inputs; the page keeps supplement state, fetch/POST transport,
@@ -66,7 +67,7 @@
      * Send-time model/effort identity for one POST, as a pins object
      * ({} when nothing applies — the page skips `agent_pins` then).
      *
-     * `models`: { muse, hermes, opencode, codex, claude } each with
+     * `models`: { muse, hermes, opencode, codex, claude, antigravity } each with
      * { model, effort, modelDirty, effortDirty }.
      *
      * Always include the active harness's current composer pins (not
@@ -88,13 +89,14 @@
             if (Object.keys(entry).length) pins[agent] = entry;
         };
         const msg = String(p.message || '');
-        const activeMatch = msg.match(/^\/(muse|hermes|opencode|codex|claude|cursor)\b/i);
+        const activeMatch = msg.match(/^\/(muse|hermes|opencode|codex|claude|antigravity|cursor)\b/i);
         const aid = activeMatch ? String(activeMatch[1]).toLowerCase() : '';
         if (aid === 'muse') put('muse', S.muse);
         else if (aid === 'hermes') put('hermes', S.hermes);
         else if (aid === 'opencode') put('opencode', S.opencode);
         else if (aid === 'codex') put('codex', S.codex);
         else if (aid === 'claude') put('claude', S.claude);
+        else if (aid === 'antigravity') put('antigravity', S.antigravity);
         else if (aid === 'cursor') {
             // Default composer state is Auto; sending that as a pin would
             // clobber a starred Grok pick. Only attach a concrete model.
@@ -118,6 +120,7 @@
         dirtyPut('opencode', S.opencode);
         dirtyPut('codex', S.codex);
         dirtyPut('claude', S.claude);
+        dirtyPut('antigravity', S.antigravity);
         return pins;
     }
 
@@ -164,6 +167,7 @@
             || pinned[2]
             || pinned[3]
             || pinned[4]
+            || pinned[5]
             || ''
         );
         return raw.trim();
@@ -171,7 +175,7 @@
 
     // Only explicit picks belong to a draft. Restored picks stay dirty until
     // the real session accepts them, so async defaults cannot replace them.
-    const DRAFT_PIN_AGENTS = ['muse', 'hermes', 'opencode', 'codex', 'claude'];
+    const DRAFT_PIN_AGENTS = ['muse', 'hermes', 'opencode', 'codex', 'claude', 'antigravity'];
     function draftOverrides(supplement) {
         const S = supplement || {};
         const pins = {};
@@ -256,34 +260,40 @@
     }
 
     /**
-     * Claude Code palette filter normalization. Strips the agent + section
-     * prefixes the composer already matched (`claude model opus` → `opus`),
-     * so the remainder filters rows. Pure string decisions; the page still
-     * applies them via its matcher and ranker.
+     * Badge-gated harness palette decisions, shared by every agent whose
+     * model/effort pins follow the `/api/<id>/models|model|effort` contract
+     * (Claude Code, Antigravity). `spec` is `{ id, label }` (label = badge
+     * name). Pure string/row decisions; the page still applies them via its
+     * matcher and ranker.
+     *
+     * Filter normalization strips the agent + section prefixes the composer
+     * already matched (`claude model opus` → `opus`).
      */
-    function claudeModelFilterForPalette(filterLower) {
-        let modelFilter = String(filterLower || '').toLowerCase().trim()
-            .replace(/^claude\s+/, '')
-            .replace(/^models?\b\s*/, '')
-            .trim();
-        if (modelFilter === 'claude') modelFilter = '';
+    function harnessModelFilterForPalette(agentId, filterLower) {
+        const id = String(agentId || '').toLowerCase();
+        let modelFilter = String(filterLower || '').toLowerCase().trim();
+        if (modelFilter.startsWith(id + ' ')) modelFilter = modelFilter.slice(id.length + 1);
+        modelFilter = modelFilter.replace(/^models?\b\s*/, '').trim();
+        if (modelFilter === id) modelFilter = '';
         return modelFilter;
     }
 
-    function claudeEffortFilterForPalette(filterLower) {
-        let effortFilter = String(filterLower || '').toLowerCase().trim()
-            .replace(/^claude\s+/, '')
-            .replace(/^efforts?\b\s*/, '')
-            .trim();
+    function harnessEffortFilterForPalette(agentId, filterLower) {
+        const id = String(agentId || '').toLowerCase();
+        let effortFilter = String(filterLower || '').toLowerCase().trim();
+        if (effortFilter.startsWith(id + ' ')) effortFilter = effortFilter.slice(id.length + 1);
+        effortFilter = effortFilter.replace(/^efforts?\b\s*/, '').trim();
         if (effortFilter === 'effort') effortFilter = '';
         return effortFilter;
     }
 
     /**
-     * Map one Claude catalog row to its palette item (null when the row
-     * has no id). `preferredLower` is the current pick, lower-cased.
+     * Map one catalog row to its palette item (null when the row has no
+     * id). `preferredLower` is the current pick, lower-cased.
      */
-    function buildClaudeModelRow(model, preferredLower) {
+    function buildHarnessModelRow(spec, model, preferredLower) {
+        const agent = String((spec && spec.id) || '');
+        const name = String((spec && spec.label) || agent);
         const m = model || {};
         const id = String((m && m.id) || '').trim();
         if (!id) return null;
@@ -294,19 +304,24 @@
         const effortHint = modelEfforts.length
             ? 'Supported efforts: ' + modelEfforts.join(', ')
             : 'No effort levels for this model';
-        return {
-            category: 'claude-model',
-            prefix: '/claude model ' + id,
+        const row = {
+            category: agent + '-model',
+            prefix: '/' + agent + ' model ' + id,
             label: (fav ? '★ ' : '') + label + (current ? ' (current)' : ''),
             hint: [
-                (m && m.description) || ('Set Claude Code model to ' + id),
+                (m && m.description) || ('Set ' + name + ' model to ' + id),
                 effortHint,
             ].filter(Boolean).join(' · '),
             meta: id,
-            keywords: 'claude model ' + id + ' ' + label + ' ' + id.replace(/[-_/]+/g, ' '),
+            keywords: agent + ' model ' + id + ' ' + label + ' ' + id.replace(/[-_/]+/g, ' '),
             modelId: id,
-            claudeModel: true,
         };
+        row[agent + 'Model'] = true;
+        return row;
+    }
+
+    function buildClaudeModelRow(model, preferredLower) {
+        return buildHarnessModelRow({ id: 'claude', label: 'Claude Code' }, model, preferredLower);
     }
 
     /** Refresh-pick detection for the model palette (`refresh` alias). */
@@ -342,21 +357,28 @@
     }
 
     /** Map one effort level to its palette item. */
-    function buildClaudeEffortRow(id, parts) {
+    function buildHarnessEffortRow(spec, id, parts) {
+        const agent = String((spec && spec.id) || '');
+        const name = String((spec && spec.label) || agent);
         const p = parts || {};
         const preferred = String(p.preferredLower || '');
         const selectedModel = String(p.selectedModel || '');
-        return {
-            category: 'claude-effort',
-            prefix: '/claude effort ' + id,
+        const row = {
+            category: agent + '-effort',
+            prefix: '/' + agent + ' effort ' + id,
             label: 'Effort ' + id + (String(id).toLowerCase() === preferred ? ' (current)' : ''),
-            hint: 'Set Claude Code effort (--effort) to ' + id
+            hint: 'Set ' + name + ' effort (--effort) to ' + id
                 + (selectedModel ? ' for ' + selectedModel : ' (CLI default model)'),
             meta: id,
-            keywords: 'claude effort ' + id,
+            keywords: agent + ' effort ' + id,
             modelId: id,
-            claudeEffort: true,
         };
+        row[agent + 'Effort'] = true;
+        return row;
+    }
+
+    function buildClaudeEffortRow(id, parts) {
+        return buildHarnessEffortRow({ id: 'claude', label: 'Claude Code' }, id, parts);
     }
 
     /**
@@ -364,35 +386,39 @@
      * `undefined` meaning "leave the page's current value alone", so dirty
      * picks and key scoping stay exactly as the page applied them.
      */
-    function claudeSeedPatchFromSessionData(data, parts) {
+    function harnessSeedPatchFromSessionData(agentId, data, parts) {
         const p = parts || {};
         const patch = {};
         const key = p.sessionKey != null ? String(p.sessionKey) : '';
-        const serverModel = sessionPin(data, 'claude', 'model');
+        const serverModel = sessionPin(data, agentId, 'model');
         if (serverModel && !p.modelDirty) {
             patch.model = serverModel;
             if (key) patch.modelsKey = key;
         }
-        const serverEffort = sessionPin(data, 'claude', 'effort').toLowerCase();
+        const serverEffort = sessionPin(data, agentId, 'effort').toLowerCase();
         if (serverEffort && !p.effortDirty) {
             patch.effort = serverEffort;
             if (key) patch.effortKey = key;
         } else if (!p.effortDirty && key && data
-            && data.agent_pins && data.agent_pins.claude) {
+            && data.agent_pins && data.agent_pins[agentId]) {
             patch.effort = '';
             patch.effortKey = key;
         }
         return patch;
     }
 
+    function claudeSeedPatchFromSessionData(data, parts) {
+        return harnessSeedPatchFromSessionData('claude', data, parts);
+    }
+
     /**
-     * Fetch gate for the Claude model catalog. Mirrors
+     * Fetch gate for a harness model catalog. Mirrors
      * codexEffortFetchForSend: returns { fetch } or { fetch: true, url }.
      * The page performs the fetch and applies applyClaudeModelsResponse.
      */
-    function claudeModelsFetchForPalette(parts) {
+    function harnessModelsFetchForPalette(agentId, parts) {
         const p = parts || {};
-        if (!p.anyChat && !p.hasClaudeChip) return { fetch: false };
+        if (!p.anyChat && !p.hasChip) return { fetch: false };
         const key = p.sessionKey != null ? String(p.sessionKey) : '';
         const forceRefresh = !!p.forceRefresh;
         if (!forceRefresh && (p.loading
@@ -403,16 +429,18 @@
         const params = [];
         if (key) params.push('session=' + encodeURIComponent(key));
         if (forceRefresh) params.push('refresh=1');
-        return {
-            fetch: true,
-            url: params.length ? '/api/claude/models?' + params.join('&') : '/api/claude/models',
-        };
+        const base = '/api/' + agentId + '/models';
+        return { fetch: true, url: params.length ? base + '?' + params.join('&') : base };
+    }
+
+    function claudeModelsFetchForPalette(parts) {
+        const p = parts || {};
+        return harnessModelsFetchForPalette('claude', Object.assign({}, p, { hasChip: p.hasClaudeChip }));
     }
 
     /**
-     * Normalize a Claude models response. `model` is null when the page
-     * must keep its current pick (dirty); blank means the server named no
-     * preferred model.
+     * Normalize a models response. `model` is null when the page must keep
+     * its current pick (dirty); blank means the server named no preferred model.
      */
     function applyClaudeModelsResponse(json, parts) {
         const j = json || {};
@@ -428,23 +456,24 @@
     }
 
     /**
-     * Fetch gate for the Claude effort default. Returns { fetch } or
+     * Fetch gate for a harness effort default. Returns { fetch } or
      * { fetch: true, url }; the page re-checks dirty after the await.
      */
-    function claudeEffortFetchForPalette(parts) {
+    function harnessEffortFetchForPalette(agentId, parts) {
         const p = parts || {};
-        if (!p.hasClaudeChip) return { fetch: false };
+        if (!p.hasChip) return { fetch: false };
         const key = p.sessionKey != null ? String(p.sessionKey) : '';
         if (p.loading || (String(p.effortKey || '') === key && key)) return { fetch: false };
-        return {
-            fetch: true,
-            url: key
-                ? '/api/claude/effort?session=' + encodeURIComponent(key)
-                : '/api/claude/effort',
-        };
+        const base = '/api/' + agentId + '/effort';
+        return { fetch: true, url: key ? base + '?session=' + encodeURIComponent(key) : base };
     }
 
-    /** Normalize a Claude effort response to its preferred-effort string. */
+    function claudeEffortFetchForPalette(parts) {
+        const p = parts || {};
+        return harnessEffortFetchForPalette('claude', Object.assign({}, p, { hasChip: p.hasClaudeChip }));
+    }
+
+    /** Normalize an effort response to its preferred-effort string. */
     function applyClaudeEffortResponse(json) {
         return String((json && json.preferredEffort) || '');
     }
@@ -475,6 +504,23 @@
         return findClaudeCatalogLabel(models, raw) || raw || 'default';
     }
 
+    function claudeModelFilterForPalette(filterLower) {
+        return harnessModelFilterForPalette('claude', filterLower);
+    }
+
+    function claudeEffortFilterForPalette(filterLower) {
+        return harnessEffortFilterForPalette('claude', filterLower);
+    }
+
+    function prettyHarnessModelLabel(agentLabel, model, models) {
+        const raw = String(model || '').trim();
+        if (!raw) return agentLabel;
+        const known = findClaudeCatalogLabel(models, raw);
+        if (known) return String(known);
+        const leaf = raw.includes('/') ? raw.split('/').pop() : raw;
+        return String(leaf || raw).replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    }
+
     const api = {
         turnSlashFromMessages,
         shouldAdoptComposerSelection,
@@ -502,6 +548,20 @@
         applyClaudeEffortResponse,
         prettyClaudeModelLabel,
         claudeModelLabel,
+        harnessModelFilterForPalette,
+        harnessEffortFilterForPalette,
+        buildHarnessModelRow,
+        buildHarnessEffortRow,
+        harnessSeedPatchFromSessionData,
+        harnessModelsFetchForPalette,
+        harnessEffortFetchForPalette,
+        harnessEffortLevelsForModel: claudeEffortLevelsForModel,
+        markHarnessCurrentModel: markClaudeCurrentModel,
+        isHarnessModelRefreshPick: isClaudeModelRefreshPick,
+        applyHarnessModelsResponse: applyClaudeModelsResponse,
+        applyHarnessEffortResponse: applyClaudeEffortResponse,
+        prettyHarnessModelLabel,
+        harnessModelLabel: claudeModelLabel,
     };
 
     const ns = (root.CuttleChatAgentModel = root.CuttleChatAgentModel || {});

@@ -69,7 +69,7 @@ def _run(args: List[str], *, cwd: Optional[str] = None,
     # per-day graph snapshots (graphify-out/<date>/) would only pile up.
     env.setdefault("GRAPHIFY_NO_BACKUP", "1")
     return subprocess.run([binary, *args], cwd=cwd, env=env, capture_output=True,
-                          text=True, timeout=timeout)
+                          text=True, timeout=timeout, encoding="utf-8", errors="replace")
 
 
 def _artifact(store: GraphStore) -> Path:

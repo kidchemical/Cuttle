@@ -13,7 +13,10 @@
    Interface: pure helpers on the namespace (mediaKindFromUrl,
    isSafeMediaSrc, mediaDownloadUrl, …) and `create(deps)` → one controller
    per chat frame with buildMediaThumbHtml, thumbFallback and bind().
-   deps: { win, escapeHtmlInline, clamp, hostTeardownSignal, fetch? }.
+   deps: { win, escapeHtmlInline, clamp, hostTeardownSignal, fetch?,
+   galleryFor? }. `galleryFor(thumb)` → `{ items, index }` lets a host pick the
+   gallery a clicked thumb opens (Media App: the whole filtered grid); null or
+   absent keeps the default, the thumbs of the clicked bubble.
    The page keeps message formatting and calls in through these.
    Loaded before chat_page.js.
    ================================================================ */
@@ -155,6 +158,7 @@
             hostTeardownSignal.addEventListener('abort', function () { teardownHostLightbox(); }, { once: true });
         }
         const fetchFn = deps.fetch || frameWin.fetch.bind(frameWin);
+        const galleryFor = typeof deps.galleryFor === 'function' ? deps.galleryFor : null;
 
         function buildMediaThumbHtml(src, opts) {
             const o = opts || {};
@@ -1274,6 +1278,11 @@
                     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
                     e.preventDefault();
                     e.stopPropagation();
+                    const picked = galleryFor ? galleryFor(thumb) : null;
+                    if (picked && Array.isArray(picked.items) && picked.items.length) {
+                        openCuttleLightbox(picked.items, picked.index || 0);
+                        return;
+                    }
                     const items = collectBubbleMediaItems(thumb);
                     const src = thumb.getAttribute('data-src') || '';
                     let idx = items.findIndex(function (it) {

@@ -5,7 +5,9 @@
    (queued / running / done / failed / cancelled / lost) and a
    one-line result whose full text rides the tooltip. Outcome and
    summary come from the server (`api.subagents.fleet`); this module
-   never infers success. Pure: no document, no window, no fetch.
+   never infers success. Studio (L4) uses `renderStudioCardsHtml`: the
+   same server data as identity + name + one line of status, for the work
+   panel's right column (chat_work_panel.js). Pure: no document, no window, no fetch.
    The page owns mounting and click → open-chat (`data-chat-handle`).
    Experimental: `subagent_fleet_cards`. Loaded before chat_page.js.
    ================================================================ */
@@ -128,7 +130,54 @@
             + esc('Sub-agent fleet: ' + done + ' of ' + items.length + ' done') + '">' + cards + more + '</div>';
     }
 
-    const api = { hasFleet, renderFleetHtml, formatDuration, OUTCOMES };
+    /**
+     * Studio fleet cards (the work panel's right column; no wrapper, cards only).
+     * Two lines: the identity (dot + plain agent name, bold) with the CH- handle
+     * right-aligned; then a status dot with one line of live status while running,
+     * or the outcome with duration once finished. The child's title rides the
+     * card's title and aria-label (and `data-card-title` for the tray). No progress
+     * bar and no percentages: the server's outcome and text only.
+     * `opts.selectedHandle`: the card whose tray is open (accent border).
+     * `opts.parentTitle`: the parent Tasks list title, for the tray's "sub-agent of" line. Pure.
+     */
+    function renderStudioCardsHtml(list, opts) {
+        const esc = opts.esc;
+        const identityHtml = typeof opts.identityHtml === 'function'
+            ? opts.identityHtml
+            : (s) => '<span class="agent-identity-name">' + esc(s.agent || '') + '</span>';
+        const selected = String(opts.selectedHandle || '');
+        const parentTitle = String(opts.parentTitle || '').trim();
+        const items = (Array.isArray(list) ? list : []).filter(Boolean);
+        return items.slice(0, MAX_CARDS).map((s) => {
+            const state = OUTCOMES[s.outcome] ? s.outcome : (s.generating ? 'running' : 'unknown');
+            const meta = OUTCOMES[state];
+            const live = state === 'running' || state === 'queued';
+            const title = String(s.displayName || s.label || s.handle);
+            const duration = live ? '' : formatDuration(s.startedAt, s.finishedAt);
+            const text = live
+                ? String(s.summary || '').replace(/\s+/g, ' ').trim()
+                : meta.icon + ' ' + meta.label + (duration ? ' · ' + duration : '');
+            const isSelected = selected !== '' && selected === String(s.handle);
+            return (
+                '<button type="button" class="subagent-fleet-card studio-fleet-card is-' + state
+                + (isSelected ? ' is-selected' : '') + '"'
+                + ' data-chat-handle="' + esc(s.handle) + '" data-agent="' + esc(s.agent || '') + '"'
+                + ' data-card-title="' + esc(title) + '" data-parent-title="' + esc(parentTitle) + '"'
+                + ' title="' + esc(title + ' · ' + s.handle + ' · ' + meta.label) + '"'
+                + ' aria-label="' + esc('Open ' + title + ' (' + meta.label + ')') + '"'
+                + (isSelected ? ' aria-pressed="true"' : '') + '>'
+                + '<span class="subagent-fleet-head">' + identityHtml(s)
+                + '<span class="subagent-fleet-handle">' + esc(s.handle) + '</span></span>'
+                + '<span class="subagent-fleet-line">'
+                + '<span class="studio-status-dot is-' + state + '" aria-hidden="true"></span>'
+                + '<span class="subagent-fleet-outcome is-' + state + '" title="' + esc(meta.label) + '">'
+                + esc(text) + '</span></span>'
+                + '</button>'
+            );
+        }).join('');
+    }
+
+    const api = { hasFleet, renderFleetHtml, renderStudioCardsHtml, formatDuration, OUTCOMES };
 
     const ns = (root.CuttleChatSubagentFleet = root.CuttleChatSubagentFleet || {});
     Object.assign(ns, api);

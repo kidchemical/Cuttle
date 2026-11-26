@@ -114,9 +114,9 @@ def get_agents_catalog_api():
             or ''
         ).strip() or None
         agents = public_catalog(project_path)
-        # Settings asks for `?live_models=1` so its dropdowns read the same live
-        # CLI/API catalog as the chat palette instead of the manifest snapshot.
-        # The chat page's plain `/api/agents` stays cheap (no CLI calls).
+        # Plain `/api/agents` carries each agent's last saved live catalog
+        # (file reads; stale ones rebuild in the background). Settings asks for
+        # `?live_models=1` to read the CLI/API catalog now.
         live = (request.args.get('live_models') or '').strip().lower() in (
             '1', 'true', 'yes', 'live',
         )
@@ -184,6 +184,13 @@ def get_agent_defaults_api(agent_id):
                 )
 
                 sess_m, sess_e = load_codex_model(session), load_codex_effort(session)
+            elif aid == 'antigravity' and session:
+                from api.agent_harness.agents.antigravity.session_store import (
+                    load_antigravity_effort,
+                    load_antigravity_model,
+                )
+
+                sess_m, sess_e = load_antigravity_model(session), load_antigravity_effort(session)
             elif aid == 'cursor' and session:
                 from scripts.utilities.cursor_cli_session_store import load_cursor_agent_options
 
@@ -233,7 +240,7 @@ def set_agent_defaults_api(agent_id):
 
         caps = agent_capabilities(aid)
         data = request.get_json(silent=True) or {}
-        if aid in ('codex', 'claude'):
+        if aid in ('codex', 'claude', 'antigravity'):
             model_key = 'starred_model' if 'starred_model' in data else 'starredModel'
             effort_key = 'starred_effort' if 'starred_effort' in data else 'starredEffort'
             has_model = 'starred_model' in data or 'starredModel' in data
@@ -256,6 +263,11 @@ def set_agent_defaults_api(agent_id):
                         claude_efforts_for_model as _efforts_for_model,
                     )
                     agent_label, default_note = 'Claude Code', ' for the CLI default model'
+                elif aid == 'antigravity':
+                    from api.agent_harness.agents.antigravity.model_catalog import (
+                        antigravity_efforts_for_model as _efforts_for_model,
+                    )
+                    agent_label, default_note = 'Antigravity', ' across Antigravity models'
                 else:
                     from api.agent_harness.agents.codex.model_catalog import (
                         codex_efforts_for_model as _efforts_for_model,

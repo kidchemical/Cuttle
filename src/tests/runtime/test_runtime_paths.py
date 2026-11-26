@@ -111,12 +111,12 @@ def test_electron_launch_argv_opens_the_host_profile(tmp_path, monkeypatch):
     import core.runtime_paths as rp
 
     exe = tmp_path / "Cuttle.exe"
-    exe.write_text("")
+    exe.write_text("", encoding="utf-8")
     monkeypatch.setattr(rp, "electron_packaged_exe", lambda _root: exe)
     assert rp.electron_launch_argv(tmp_path)[-1] == "--mode=host"
 
     dev = tmp_path / "electron.exe"
-    dev.write_text("")
+    dev.write_text("", encoding="utf-8")
     monkeypatch.setattr(rp, "electron_packaged_exe", lambda _root: None)
     monkeypatch.setattr(rp, "electron_dev_bin", lambda _root: dev)
     argv = rp.electron_launch_argv(tmp_path)
@@ -131,8 +131,8 @@ def test_windows_dev_electron_prefers_the_real_binary(tmp_path, monkeypatch):
     bin_dir = tmp_path / "electron" / "node_modules"
     (bin_dir / ".bin").mkdir(parents=True)
     (bin_dir / "electron" / "dist").mkdir(parents=True)
-    (bin_dir / ".bin" / "electron.cmd").write_text("")
-    (bin_dir / "electron" / "dist" / "electron.exe").write_text("")
+    (bin_dir / ".bin" / "electron.cmd").write_text("", encoding="utf-8")
+    (bin_dir / "electron" / "dist" / "electron.exe").write_text("", encoding="utf-8")
     assert rp.electron_dev_bin(tmp_path).name == "electron.exe"
 
 
@@ -140,6 +140,21 @@ def test_windows_client_launcher_skips_npm_when_electron_is_installed():
     text = (REPO / ".cuttle" / "scripts" / "start-cuttle.cmd").read_text(encoding="utf-8")
     client = text.split(":START_CLIENT", 1)[1].split(":START_HOST", 1)[0]
     assert client.index("electron.exe") < client.index("npm.cmd")
+
+
+def test_windows_client_launcher_prefers_checkout_over_stale_unpacked_build():
+    """dist/win-unpacked is a stale local pack that Smart App Control blocks;
+    the source Client shortcut must run the checkout's shell first."""
+    text = (REPO / ".cuttle" / "scripts" / "start-cuttle.cmd").read_text(encoding="utf-8")
+    client = text.split(":START_CLIENT", 1)[1].split(":START_HOST", 1)[0]
+    assert client.index('if exist "%ELECTRON_BIN%"') < client.index('if exist "%CUTTLE_EXE%"')
+
+
+def test_shortcut_script_keeps_the_installed_builds_cuttle_lnk():
+    """Desktop\\Cuttle.lnk from the release installer is not a legacy launcher."""
+    text = (REPO / "src" / "scripts" / "create_desktop_shortcuts.ps1").read_text(encoding="utf-8")
+    loop = text[text.index("foreach ($name in @('Cuttle.lnk'"):]
+    assert loop.index("StartsWith($repo") < loop.index("Remove-Item")
 
 
 def test_windows_launcher_runs_the_daemon_in_one_console():

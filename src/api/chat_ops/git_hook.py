@@ -55,7 +55,7 @@ exit $status
 def hooks_dir(repo):
     """The repository's hooks directory (honors ``core.hooksPath``; shared by worktrees)."""
     out = subprocess.run(['git', '-C', str(repo), 'rev-parse', '--path-format=absolute', '--git-path', 'hooks'],
-                         capture_output=True, text=True, timeout=15)
+                         capture_output=True, text=True, timeout=15, encoding="utf-8", errors="replace")
     if out.returncode != 0 or not out.stdout.strip():
         raise ValueError(f'{repo} is not a git repository')
     return Path(out.stdout.strip())
@@ -64,7 +64,7 @@ def hooks_dir(repo):
 def _ours(path):
     """Any version of Cuttle's hook, so ``install`` upgrades older installs in place."""
     try:
-        return MARKER_PREFIX in path.read_text(errors='replace')
+        return MARKER_PREFIX in path.read_text(errors='replace', encoding="utf-8")
     except OSError:
         return False
 
@@ -96,7 +96,7 @@ def install(repo, branches=()):
         raise ValueError(f'{target} already exists and is not Cuttle\'s; add a line to it that runs '
                          f'this script instead of replacing it (see api/chat_ops/git_hook.py)')
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(SCRIPT)
+    target.write_text(SCRIPT, encoding="utf-8")
     target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     have = protected(repo)
     for branch in branches:
@@ -117,5 +117,5 @@ def uninstall(repo):
 
 def protected(repo):
     out = subprocess.run(['git', '-C', str(repo), 'config', '--get-all', 'cuttle.protectBranch'],
-                         capture_output=True, text=True, timeout=15)
+                         capture_output=True, text=True, timeout=15, encoding="utf-8", errors="replace")
     return [line.strip() for line in out.stdout.splitlines() if line.strip()]

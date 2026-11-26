@@ -112,6 +112,7 @@ def get_pc_subnet_hint() -> Dict[str, Any]:
                 capture_output=True,
                 text=True,
                 timeout=10,
+                encoding="utf-8", errors="replace",
             )
             if check.returncode == 0 and (check.stdout or "").strip().isdigit():
                 prefix = int(check.stdout.strip())
@@ -254,6 +255,7 @@ def _count_enabled_rules(rule_name: str) -> Optional[int]:
         capture_output=True,
         text=True,
         timeout=30,
+        encoding="utf-8", errors="replace",
     )
     if check.returncode != 0:
         return None
@@ -276,6 +278,7 @@ def _count_scoped_rules(rule_name: str) -> Optional[int]:
         capture_output=True,
         text=True,
         timeout=30,
+        encoding="utf-8", errors="replace",
     )
     if check.returncode != 0:
         return None
@@ -295,6 +298,7 @@ def _remove_firewall_rules(rule_name: str) -> None:
         capture_output=True,
         text=True,
         timeout=30,
+        encoding="utf-8", errors="replace",
     )
 
 
@@ -348,6 +352,7 @@ def ensure_windows_lan_firewall_rule(port: Optional[int] = None) -> bool:
             capture_output=True,
             text=True,
             timeout=30,
+            encoding="utf-8", errors="replace",
         )
         if create.returncode != 0:
             print(f"[LAN] Firewall rule failed ({rule_name}): {(create.stderr or create.stdout or '').strip()}")
@@ -405,6 +410,7 @@ def wifi_network_category() -> Optional[str]:
             capture_output=True,
             text=True,
             timeout=15,
+            encoding="utf-8", errors="replace",
         )
         val = (check.stdout or "").strip()
         return val or None

@@ -9,6 +9,7 @@ from contextlib import contextmanager
 
 # Per-schedule check history kept for the UI; older rows are pruned on write.
 HISTORY_KEEP = 50
+SKIPPED_KEEP = 10
 
 
 @contextmanager
@@ -66,6 +67,35 @@ def find(oid):
 def listing(actor):
     with connection() as conn:
         return [public(r) for r in conn.execute('SELECT * FROM operations WHERE actor=? ORDER BY updated DESC LIMIT 100', (actor,))]
+
+
+def timeline_operations(actor):
+    """All operations owned by the supervisor, without the UI listing cap."""
+    with connection() as conn:
+        return [public(r) for r in conn.execute(
+            "SELECT * FROM operations WHERE actor=? AND kind IN ('supervise','send')", (actor,))]
+
+
+def sends_in_turns(actor, turn_ids):
+    """Sends ``actor`` made from inside these turns of its own (``payload.turn_id``), oldest first."""
+    turns = [str(t) for t in turn_ids if t]
+    found = []
+    with connection() as conn:
+        for start in range(0, len(turns), 400):
+            chunk = turns[start:start + 400]
+            marks = ','.join('?' * len(chunk))
+            found += [public(r) for r in conn.execute(
+                "SELECT rowid, * FROM operations WHERE actor=? AND kind='send' "
+                f"AND json_extract(payload, '$.turn_id') IN ({marks})", (int(actor), *chunk))]
+    return sorted(found, key=lambda o: o['rowid'])
+
+
+def timeline_checks(schedule_id):
+    with connection() as conn:
+        return [{'id': r['rowid'], 'at': r['at'], 'outcome': r['outcome'],
+                 'detail': json.loads(r['detail'])} for r in conn.execute(
+                     'SELECT rowid, * FROM checks WHERE schedule_id=? ORDER BY at DESC, rowid DESC',
+                     (schedule_id,))]
 
 
 def involving(session_id, *, states=('pending', 'dispatching', 'verifying', 'paused')):
@@ -255,6 +285,14 @@ def clear_pending_changes(oid, rev):
         return True
 
 
+def schedules(*, paused=False):
+    """Supervision schedules in force: live ones, plus paused ones with ``paused``."""
+    states = "('pending','dispatching','paused')" if paused else "('pending','dispatching')"
+    with connection() as conn:
+        return [public(r) for r in conn.execute(
+            f"SELECT * FROM operations WHERE kind='supervise' AND state IN {states}")]
+
+
 def paused_schedules():
     """Every paused supervision schedule (for the stale-pause alert and context)."""
     with connection() as conn:
@@ -355,9 +393,12 @@ def record_check(schedule_id, outcome, detail=None):
     now = time.time()
     with connection() as conn:
         conn.execute('INSERT INTO checks VALUES (?,?,?,?)', (schedule_id, now, outcome, json.dumps(detail or {})))
-        conn.execute('DELETE FROM checks WHERE schedule_id=? AND at < (SELECT MIN(at) FROM '
-                     '(SELECT at FROM checks WHERE schedule_id=? ORDER BY at DESC LIMIT ?))',
-                     (schedule_id, schedule_id, HISTORY_KEEP))
+        conn.execute("DELETE FROM checks WHERE schedule_id=? AND outcome='skipped' AND at < "
+                     "(SELECT MIN(at) FROM (SELECT at FROM checks WHERE schedule_id=? AND outcome='skipped' "
+                     "ORDER BY at DESC LIMIT ?))", (schedule_id, schedule_id, SKIPPED_KEEP))
+        conn.execute("DELETE FROM checks WHERE schedule_id=? AND outcome!='skipped' AND at < "
+                     "(SELECT MIN(at) FROM (SELECT at FROM checks WHERE schedule_id=? AND outcome!='skipped' "
+                     "ORDER BY at DESC LIMIT ?))", (schedule_id, schedule_id, HISTORY_KEEP))
     # The checks table keeps the last HISTORY_KEEP per schedule; telemetry keeps them all.
     from api.orchestration_telemetry import record
     record.supervision_check(schedule_id, outcome, detail)

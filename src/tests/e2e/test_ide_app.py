@@ -270,7 +270,7 @@ def test_shell_appearance_reaches_nested_chat(page):
 def test_minimap_follows_live_light_theme_changes(page, project):
     (project / 'src' / 'app.py').write_text(''.join(
         f"result_{i} = calculate_total(items, offset={i}, label='minimap theme regression')\n"
-        for i in range(400)))
+        for i in range(400)), encoding="utf-8")
     page.click(".ide-tree-row[data-path='src']")
     page.click(".ide-tree-row[data-path='src/app.py']")
     page.wait_for_function("monaco.editor.getModels().some(m => m.uri.path === '/src/app.py' && m.getLineCount() > 400)")
@@ -312,7 +312,7 @@ def test_menu_save_save_all_and_edit_commands(page, project):
     _type(page, "first change\n")
     page.click('#ideMenubar [data-cmd="file.save"]')
     page.wait_for_function("!document.querySelector('.ide-tab.is-dirty')")
-    assert "first change" in (project / "README.md").read_text()
+    assert "first change" in (project / "README.md").read_text(encoding="utf-8")
     _type(page, "second change\n")
     page.click(".ide-tree-row[data-path='src']")
     page.click(".ide-tree-row[data-path='src/app.py']")
@@ -321,8 +321,8 @@ def test_menu_save_save_all_and_edit_commands(page, project):
     page.locator('#ideMenubar').get_by_role('menuitem', name='File', exact=True).click()
     page.locator('#ideMenubarPopup').get_by_role('menuitem', name=re.compile('Save All')).click()
     page.wait_for_function("!document.querySelector('.ide-tab.is-dirty')")
-    assert "second change" in (project / "README.md").read_text()
-    assert "# another change" in (project / "src/app.py").read_text()
+    assert "second change" in (project / "README.md").read_text(encoding="utf-8")
+    assert "# another change" in (project / "src/app.py").read_text(encoding="utf-8")
     page.locator('#ideMenubar').get_by_role('menuitem', name='Edit', exact=True).click()
     page.locator('#ideMenubarPopup').get_by_role('menuitem', name=re.compile('Select All')).click()
     assert page.locator('.ide-textarea').evaluate('el => el.selectionEnd - el.selectionStart') == len(_editor_text(page))
@@ -362,8 +362,8 @@ class ShellIdeHarness(Harness):
 
 @pytest.fixture()
 def shell_editor(browser, flask_client, project):
-    (project / 'README.md').write_text('# Demo\nchanged on disk\n')
-    (project / 'src' / 'app.py').write_text('def hello():\n    return "changed"\n')
+    (project / 'README.md').write_text('# Demo\nchanged on disk\n', encoding="utf-8")
+    (project / 'src' / 'app.py').write_text('def hello():\n    return "changed"\n', encoding="utf-8")
     harness = ShellIdeHarness(flask_client, project)
     context = browser.new_context(viewport={'width': 1600, 'height': 950})
     layout = {'version': 2, 'orientation': 'horizontal', 'root': {
@@ -400,7 +400,7 @@ def test_pending_pencil_splits_then_reuses_ide_without_losing_edits(shell_editor
     source.locator('.pending-changes-editor-btn[data-rel-path="README.md"]').click()
     ide.locator('.ide-tab.is-active[data-path="README.md"]').wait_for()
     assert ide.locator('.ide-textarea').input_value() == 'unsaved work to preserve'
-    assert 'unsaved work' not in (project / 'README.md').read_text()
+    assert 'unsaved work' not in (project / 'README.md').read_text(encoding="utf-8")
     source.locator('.pending-changes-item[data-rel-path="src/app.py"]').click()
     source.locator('[data-diff="editor"]').click()
     ide.locator('.ide-tab.is-active[data-path="src/app.py"]').wait_for()

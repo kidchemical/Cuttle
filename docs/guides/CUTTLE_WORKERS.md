@@ -11,9 +11,9 @@ The user talks to **Cuttle**. Cuttle (orchestrator + Brain) decides when work sh
 |---|---|
 | **User** | Chat intent (“render this blend”, “copy from the laptop”, or nothing special) |
 | **Cuttle host** | Intent policy + job queue + claim/lease; optional auto-shard when mesh-worthy |
-| **Platform verbs** | Agent-agnostic list / submit / status / cancel (MCP and/or `.cuttle_global/actions`) — same contract for every harness |
+| **Platform verbs** | Agent-agnostic list / submit / status / cancel (worker CLI and `.cuttle_global/actions/`) — same contract for every harness |
 | **Context Compiler** | Short rule → `.cuttle_global/docs/cuttle-workers.md` (when to mesh; never invent remote shell) |
-| **Jobs → Devices** | **Observability only** (online workers, role you/host, mesh job history). Not the day-to-day control surface |
+| **Jobs → Devices** | Inspect devices and mesh jobs, approve pending pairings, and remove devices |
 | **Sticky agent** | Irrelevant to the mesh API — just another tentacle |
 
 **Do not:** teach `/cursor` (or any one CLI) a special workers path.  
@@ -28,7 +28,7 @@ The user talks to **Cuttle**. Cuttle (orchestrator + Brain) decides when work sh
 | Local host worker loop | Daemon thread `run_device_workers_loop` in `cuttle_daemon.py` |
 | Client sidecar | `electron/device-worker/cuttle_device_worker.py` (stdlib; shipped in Client asar) + Electron `startWorkerSidecar()` |
 | Sidecar log (Client) | `%APPDATA%/cuttle-desktop/device-worker.log` (Electron console on exit) |
-| Job types | `ping`, `file_copy`, `blender_render`, `shell`, `cuttle_self_update` |
+| Job types | `ping`, `file_copy`, `blender_render`, `shell`, `cuttle_self_update`, `agent_turn` (a chat turn on an execution node; created only by the host's chat path, opt-in per machine — [`EXECUTION_NODES.md`](EXECUTION_NODES.md)) |
 | Platform verbs | `.cuttle_global/actions/workers-*.yaml` + `python -m api.device_workers.cli` |
 | Host intent | `workers.plan` / `POST /api/workers/plan` (heuristics); `auto_mesh` default off |
 | Blender farm | Default **work_steal** chunks (untargeted queue); `distribution=pinned` for legacy equal splits; per-frame timing in job results; EWMA `render_profile` on worker meta |
@@ -221,7 +221,7 @@ Allowlist job types and paths early — remote shell without policy is a securit
 
 ## Staging and transfer
 
-**Phase W2 (simple):** shared network drive as intermediary (already how the home lab often moves Blender/Unity assets). Jobs pass UNC/mapped paths both sides can see.
+**Phase W2 (simple):** shared network drive as intermediary. Jobs pass UNC/mapped paths both sides can see.
 
 **Later:** content-addressed staging — hash dependency trees, transfer only missing blobs, return only outputs. Makes large `.blend` projects practical without full recopies.
 
@@ -287,16 +287,14 @@ Success criteria for the benchmark: correct frames, sensible scheduling (idle GP
 |---|---|---|
 | **W0** | Docs | This guide + ROADMAP + FEAT — **done** |
 | **W1** | Worker sidecar + register | Capability ads + heartbeats; Devices observability — **done** |
-| **W2** | Generic jobs | `file_copy` + `ping` on host queue — **done** for those types; shell/python still later |
+| **W2** | Generic jobs | `file_copy` + `ping` on host queue — **done** for those types; shell recipes are covered by W2.5 |
 | **W2.5** | Platform verbs | Actions/CLI including self-update + shell recipes — **done** |
 | **W2b** | Blender CLI benchmark | `blender_render` + shard — **done**; verified with a sample-scene mesh render |
 | **W2b+** | Work-steal + analytics | Default chunk queue; per-frame timings; EWMA profiles — **code done** |
-| **W2c** | Client daemon + self-update | Host→laptop pull/restart without SSH — **code done**; dogfood with client daemon on laptop |
+| **W2c** | Client daemon + self-update | Host→laptop pull/restart without SSH — **code done** |
 | **W3** | Host intent routing | `workers.plan` heuristics — **partial**; auto-enqueue off |
-| **W4** | Backends + queue migrate | Optional Flamenco plug; optional always-on durable queue; agent/LLM-on-worker |
+| **W4** | Backends + queue migrate | Optional Flamenco plug; optional always-on durable queue. Agent-on-worker: **experimental** as execution nodes ([`EXECUTION_NODES.md`](EXECUTION_NODES.md)) |
 | **W5** *(someday)* | Mobile sensor / HITL edge | Optional — **low priority**; see below |
-
-**Next dogfood:** (1) run `cuttle_client_daemon` on laptop, (2) `workers.self-update` from host after a push, (3) Blender shard when both advertise blender.
 
 ### Later — mobile (Capacitor) as edge, not farm node
 
@@ -313,7 +311,7 @@ Success criteria for the benchmark: correct frames, sensible scheduling (idle GP
 - **Per-harness workers tutorials** (Cursor-only, Codex-only, …) — platform contract only.
 - **Manual Jobs submit as the product path** — observability/debug only.
 - **SSH as control plane** — enroll/claim/self-update stay pull-based; SSH is the user's own tool for ad-hoc commands, outside the mesh.
-- **Free-form shell jobs** — the mesh runs named recipes and `cuttle_self_update` only; arbitrary commands go through OpenSSH (Cuttle doesn't reinvent a remote shell).
+- **Free-form shell jobs** — the mesh runs named recipes and `cuttle_self_update` only; arbitrary commands go through OpenSSH (Cuttle doesn't reinvent a remote shell). An `agent_turn` is not one: it starts a catalog agent CLI for an owned chat, only on a machine that opted in, and cannot be submitted over HTTP.
 
 ## Open questions (defer to implementation)
 

@@ -7,12 +7,22 @@ had the full ``opencode models`` list. This module is the single dispatcher:
 :func:`load_agent_catalog` mirrors the chat palette loaders, with the manifest
 snapshot as the offline fallback, and the bulk helpers fan out in parallel.
 
-Callers: ``api.agent_cost`` (``/cost``), ``GET /api/agents?live_models=1``
-(Settings), and ``GET /api/agent-router/options?live=1`` (Router editor).
+Every model list resolves through one chain: live CLI/API catalog → the last
+successful live catalog saved in the Cuttle home → the manifest ``models:``
+snapshot. The manifest is a tracked, hand-verified offline fallback; it is never
+rewritten at runtime. Plain ``GET /api/agents`` reads the saved catalog
+(:func:`overlay_saved_catalogs`, file reads only) and rebuilds a missing or
+stale one in the background, so cheap callers still see new CLI models.
+
+Callers: ``api.agent_cost`` (``/cost``), ``GET /api/agents`` (saved catalog;
+``?live_models=1`` for a live read), and ``GET /api/agent-router/options?live=1``
+(Router editor).
 """
 
 from __future__ import annotations
 
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -61,6 +71,13 @@ def _hermes_catalog(refresh: bool) -> _Catalog:
     return [dict(m) for m in list_hermes_known_models()], "config"
 
 
+def _antigravity_catalog(refresh: bool) -> _Catalog:
+    from api.agent_harness.agents.antigravity.model_catalog import list_antigravity_catalog_models
+
+    result = list_antigravity_catalog_models(refresh=refresh)
+    return list(result.get("models") or []), str(result.get("source") or "cli")
+
+
 def _opencode_catalog(refresh: bool) -> _Catalog:
     from api.agent_harness.agents.opencode.model_catalog import list_opencode_catalog_models
 
@@ -75,6 +92,7 @@ _CATALOG_LOADERS: Dict[str, Callable[[bool], _Catalog]] = {
     "muse": _muse_catalog,
     "hermes": _hermes_catalog,
     "opencode": _opencode_catalog,
+    "antigravity": _antigravity_catalog,
 }
 _PERSISTED_AGENT_CATALOGS = frozenset(_CATALOG_LOADERS)
 
@@ -84,7 +102,7 @@ def load_agent_catalog(
 ) -> _Catalog:
     """Live rows for ``agent_id``; manifest ids when the harness has no loader or fails.
 
-    A harness with no live loader (drop-ins, DeepSeek, Antigravity) *is* its
+    A harness with no live loader (drop-ins, DeepSeek) *is* its
     manifest snapshot — that is not an error, so ``source`` stays ``manifest``.
     """
     loader = _CATALOG_LOADERS.get(str(agent_id or "").strip().lower())
@@ -358,6 +376,33 @@ def check_agent_pin(
     return None
 
 
+def _apply_catalog(row: Dict[str, Any], models: Any, source: str) -> None:
+    """Put catalog rows first on one public catalog row, keeping manifest ids.
+
+    A vendor's live list can be a curated picker (Claude Code lists only its
+    aliases), so manifest models it omits stay listed after it, as
+    ``check_agent_pin`` already accepts them.
+    """
+    model_ids = catalog_model_ids(models)
+    if model_ids:
+        listed = {m.lower() for m in model_ids} | {
+            str(r.get("resolved_model") or "").lower()
+            for r in models or [] if isinstance(r, dict)
+        }
+        model_ids += [m for m in row.get("models") or [] if str(m).lower() not in listed]
+        row["models"] = model_ids
+        row["models_source"] = source or "manifest"
+    efforts = catalog_model_efforts(models)
+    if efforts:
+        merged = dict(row.get("model_efforts") or {})
+        merged.update(efforts)
+        row["model_efforts"] = merged
+        row["supports_effort"] = any(efforts.values())
+        row["efforts"] = list(dict.fromkeys(
+            level for levels in efforts.values() for level in levels
+        ))
+
+
 def enrich_agent_catalog(agents: List[Dict[str, Any]], *, refresh: bool = False) -> List[Dict[str, Any]]:
     """Overwrite each available agent's ``models`` with its live catalog (Settings).
 
@@ -371,21 +416,87 @@ def enrich_agent_catalog(agents: List[Dict[str, Any]], *, refresh: bool = False)
     by_id = {a.get("id"): a for a in agents}
     for aid, res in live.items():
         row = by_id.get(aid)
-        if not row:
+        if row:
+            _apply_catalog(row, res.get("models"), str(res.get("source") or ""))
+    return agents
+
+
+# A saved catalog older than this is rebuilt in the background on the next
+# plain catalog read; the chat palette refreshes it sooner whenever it opens.
+SAVED_CATALOG_MAX_AGE_SEC = 6 * 3600.0
+# Tests switch this off so plain catalog reads never spawn vendor CLIs.
+BACKGROUND_REFRESH = True
+_refresh_lock = threading.Lock()
+_refreshing: set = set()
+
+
+def schedule_catalog_refresh(agent_id: str, fallback_models: Optional[List[str]] = None) -> bool:
+    """Rebuild one agent's saved catalog off-thread; at most one run per agent."""
+    aid = str(agent_id or "").strip().lower()
+    if not BACKGROUND_REFRESH or aid not in _PERSISTED_AGENT_CATALOGS:
+        return False
+    with _refresh_lock:
+        if aid in _refreshing:
+            return False
+        _refreshing.add(aid)
+
+    def _run() -> None:
+        try:
+            load_agent_catalog(aid, list(fallback_models or []))
+        except Exception as exc:  # noqa: BLE001 — a background refresh never surfaces
+            print(f"[agent_models] background {aid} catalog refresh failed: {exc}", flush=True)
+        finally:
+            with _refresh_lock:
+                _refreshing.discard(aid)
+
+    threading.Thread(target=_run, name=f"catalog-refresh-{aid}", daemon=True).start()
+    return True
+
+
+def saved_catalog_rows(agent_id: str) -> Optional[Dict[str, Any]]:
+    """The last successful live catalog for ``agent_id`` (file read, no CLI)."""
+    aid = str(agent_id or "").strip().lower()
+    if aid not in _PERSISTED_AGENT_CATALOGS:
+        return None
+    try:
+        from api.model_catalog_delta import load_catalog
+
+        saved = load_catalog(aid)
+    except Exception:  # noqa: BLE001
+        return None
+    if not saved:
+        return None
+    return {"models": normalize_catalog_rows(aid, saved["models"]),
+            "fetched_at": float(saved.get("fetched_at") or 0)}
+
+
+def saved_model_ids(agent_id: str, fallback_models: Optional[List[str]] = None) -> List[str]:
+    """Saved live model ids for one agent, else ``fallback_models`` (manifest)."""
+    saved = saved_catalog_rows(agent_id)
+    ids = catalog_model_ids(saved["models"]) if saved else []
+    return ids or list(fallback_models or [])
+
+
+def overlay_saved_catalogs(agents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Apply each agent's saved live catalog to ``public_catalog`` rows.
+
+    File reads only, so plain ``GET /api/agents`` stays cheap. An installed
+    harness whose saved catalog is missing or older than
+    :data:`SAVED_CATALOG_MAX_AGE_SEC` is rebuilt in the background, so the next
+    read carries models the CLI added since.
+    """
+    now = time.time()
+    for row in agents:
+        aid = str(row.get("id") or "").strip().lower()
+        if aid not in _PERSISTED_AGENT_CATALOGS:
             continue
-        model_ids = catalog_model_ids(res.get("models"))
-        if model_ids:
-            row["models"] = model_ids
-            row["models_source"] = res.get("source") or "manifest"
-        efforts = catalog_model_efforts(res.get("models"))
-        if efforts:
-            merged = dict(row.get("model_efforts") or {})
-            merged.update(efforts)
-            row["model_efforts"] = merged
-            row["supports_effort"] = any(efforts.values())
-            row["efforts"] = list(dict.fromkeys(
-                level for levels in efforts.values() for level in levels
-            ))
+        manifest_models = list(row.get("models") or [])
+        saved = saved_catalog_rows(aid)
+        if saved:
+            _apply_catalog(row, saved["models"], "last_successful_cache")
+        stale = not saved or now - saved["fetched_at"] > SAVED_CATALOG_MAX_AGE_SEC
+        if row.get("available") and stale:
+            schedule_catalog_refresh(aid, manifest_models)
     return agents
 
 
@@ -406,17 +517,39 @@ def enrich_router_models(
         list(agent_models.keys()), fallbacks=merged_fallbacks, refresh=refresh
     )
     for aid, res in live.items():
-        model_ids = catalog_model_ids(res.get("models"))
-        if model_ids:
-            agent_models[aid] = model_ids
-        efforts = catalog_model_efforts(res.get("models"))
-        if efforts:
-            slot = agent_efforts.setdefault(
-                aid, {"supported": True, "levels": [], "model_levels": {}}
-            )
-            slot.setdefault("model_levels", {}).update(efforts)
-            levels = list(dict.fromkeys(
-                level for values in efforts.values() for level in values
-            ))
-            slot["supported"] = bool(levels)
-            slot["levels"] = levels
+        _apply_router_catalog(aid, res.get("models"), agent_models, agent_efforts)
+
+
+def overlay_saved_router_models(
+    agent_models: Dict[str, List[str]], agent_efforts: Dict[str, Dict[str, Any]]
+) -> None:
+    """Router options from each agent's saved live catalog (file reads, no CLI)."""
+    for aid in list(agent_models.keys()):
+        saved = saved_catalog_rows(aid)
+        if saved:
+            _apply_router_catalog(aid, saved["models"], agent_models, agent_efforts)
+
+
+def _apply_router_catalog(
+    aid: str,
+    models: Any,
+    agent_models: Dict[str, List[str]],
+    agent_efforts: Dict[str, Dict[str, Any]],
+) -> None:
+    model_ids = catalog_model_ids(models)
+    if model_ids:
+        listed = {m.lower() for m in model_ids}
+        agent_models[aid] = model_ids + [
+            m for m in agent_models.get(aid) or [] if str(m).lower() not in listed
+        ]
+    efforts = catalog_model_efforts(models)
+    if efforts:
+        slot = agent_efforts.setdefault(
+            aid, {"supported": True, "levels": [], "model_levels": {}}
+        )
+        slot.setdefault("model_levels", {}).update(efforts)
+        levels = list(dict.fromkeys(
+            level for values in efforts.values() for level in values
+        ))
+        slot["supported"] = bool(levels)
+        slot["levels"] = levels

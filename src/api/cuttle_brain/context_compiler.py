@@ -232,7 +232,12 @@ def skill_inventory(project_path: Optional[str]) -> List[str]:
 
 # The inventory is a directory: enough to know a skill exists and when it
 # applies. The full description is the first thing in its SKILL.md.
-_SKILL_SUMMARY_CHARS = 160
+_SKILL_SUMMARY_CHARS = 100
+
+
+# Project docs are named up to this many; beyond it the line gives a count
+# and the folder.
+_DOC_NAMES_LISTED = 12
 
 
 def _clip_summary(text: Any, limit: int = _SKILL_SUMMARY_CHARS) -> str:
@@ -379,8 +384,7 @@ def _runtime_block(
             )
         if not router.docs and global_config is not None:
             parts.append("- global docs: off per this project's GLOBAL.ini")
-        if rules:
-            parts.append(f"- rules: {', '.join(rules)}")
+        # Rule files are not listed: their bodies are already inlined above.
         if cmd:
             parts.append("- commands: " + ", ".join(n if n.startswith("feature/") else f"/{Path(n).stem}" for n in cmd))
         if docs:
@@ -394,7 +398,14 @@ def _runtime_block(
                 if proj_deltas
                 else ""
             )
-            parts.append(f"- docs: {', '.join(docs)}{delta_note}")
+            if len(docs) > _DOC_NAMES_LISTED:
+                # A long list is mostly plans and audits. The ranker still
+                # sees every name and points at the one a turn needs.
+                where = ", ".join(f"`{d / 'docs'}`" for d in _cuttle_dirs(project_path))
+                parts.append(f"- docs: {len(docs)} runbooks and notes under {where} "
+                             f"(list the folder to browse){delta_note}")
+            else:
+                parts.append(f"- docs: {', '.join(docs)}{delta_note}")
         if skills:
             parts.append("- Available Cuttle skills (open the matching SKILL.md when relevant):")
             parts.extend(f"  - {skill}" for skill in skills)

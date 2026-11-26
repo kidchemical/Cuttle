@@ -674,7 +674,7 @@ const out = [
 console.log(JSON.stringify(out));
 '''
     proc = subprocess.run(["node", "-e", script], capture_output=True, text=True,
-                          env={**os.environ, "MOD_GEN": str(MOD_GEN)}, check=True)
+                          env={**os.environ, "MOD_GEN": str(MOD_GEN)}, check=True, encoding="utf-8")
     assert json.loads(proc.stdout) == [True, False, False, True, False, True, True, False, True, True]
     page = CHAT_PAGE_JS.read_text(encoding="utf-8")
     assert "CuttleChatGeneration.liveStatusChanged(messageSync" in page

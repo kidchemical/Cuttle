@@ -37,9 +37,11 @@ refreshes it without reloading; disabling preserves its saved preferences.
 Descriptions use the standard info tooltips. A reply's leading `<think>` blocks
 (every agent's reasoning rides in its chat reply this way: the kernel adds it via
 `api.agent_harness.reasoning_reply`; headless callers and sub-agent results get the answer alone)
-stay first, collapsed, and are not sent to the processor. Append then displays the agent's full
+render as a collapsed **Thinking** disclosure and are not sent to the processor. While the turn
+runs, the same reasoning shows collapsed in the live bubble above the activity animation
+(live-status `thinking`, `chat_live_thinking.js`). Append then displays the agent's full
 reply in a collapsed **Original response** disclosure (expanding it renders the
-original Markdown), then the processed text under an **Added by
+original Markdown, with the Thinking disclosure nested first inside it), then the processed text under an **Added by
 post-processing** label; copy text carries both in that order. Every reply with
 prose above the trigger is processed — failed turns, replies carrying cards (the cards
 ride through verbatim; unpaired card markup is kept as a verbatim tail) and

@@ -28,7 +28,7 @@ HTTPS :8888 listener as a voice endpoint. Bluetooth SPP remains a future extensi
 Frames: **1 byte type** + **4 bytes length (big-endian)** + **payload**.
 
 - **Type 0** (phone → PC): mic audio, PCM 16 kHz 16-bit mono.
-- **Type 1** (PC → phone): TTS audio, PCM 16 kHz 16-bit mono (or MP3 if PC sends it; app can decode).
+- **Type 1** (PC → phone): TTS audio, PCM 16 kHz 16-bit mono.
 - **Type 2** (control): UTF-8 text, e.g. `dial:+15551234` (PC → phone: open dialer / place call).
 
 ## Build

@@ -58,6 +58,7 @@ def _run():
     proc = subprocess.run(
         ["node", "-e", HARNESS], capture_output=True, text=True, timeout=60,
         env={"PATH": os.environ["PATH"], "MOD": str(MOD)},
+        encoding="utf-8",
     )
     assert proc.returncode == 0, proc.stderr or proc.stdout
     return json.loads(proc.stdout)

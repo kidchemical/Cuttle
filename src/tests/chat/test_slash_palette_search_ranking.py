@@ -66,6 +66,8 @@ const agentControls = {
   buildOpenCodeEffortPaletteItems: () => [],
   buildClaudeModelPaletteItems: () => [],
   buildClaudeEffortPaletteItems: () => [],
+  buildHarnessPinPaletteItems: () => [],
+  harnessPins: () => null,
 };
 const palette = Palette.create({
   win: {},

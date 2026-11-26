@@ -5,7 +5,8 @@ Cursor already lives in ``api.cursor_agent_commands``. This module covers Codex
 (ChatGPT plan windows), OpenCode (``opencode stats``), Hermes
 (``hermes insights``), Muse Code (account + local session rollup — Meta
 does not expose subscription % via API), and Claude Code (plan windows from
-the Claude Code OAuth usage endpoint + local ``~/.claude/projects`` rollup).
+the Claude Code OAuth usage endpoint + local ``~/.claude/projects`` rollup), and
+Antigravity (headless ``agy /usage`` + ``/credits`` JSON, owned by its slice).
 """
 
 from __future__ import annotations
@@ -126,6 +127,7 @@ def _run_cli(argv: List[str], *, timeout: float = 60.0) -> Tuple[int, str]:
             text=True,
             timeout=timeout,
             shell=False,
+            encoding="utf-8", errors="replace",
         )
     except FileNotFoundError:
         return 127, ""
@@ -1429,6 +1431,12 @@ def run_claude_usage(*, days: int = 30) -> str:
     return format_claude_usage_markdown(fetch_claude_usage(days=days))
 
 
+def run_antigravity_usage() -> str:
+    from api.agent_harness.agents.antigravity.usage import run_antigravity_usage as _run
+
+    return _run()
+
+
 def _days_from_args(args: str, default: int = 30) -> int:
     text = (args or "").strip().lower()
     if not text:
@@ -1453,7 +1461,7 @@ def handle_agent_usage_slash(agent_id: str, prompt: str) -> Optional[str]:
     Otherwise None.
     """
     live = re.fullmatch(r"/?usage-live(?:\s+(.*))?", (prompt or "").strip(), re.I | re.S)
-    if live and (agent_id or "").strip().lower() in {"codex", "muse", "hermes", "opencode", "claude"}:
+    if live and (agent_id or "").strip().lower() in {"codex", "muse", "hermes", "opencode", "claude", "antigravity"}:
         from api.usage_live import live_usage_reply
         return live_usage_reply(agent_id.strip().lower(), live.group(1) or "")
     args = parse_usage_slash(prompt)
@@ -1471,4 +1479,6 @@ def handle_agent_usage_slash(agent_id: str, prompt: str) -> Optional[str]:
         return run_muse_usage(days=days)
     if aid == "claude":
         return run_claude_usage(days=days)
+    if aid == "antigravity":
+        return run_antigravity_usage()
     return None

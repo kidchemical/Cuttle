@@ -62,6 +62,8 @@ class AgentManifest:
     pricing_benchmark: str = ""
     resume: bool = True
     capabilities_inject: str = "once_per_resume"  # once_per_resume | always | never
+    # full | bare. Bare sends the typed request only (api.cuttle_brain.bare).
+    context: str = "full"
     env_profile: str = "native"  # native | wsl | either
     activity: str = "heartbeat"  # none | heartbeat | jsonl | line_hints
     missing_cli_hint: str = ""
@@ -73,6 +75,10 @@ class AgentManifest:
     # Empty = frontend falls back to the label initial. Never a logo file:
     # no trademarked paths, no network, theme-neutral text glyphs only.
     icon: str = ""
+    # Identity colour (``#rrggbb``) for dots and labels in the chat UI. Empty
+    # = the frontend draws a neutral grey. Validated by the loader; never a
+    # CSS string or a colour name.
+    color: str = ""
     # Trusted, declarative CLI bootstrap. Only bundled connectors may use it.
     install_kind: str = ""  # npm_global | script_url
     install_package: str = ""
@@ -132,6 +138,7 @@ class AgentManifest:
             "hint": hint,
             "install_hint": install,
             "icon": self.icon or "",
+            "color": self.color or "",
             "installable": bool(self.install_kind),
             "auto_install": bool(self.auto_install),
             "notes": self.notes,

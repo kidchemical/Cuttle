@@ -1,6 +1,6 @@
 # Plan — Reply threads in chat (steers, follow-ups, sub-agent replies)
 
-Status: built 2026-11-08 (CH-002161), flag `chat_reply_threads` default on.
+Status: built 2026-11-08, flag `chat_reply_threads` default on.
 The phases below are the original plan; **As built** records where it changed.
 
 ## As built
@@ -27,7 +27,7 @@ The phases below are the original plan; **As built** records where it changed.
   overrides it with the detached run's first-reply query id;
   `chat_coordinator.steered_user_meta` writes `{steered, steered_agent, turn_id}`
   for both `/api/chat-steer` and background steers.
-- **Idle steers start a new thread** (2026-11-08, CH-002171): a message sent
+- **Idle steers start a new thread** (2026-11-08): a message sent
   while a detached Claude run only waits on background tasks (the chat looks
   idle) is still delivered into that CLI, but `steer_detached` reports
   `background_idle` and the row is stamped `steer_idle`. The model treats it

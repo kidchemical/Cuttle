@@ -66,6 +66,19 @@ out.escaped = html.every(h => !h.includes('<usage>'));
 out.variants = html.map(h => /gizmo--(\w+)/.exec(h)[1]);
 out.cardRows = (html[4].match(/gizmo-row /g) || []).length;
 out.detail = M.renderDetailHtml(g, data, now).includes('Plan: plus');
+const sized = z => ({...g, config: {...g.config, size: z}});
+out.sizes = [M.sizeOf(g), M.sizeOf(sized('micro')), M.sizeOf(sized('pico')), M.sizeOf(sized('huge'))];
+const microRail = M.renderGizmoHtml(sized('micro'), data, 'rail', now);
+const picoRail = M.renderGizmoHtml(sized('pico'), data, 'rail', now);
+out.slim = {
+  microRail: microRail.includes('gizmo--micro') && microRail.includes('gizmo-bar--slim') && !microRail.includes('gizmo-ring')
+    && microRail.includes('>18<'),
+  picoRail: picoRail.includes('gizmo--pico') && picoRail.includes('>Co<') && !picoRail.includes('gizmo-ring'),
+  microFloat: /gizmo--float gizmo--micro/.test(M.renderGizmoHtml(sized('micro'), data, 'float', now))
+    && !M.renderGizmoHtml(sized('micro'), data, 'float', now).includes('gizmo-head'),
+  titlebarIgnores: !M.renderGizmoHtml(sized('pico'), data, 'titlebar', now).includes('gizmo--pico'),
+  cardIgnores: M.renderGizmoHtml(sized('pico'), data, 'card', now).includes('gizmo-rows'),
+};
 const orG = {id: 'or', type: 'usage_meter', title: 'OpenRouter', config: {agent: 'openrouter', window: 'tightest', show: 'remaining'},
   placement: {dock: 'float', order: 0}};
 const orData = {label: 'OpenRouter', plan: 'Credits', blocked: false, updated_at: 1_800_000_000,
@@ -91,6 +104,9 @@ out.readoutNoBar = ['titlebar', 'rail', 'float', 'card'].map(v => M.renderGizmoH
   .every(h => !h.includes('gizmo-bar'));
 out.railText = M.renderGizmoHtml(orG, noPct, 'rail', now).includes('gizmo-ring-value--text');
 out.readoutDetail = M.renderDetailHtml(orG, noPct, now).includes('$74.25');
+out.readoutDetailNoBar = !M.renderDetailHtml(orG, noPct, now).includes('gizmo-bar');
+const orDetail = M.renderDetailHtml(orG, orData, now);
+out.readoutDetailBar = orDetail.includes('gizmo-bar-fill" style="width:74.3%') && orDetail.includes('$74.25 left');
 out.orBlocked = M.meterModel(orG, {...orData, blocked: true, unblock_at: null,
   readout: {...orData.readout, value: '$0.00', pct: 0}}, now).state;
 const clG = {id: 'cl', type: 'usage_meter', title: 'Claude', config: {agent: 'claude', window: 'tightest', show: 'remaining', api_credit: true},
@@ -103,7 +119,12 @@ out.apiCredit = {key: M.dataKey(clG), plainKey: M.dataKey({...clG, config: {agen
   picked: M.pickWindow(clData, clG.config).id,
   pinned: M.pickWindow(clData, {...clG.config, window: 'weekly'}).id,
   rowText: M.renderGizmoHtml(clG, clData, 'card', now).includes('$188.00 left'),
-  detail: M.renderDetailHtml(clG, clData, now).includes('API credit: $12.00 of $200')};
+  detail: M.renderDetailHtml(clG, clData, now).includes('API credit: $12.00 of $200'),
+  apiKey: M.dataKey({...clG, config: {agent: 'claude', billing: 'api'}}),
+  currentKey: M.dataKey({...clG, config: {agent: 'claude', billing: 'current', api_credit: true}}),
+  codexKey: M.dataKey({...clG, config: {agent: 'codex', billing: 'api'}}),
+  currentTip: M.renderDetailHtml(clG, {...clData, billing: {view: 'current', shown: 'api'}}, now)
+    .includes('Current mode: showing API credit')};
 console.log(JSON.stringify(out));
 """
 
@@ -152,6 +173,12 @@ def test_markup(harness):
     assert harness["detail"] is True
 
 
+def test_micro_and_pico_sizes_swap_the_ring_for_a_bar(harness):
+    assert harness["sizes"] == ["regular", "micro", "pico", "regular"]
+    assert harness["slim"] == {"microRail": True, "picoRail": True, "microFloat": True,
+                               "titlebarIgnores": True, "cardIgnores": True}
+
+
 def test_readout_headline_drives_meter(harness):
     # auto => a dollar readout provider reads out amount, not a ratio.
     assert harness["readout"] == {"pct": 74.25, "value": "$74.25", "valueLabel": "left",
@@ -171,6 +198,9 @@ def test_readout_headline_drives_meter(harness):
     assert harness["readoutNoBar"] is True
     assert harness["railText"] is True
     assert harness["readoutDetail"] is True
+    # A credit readout with a percent gets a bar row in the detail panel too.
+    assert harness["readoutDetailBar"] is True
+    assert harness["readoutDetailNoBar"] is True
     assert harness["orBlocked"] == "blocked"
 
 
@@ -202,21 +232,21 @@ def test_gizmos_app_starts_stashed_and_migrates_once():
     source = (WEB / "js" / "shell" / "shell_rail.js").read_text(encoding="utf-8")
     assert "'nav-gizmos'" in source.split("const CANONICAL_RAIL_ITEM_ORDER")[1].split("];")[0]
     assert "'nav-gizmos'" in source.split("const DEFAULT_RAIL_HIDDEN =")[1].split(";")[0]
-    assert "const RAIL_LAYOUT_VERSION = 14;" in source
+    assert "const RAIL_LAYOUT_VERSION = 16;" in source
     start = source.index("function migrateUILayout(saved)")
     end = source.index("\n        }\n", start) + len("\n        }\n")
     script = """const assert = require('assert');
 const DEFAULT_LAYOUT={}; const DEFAULT_RAIL_HIDDEN=['nav-achievements','nav-gizmos','nav-test-lab','nav-ide','nav-secrets','nav-projects','nav-agent-feed','nav-mesh'];
-const RAIL_LAYOUT_VERSION=14;
+const RAIL_LAYOUT_VERSION=16;
 const HIDEABLE_FOOTER_IDS=new Set(['nav-workspace']);
-const CANONICAL_RAIL_ITEM_ORDER=['nav-chat','nav-achievements','nav-gizmos','nav-test-lab','nav-ide','nav-secrets','nav-projects','nav-agent-feed','nav-mesh','nav-apps'];
+const CANONICAL_RAIL_ITEM_ORDER=['nav-chat','nav-achievements','nav-gizmos','nav-test-lab','nav-ide','nav-secrets','nav-projects','nav-agent-feed','nav-mesh','nav-media','nav-apps'];
 """ + source[start:end] + """
 let r = migrateUILayout({layout_version:6, rail_items:['nav-chat','nav-achievements','nav-apps'], rail_hidden:['nav-projects']});
-assert.deepEqual(r.layout.rail_hidden.sort(), ['nav-agent-feed','nav-gizmos','nav-ide','nav-projects','nav-secrets','nav-test-lab']);
+assert.deepEqual(r.layout.rail_hidden.sort(), ['nav-agent-feed','nav-gizmos','nav-ide','nav-media','nav-projects','nav-secrets','nav-test-lab']);
 assert(r.layout.rail_items.includes('nav-achievements'));
 r = migrateUILayout({layout_version:7, rail_items:['nav-chat','nav-gizmos'], rail_hidden:[]});
 assert.equal(r.changed, true); assert(r.layout.rail_items.includes('nav-gizmos'));
-assert.deepEqual(r.layout.rail_hidden.sort(), ['nav-agent-feed','nav-ide','nav-secrets','nav-test-lab']);
+assert.deepEqual(r.layout.rail_hidden.sort(), ['nav-agent-feed','nav-ide','nav-media','nav-secrets','nav-test-lab']);
 r = migrateUILayout({layout_version:8, rail_items:['nav-chat','nav-gizmos'], rail_hidden:[]});
 assert.equal(r.changed, true); assert(r.layout.rail_hidden.includes('nav-mesh'));
 r = migrateUILayout({layout_version:9, rail_items:['nav-chat','nav-gizmos'], rail_hidden:[]});
@@ -225,12 +255,17 @@ r = migrateUILayout({layout_version:10, rail_items:['nav-chat','nav-gizmos'], ra
 assert.equal(r.changed, true); assert(r.layout.rail_hidden.includes('nav-ide')); assert(!r.layout.rail_items.includes('nav-ide'));
 r = migrateUILayout({layout_version:11, rail_items:['nav-chat','nav-gizmos','nav-ide'], rail_hidden:[]});
 assert.equal(r.changed, true); assert(r.layout.rail_items.includes('nav-ide'));
-assert.deepEqual(r.layout.rail_hidden, ['nav-secrets']); assert(!r.layout.rail_items.includes('nav-secrets'));
+assert.deepEqual(r.layout.rail_hidden.sort(), ['nav-media','nav-secrets']); assert(!r.layout.rail_items.includes('nav-secrets'));
 r = migrateUILayout({layout_version:12, rail_items:['nav-chat','nav-secrets'], rail_hidden:[]});
 assert.equal(r.changed, true); assert(r.layout.rail_items.includes('nav-secrets'));
 r = migrateUILayout({layout_version:13, rail_items:['nav-chat','nav-secrets'], rail_hidden:[]});
 assert.equal(r.changed, true); assert(r.layout.rail_items.includes('nav-secrets'));
 r = migrateUILayout({layout_version:14, rail_items:['nav-chat','nav-secrets'], rail_hidden:[]});
+assert.equal(r.changed, true); assert(r.layout.rail_items.includes('nav-secrets'));
+assert.deepEqual(r.layout.rail_hidden, ['nav-media']);
+r = migrateUILayout({layout_version:15, rail_items:['nav-chat','nav-media'], rail_hidden:[]});
+assert.equal(r.changed, true); assert(r.layout.rail_items.includes('nav-media'));
+r = migrateUILayout({layout_version:16, rail_items:['nav-chat','nav-secrets'], rail_hidden:[]});
 assert.equal(r.changed, false); assert(r.layout.rail_items.includes('nav-secrets'));
 """
     if not shutil.which("node"):
@@ -594,7 +629,10 @@ def test_gizmos_app_creates_without_an_agent(tmp_path):
 
 def test_claude_meter_api_credit_row(harness):
     a = harness["apiCredit"]
-    assert a["key"] == "usage:claude+api_credit" and a["plainKey"] == "usage:claude"
+    # Legacy api_credit=true reads as the "both" billing view.
+    assert a["key"] == "usage:claude+both" and a["plainKey"] == "usage:claude"
+    assert a["apiKey"] == "usage:claude+api" and a["currentKey"] == "usage:claude+current"
+    assert a["codexKey"] == "usage:codex" and a["currentTip"]
     assert a["picked"] == "api_credit" and a["pinned"] == "weekly"
     assert a["rowText"] and a["detail"]
 

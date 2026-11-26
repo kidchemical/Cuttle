@@ -18,9 +18,12 @@ from api.device_workers.config import (
 )
 from api.device_workers.executor import validate_job_submission
 from api.device_workers.store import get_store
+from api.exec_nodes.routes import exec_nodes_bp
 from api.http_authz import require_ui_operator
 
 workers_bp = Blueprint("device_workers", __name__, url_prefix="/api/workers")
+# Execution nodes ride the mesh: /api/workers/exec/* (owner: api.exec_nodes).
+workers_bp.register_blueprint(exec_nodes_bp)
 
 
 def _auth_or_401():

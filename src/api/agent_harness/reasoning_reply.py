@@ -31,6 +31,40 @@ def turn_thinking(tracker: Any) -> List[str]:
     return out
 
 
+# Live-status carries the turn's reasoning to every pane on each poll; the tail
+# is what a reader follows while the turn works. The saved reply has it all.
+LIVE_THINKING_MAX = 12_000
+
+
+def live_thinking(query_id: Any, limit: int = LIVE_THINKING_MAX) -> str:
+    """The running turn's reasoning so far (same blocks the reply will carry).
+
+    Read from the in-flight tracker for ``query_id``; empty when the turn has
+    no reasoning yet or is not running in this process.
+    """
+    qid = str(query_id or "").strip()
+    if not qid:
+        return ""
+    from api.query_tracker import get_query_tracker, get_shared_live_snapshot
+
+    tracker = get_query_tracker(qid)
+    own = str(getattr(tracker, "query_id", "") or "")
+    if not own or own[:8] != qid[:8]:
+        # Not this turn's tracker (thread fallback): use the published snapshot.
+        snap = get_shared_live_snapshot(qid)
+        if not snap:
+            return ""
+
+        class _Snap:
+            execution_data = snap
+
+        tracker = _Snap()
+    text = "\n\n".join(turn_thinking(tracker))
+    if limit and len(text) > limit:
+        text = "\u2026" + text[-limit:]
+    return text
+
+
 def with_thinking(thoughts: Iterable[str], text: str) -> str:
     """``text`` behind one ``<think>`` block holding ``thoughts``.
 

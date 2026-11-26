@@ -509,6 +509,47 @@
             return m === 'amount' ? 'Dollar amount' : (m === 'percent' ? 'Percent' : 'Auto');
         }
 
+        /** Default billing order for agents that bill either way (data.billing). */
+        function billingField(data) {
+            const b = data && data.billing;
+            if (!b || !b.agent) return '';
+            const esc = M.escape;
+            const tip = 'Applies to chats without their own Billing choice (agent chip). '
+                + (b.prefer === 'api' && b.api_ready && b.api_ready !== 'ready'
+                    ? (b.api_ready === 'no_key' ? 'No API key is set, so turns use the subscription.'
+                        : 'The API budget is spent, so turns use the subscription.')
+                    : 'Subscription first moves to API credit only when the subscription hits its limit.');
+            return '<div class="shell-gizmo-billing" role="group" aria-label="Bill first">'
+                + '<span class="shell-gizmo-billing-label">Bill first<button type="button" class="cuttle-info"'
+                + ' aria-label="About billing order" data-tooltip="' + esc(tip) + '">i</button></span>'
+                + [['subscription', 'Subscription'], ['api', 'API credit']].map(([mode, label]) =>
+                    '<button type="button" data-gizmo-action="billing" data-agent="' + esc(b.agent) + '" data-mode="' + mode + '"'
+                    + (b.prefer === mode ? ' class="is-current" aria-pressed="true"' : ' aria-pressed="false"')
+                    + '>' + label + '</button>').join('')
+                + '</div>';
+        }
+
+        async function setBilling(id, agent, mode) {
+            const res = await api('/api/settings/agent-billing', {
+                method: 'POST', body: JSON.stringify({ [agent]: { prefer: mode } }),
+            });
+            if (!res.ok || !res.body || !res.body.success) {
+                toast((res.body && res.body.error) || 'Could not change billing', 'error');
+                return;
+            }
+            const view = (res.body.agents || {})[agent] || {};
+            const g = state.gizmos.find(x => x.id === id);
+            const data = g && state.data.get(M.dataKey(g));
+            if (data && data.billing) {
+                data.billing = { ...data.billing, prefer: view.prefer || mode };
+                if (state.popoverId === id) refreshPopover();
+            }
+            // "Current mode" meters follow the default: refetch every meter for this agent.
+            state.gizmos.forEach(x => { if ((x.config || {}).agent === agent) state.fetchedAt.delete(M.dataKey(x)); });
+            refreshDue(false);
+            toast('Claude bills ' + (mode === 'api' ? 'API credit' : 'the subscription') + ' first', 'success');
+        }
+
         function refreshPopover() {
             const g = state.gizmos.find(x => x.id === state.popoverId);
             const anchor = g && findWrap(g.id);
@@ -527,10 +568,18 @@
                     + '<label class="shell-gizmo-popover-field"><span>Show</span><select data-gizmo-field="show">'
                     + ['remaining', 'used'].map(s => '<option value="' + s + '"' + ((g.config.show || 'remaining') === s ? ' selected' : '')
                         + '>' + (s === 'used' ? 'Used' : 'Remaining') + '</option>').join('') + '</select></label>'
+                    + '<label class="shell-gizmo-popover-field"><span>Size</span><select data-gizmo-field="size">'
+                    + M.SIZES.map(z => '<option value="' + z + '"' + (M.sizeOf(g) === z ? ' selected' : '')
+                        + '>' + esc(M.SIZE_LABELS[z]) + '</option>').join('') + '</select></label>'
                     + ((data && data.readout)
                         ? '<label class="shell-gizmo-popover-field"><span>Readout</span><select data-gizmo-field="metric">'
                             + metricOptions().map(m => '<option value="' + esc(m) + '"' + ((g.config.metric || 'auto') === m ? ' selected' : '')
                                 + '>' + esc(metricLabel(m)) + '</option>').join('') + '</select></label>'
+                        : '')
+                    + (g.config.agent === 'claude'
+                        ? '<label class="shell-gizmo-popover-field"><span>Billing</span><select data-gizmo-field="billing">'
+                            + M.BILLING_VIEWS.map(v => '<option value="' + v + '"' + (M.claudeBilling(g.config) === v ? ' selected' : '')
+                                + '>' + esc(M.BILLING_LABELS[v]) + '</option>').join('') + '</select></label>'
                         : '')
                 : '';
             const armed = !!(g.config && g.config.notify_on_unblock);
@@ -540,6 +589,7 @@
                     + '>' + (armed ? 'Stop notify' : 'Notify when unblocked') + '</button>'
                 : '';
             const html = M.renderDetailHtml(g, state.data.get(M.dataKey(g)), Date.now())
+                + billingField(data)
                 + agentField
                 + '<div class="shell-gizmo-popover-section">Move to</div><div class="shell-gizmo-popover-docks">'
                 + docks.map(dk => '<button type="button" data-gizmo-action="dock" data-dock="' + dk + '"'
@@ -591,6 +641,8 @@
             if (action === 'dock') {
                 closePopover();
                 patch(id, { placement: { dock: btn.dataset.dock } });
+            } else if (action === 'billing') {
+                setBilling(id, btn.dataset.agent, btn.dataset.mode);
             } else if (action === 'refresh') {
                 refreshDue(true, id);
             } else if (action === 'notify') {

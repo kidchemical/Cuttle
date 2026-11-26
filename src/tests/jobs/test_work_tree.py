@@ -150,7 +150,7 @@ def test_live_status_extras_carries_background(sources):
 
     sources["waits"] = [{"job_id": "j", "label": "Waiting on: build", "chat_session_id": "7"}]
     extras = live_status_extras("7")
-    assert set(extras) == {"subagents", "background", "orchestration"}
+    assert set(extras) == {"subagents", "background", "orchestration", "thinking", "steers"}
     assert extras["background"]["label"] == "Waiting on: build"
     assert live_status_extras("8")["background"] is None
 
@@ -173,6 +173,23 @@ def test_supervised_chat_summary_names_its_watchers(sources):
     assert work_tree.background_summary("2361") is None
     # Being watched is not background work: no chat-list badge.
     assert "2353" not in work_tree.background_session_ids()
+    # Running now lists the live supervisor and its target, not the paused pair's target.
+    listed = {o["chat_session_id"] for o in work_tree.work_tree()["owners"]}
+    assert listed == {"2353"}
+
+
+def test_paused_schedules_are_not_running_work(sources):
+    """A supervisor whose schedules are all paused, and the chats they watch, are not in Running now."""
+    def op(oid, actor, target, status):
+        return {"id": oid, "status": status, "target": f"CH-{target:06d}", "origin": {"chat_session_id": str(actor)},
+                "meta": {"op_kind": "supervise", "every": 1800}}
+
+    sources["chat_ops"] = [op("a", 1705, 1699, "paused"), op("b", 2740, 2750, "running")]
+    sources["schedules"] = {"1705": [{"id": "a", "status": "paused", "kind": "supervise", "target": "CH-001699"}],
+                            "2740": [{"id": "b", "status": "running", "kind": "supervise", "target": "CH-002750"}]}
+    tree = work_tree.work_tree()
+    assert {o["chat_session_id"] for o in tree["owners"]} == {"2740", "2750"}
+    assert tree["totals"]["chats"] == 2
 
 
 @pytest.fixture
