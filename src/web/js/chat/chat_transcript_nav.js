@@ -192,8 +192,9 @@
                 return { idx, pinKey, pinned };
             });
 
+            // Pinned messages get a shortcut copy at the top; every message also
+            // keeps its chronological slot below the separator.
             const pinnedItems = items.filter((it) => it.pinned);
-            const restItems = items.filter((it) => !it.pinned);
 
             const renderItem = (it) => (
                 `<button type="button" class="message-nav-item${it.pinned ? ' is-pinned' : ''}" `
@@ -206,10 +207,10 @@
             );
 
             let html = pinnedItems.map(renderItem).join('');
-            if (pinnedItems.length && restItems.length) {
+            if (pinnedItems.length) {
                 html += '<div class="message-nav-sep" aria-hidden="true"></div>';
             }
-            html += restItems.map(renderItem).join('');
+            html += items.map(renderItem).join('');
 
             nav.style.display = 'flex';
             const wasPinned = messageNavPinnedToBottom;
