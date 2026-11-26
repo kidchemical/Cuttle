@@ -107,3 +107,23 @@ def test_snapshot_stages_dirty_paths_in_one_git_call(tmp_path, monkeypatch):
     staged = real(tmp_path, 'ls-tree', '-r', '-z', '--name-only', out['tree']).split('\0')[:-1]
     assert len(staged) == 26
     assert special in staged
+
+
+def test_file_vanishing_during_add_is_skipped_not_fatal(tmp_path, monkeypatch):
+    """A SQLite -wal can be checkpointed away after git matched it (CI race)."""
+    from api.agent_events import snapshots
+
+    git(tmp_path,'init')
+    (tmp_path/'kept.txt').write_text('kept\n', encoding="utf-8")
+    (tmp_path/'db.sqlite3-wal').write_text('wal\n', encoding="utf-8")
+    real=snapshots.git
+
+    def flaky(root,*args,env=None,input=None):
+        if 'add' in args and input and b'db.sqlite3-wal' in input:
+            raise RuntimeError("fatal: unable to stat 'db.sqlite3-wal': No such file or directory")
+        return real(root,*args,env=env,input=input)
+
+    monkeypatch.setattr(snapshots,'git',flaky)
+    result=snapshots.snapshot(str(tmp_path),'vanish','start')
+    assert result['skipped']=={'db.sqlite3-wal':'vanished'}
+    assert 'kept.txt' in real(tmp_path,'ls-tree','--name-only',result['tree'])
