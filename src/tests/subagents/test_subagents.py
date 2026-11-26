@@ -48,6 +48,26 @@ def _runner_factory(replies: dict[str, str] | None = None):
     return runner
 
 
+def test_harness_error_reply_marks_child_failed(tmp_path: Path):
+    """The kernel delivers a CLI failure as a reply typed ``{agent}_error``."""
+    db, _db_path, _owner, parent = _seed(tmp_path)
+
+    def runner(**_kwargs):
+        return {"success": True, "type": "cursor_error",
+                "response": "[FAIL] **Cursor Agent** (`agent`):\nAuthentication required."}
+
+    payload = service.spawn(
+        parent_session_id=parent,
+        children=[{"title": "Signed out", "agent": "cursor", "message": "hi"}],
+        collect="all", wait=True, timeout=8, runner=runner, db=db,
+    )
+    child = payload["children"][0]
+    assert child["status"] == "failed"
+    assert child["error"] == "cursor_error"
+    assert "Authentication required" in child["result"]
+    assert payload["status"] == "failed"
+
+
 def test_create_subagent_session_nests(tmp_path: Path):
     db, _db_path, owner, parent = _seed(tmp_path)
     child = db.create_subagent_chat_session(

@@ -502,13 +502,16 @@ def run_child_turn(
         )
         return result
 
-    ok = result.get("success", True) and not result.get("error")
+    # A harness failure comes back as a delivered reply: ``success`` stays true
+    # and the kernel marks it with the ``{agent}_error`` type.
+    rtype = str(result.get("type") or "")
+    ok = result.get("success", True) and not result.get("error") and not rtype.endswith("_error")
     store.update_child(
         db,
         child.id,
         status=STATUS_DONE if ok else STATUS_FAILED,
         result=text,
-        error=str(result.get("error") or "") if not ok else "",
+        error=str(result.get("error") or rtype) if not ok else "",
         finished=True,
     )
     return result
