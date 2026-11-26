@@ -310,7 +310,7 @@ def fs_reveal_in_explorer():
 @git_bp.route('/fs/open', methods=['POST'])
 @owner_required
 def fs_open_default_app():
-    """Open a local file with its registered desktop application."""
+    """Open a local file with its registered desktop application, or a folder in the file manager."""
     try:
         from api.fs_reveal import open_in_default_app
     except ImportError:

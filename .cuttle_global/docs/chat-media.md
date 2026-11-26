@@ -79,6 +79,8 @@ Markdown title string (standard `![alt](url "description")`):
 ![UI after fix](/output/shared/ui-after-fix.png "Close and Download stay clear of the S22 status bar and gesture nav.")
 ```
 
+> Avoid parentheses `(...)` inside the Markdown `"description"` title string: the chat parser matches `!\[...\]\(([^)]+)\)` and stops at the first `)`, which breaks the image. Use `<media>` (below) if the description needs parentheses.
+
 `<media>` attribute:
 
 ```xml
