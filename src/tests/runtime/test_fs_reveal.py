@@ -175,6 +175,9 @@ def test_default_opener_rejects_missing_file_before_launch(tmp_path):
         popen.assert_not_called()
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='fakes a POSIX opener, which also switches off '
+                    'drive-letter URL parsing; Windows: test_directory_opens_in_windows_explorer '
+                    'and test_windows_file_url_with_encoded_spaces_parses_to_drive_path')
 @pytest.mark.parametrize('platform, command', [('linux', 'xdg-open'), ('darwin', 'open')])
 def test_directory_url_opens_in_file_manager(tmp_path, monkeypatch, platform, command):
     """A chat chip for a folder (file:// URL, %20 for spaces) opens the folder itself."""
