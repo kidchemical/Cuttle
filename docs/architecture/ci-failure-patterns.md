@@ -137,6 +137,7 @@ step, fix. Keep entries short; the theme sections hold the explanation.
 
 | Date | Job | Theme | Failure | Fix |
 |---|---|---|---|---|
+| 2026-11-25 | local release-check (v0.13.3) | 4 | `test_shortcut_script_keeps_the_installed_builds_cuttle_lnk` anchored on a list a `.ps1` refactor moved; the push tier never ran it because only `.py/.js/.css/.html` changes selected related tests | test anchor updated; `.ps1/.sh/.cmd` now select tests that name the script |
 | 2026-11-25 | Quality / python (ubuntu, PR) | 5 | `test_snapshot_records_lines_and_preserves_index`: `-wal` vanished before the size/binary probe | probe skips a vanished file too |
 | 2026-11-25 | Quality / python (ubuntu, PR) | 5 | `test_accepted_but_unread_followup_is_visible[duplicate_echo]`: second identical steer began before the first echo was read (ambiguous by design) | fake echoes before the first ack |
 | 2026-11-25 | Quality / python (windows) | 5 | `test_the_claim_alone_keeps_it_exactly_once_without_the_lock` failed 15/15 on Windows: concurrent `os.rename` of one file succeeds for every caller (source opened before rename) | exclusive-create claim gate |

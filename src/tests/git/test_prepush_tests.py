@@ -66,6 +66,23 @@ def test_fast_selection_takes_quality_changed_and_related_tests_not_e2e(repo):
     assert note == ""
 
 
+def test_fast_selection_maps_script_changes_to_tests_that_read_them(repo):
+    """v0.13.3: a create_desktop_shortcuts.ps1 edit broke a static test the push tier never ran."""
+    _write(repo, "src/tests/runtime/test_launchers.py",
+           "def test_x():\n    assert 'create_desktop_shortcuts.ps1'\n")
+    _write(repo, "src/scripts/create_desktop_shortcuts.ps1", "# v1\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "seed")
+    base = _git(repo, "rev-parse", "HEAD")
+    _write(repo, "src/scripts/create_desktop_shortcuts.ps1", "# v2\n")
+    _git(repo, "commit", "-am", "change")
+    head = _git(repo, "rev-parse", "HEAD")
+
+    paths, _ = pt.select_fast_tests(pt.changed_files(base, head, repo), head, repo)
+
+    assert "src/tests/runtime/test_launchers.py" in paths
+
+
 def test_fast_selection_over_budget_keeps_only_changed_tests(repo, monkeypatch):
     base = _git(repo, "rev-parse", "HEAD")
     _write(repo, "src/api/widget_board.py", "X = 3\n")

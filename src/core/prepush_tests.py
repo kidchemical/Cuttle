@@ -41,7 +41,8 @@ FAST_TIMEOUT = float(os.environ.get("CUTTLE_PREPUSH_FAST_TIMEOUT", "300"))
 RELEASE_TIMEOUT = 3 * 3600
 RELEASE_TAG = re.compile(r"^refs/tags/v\d+\.\d+\.\d+")
 ENCODING_ARGS = ("-W", "error::EncodingWarning")
-SOURCE_SUFFIXES = (".py", ".js", ".mjs", ".cjs", ".css", ".html")
+# Scripts too: static tests read launchers and shortcut scripts by name.
+SOURCE_SUFFIXES = (".py", ".js", ".mjs", ".cjs", ".css", ".html", ".ps1", ".sh", ".cmd")
 MAX_REPORTED = 20
 
 
