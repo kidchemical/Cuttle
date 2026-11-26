@@ -44,6 +44,8 @@ def test_instance_state_dir_live_unkeyed_shadow_scoped(tmp_path, monkeypatch):
 
 def test_leaf_paths_stay_under_instance_dir_and_create_nothing(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    # Windows resolves the state dir from LOCALAPPDATA: never the machine's real one.
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     monkeypatch.delenv("CUTTLE_SHADOW_DATA", raising=False)
     base = instance_state_dir()
     assert notify_queue_path().parent == base

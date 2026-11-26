@@ -87,14 +87,18 @@ def relative_path(path: Any, repo_root: Optional[str]) -> Optional[str]:
     if not isinstance(path, str) or not path.strip():
         return None
     raw = path.strip().replace('\\', '/')
+    # Rooted ('/x') and drive ('C:/x') paths are absolute on every OS. Python
+    # 3.13+ no longer calls '/x' absolute on Windows, so isabs alone would make
+    # the same agent report relative there.
+    absolute = raw.startswith('/') or bool(re.match(r'^[A-Za-z]:/', raw)) or os.path.isabs(raw)
     if not repo_root:
-        if os.path.isabs(raw):
+        if absolute:
             return None
         while raw.startswith('./'):
             raw = raw[2:]
         return raw
     root = os.path.normpath(repo_root).replace('\\', '/')
-    if os.path.isabs(raw) or re.match(r'^[A-Za-z]:/', raw):
+    if absolute:
         full = os.path.normpath(raw).replace('\\', '/')
         if full == root or not full.startswith(root.rstrip('/') + '/'):
             return None

@@ -287,9 +287,7 @@ def test_a_unit_whose_process_tree_runs_api_subagents_is_flagged():
         assert not work_tree._runs_subagents(plain.pid)
         assert not work_tree._runs_subagents(0)
     finally:
-        import psutil
+        from tests.process_tree import kill_tree
 
         for p in (root, plain):
-            for child in psutil.Process(p.pid).children(recursive=True):
-                child.kill()
-            p.kill()
+            kill_tree(p.pid)

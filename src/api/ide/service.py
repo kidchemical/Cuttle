@@ -549,7 +549,8 @@ def _search_rg(root: Path, query: str, *, regex: bool, case: bool, word: bool,
             if event.get("type") != "match":
                 continue
             data = event["data"]
-            rel = (data.get("path") or {}).get("text") or ""
+            # rg prints ``.\src\app.py`` on Windows: results are POSIX workspace paths.
+            rel = ((data.get("path") or {}).get("text") or "").replace("\\", "/")
             rel = rel[2:] if rel.startswith("./") else rel
             line_text = (data.get("lines") or {}).get("text")
             if line_text is None or not rel:

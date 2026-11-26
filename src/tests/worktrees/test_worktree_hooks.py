@@ -21,10 +21,10 @@ def test_hook_absent_is_none(tmp_path):
 
 
 def test_hook_parses_and_runs_in_worktree(tmp_path):
-    proj = _project_with_hook(tmp_path, "setup:\n  run_posix: touch setup-ran\n  timeout: 5\n")
+    proj = _project_with_hook(tmp_path, "setup:\n  run_posix: echo ran > setup-ran\n  timeout: 5\n")
     hook = hooks.load_setup_hook(str(proj))
     assert hook is not None
-    assert hook["run_posix"] == "touch setup-ran"
+    assert hook["run_posix"] == "echo ran > setup-ran"  # cmd.exe and sh alike
     assert hook["timeout"] == 5
 
     worktree = tmp_path / "wt"

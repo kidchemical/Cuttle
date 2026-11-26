@@ -78,7 +78,7 @@ def test_setup_hook_requires_explicit_authorization(client, monkeypatch, tmp_pat
     repo = _repo(tmp_path / "primary")
     (repo / ".cuttle").mkdir()
     (repo / ".cuttle" / "worktrees.yaml").write_text(
-        "setup:\n  run_posix: touch setup-ran\n", encoding="utf-8"
+        "setup:\n  run_posix: echo ran > setup-ran\n", encoding="utf-8"
     )
     _enable(monkeypatch, repo, project_id=2, name="Hook")
 
