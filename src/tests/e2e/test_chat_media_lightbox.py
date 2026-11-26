@@ -42,10 +42,10 @@ MEDIA_MESSAGE = (
 )
 
 
-def _open_media_chat(browser, static_server, meta_calls, init_script=None):
+def _open_media_chat(browser, static_server, meta_calls, init_script=None, message=MEDIA_MESSAGE):
     """Chat page in a host frame with the media fixture message and routes."""
     world = CardWorld([])
-    world.history.append({"id": 2, "role": "assistant", "content": MEDIA_MESSAGE,
+    world.history.append({"id": 2, "role": "assistant", "content": message,
                           "timestamp": time.time() * 1000})
 
     def handle(route):
@@ -168,6 +168,33 @@ def test_lightbox_mounts_on_host_and_navigates_zooms_and_closes(browser, static_
         expect(box.locator(".cuttle-lightbox-counter")).to_have_text("2 / 3")
         box.locator(".cuttle-lightbox-close").click()
         expect(box).to_be_hidden()
+        assert not errors
+    finally:
+        page.close()
+
+
+def test_image_link_chip_opens_the_lightbox_not_a_new_window(browser, static_server):
+    """A link badge to an image used to follow target=_blank: in the app that
+    replaced the view with the bare image and no way back."""
+    meta_calls = []
+    message = ("Saved [the denoised pass](/output/shared/second.png) and [notes](/output/shared/notes.txt).\n\n"
+               "![hero.png](/output/shared/hero-0123456789ab.png)")
+    page, frame, errors = _open_media_chat(browser, static_server, meta_calls, message=message)
+    try:
+        popups = []
+        page.on("popup", lambda p: popups.append(p))
+        frame.locator('.message.assistant a.md-link-chip[href$="/output/shared/second.png"]').click()
+        box = page.locator("#cuttle-shell-lightbox")
+        expect(box).to_be_visible()
+        # Gallery = the bubble's media in order; the non-media link is skipped.
+        expect(box.locator(".cuttle-lightbox-counter")).to_have_text("1 / 2")
+        expect(box.locator(".cuttle-lightbox-title")).to_have_text("second.png")
+        page.keyboard.press("ArrowRight")
+        expect(box.locator(".cuttle-lightbox-title")).to_have_text("hero.png")
+        page.keyboard.press("Escape")
+        expect(box).to_be_hidden()
+        assert not popups
+        assert page.url.endswith("/qa-host.html")
         assert not errors
     finally:
         page.close()
