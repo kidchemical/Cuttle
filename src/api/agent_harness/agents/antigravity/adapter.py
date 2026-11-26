@@ -521,6 +521,7 @@ class Adapter:
         timeout: float = 3600.0,
         reasoning_effort: Optional[str] = None,
         cancel_event: Any = None,
+        background_wait_cap: Any = None,
     ) -> AgentResult:
         from api.agent_harness.agent_defaults import badge_meta
 
@@ -547,11 +548,17 @@ class Adapter:
         if auth_error:
             return AgentResult(success=False, error=auth_error, output="", model=mid, meta=meta_base)
 
+        from api.agent_harness.background_wait import BackgroundWait, detach_enabled
         from api.agent_harness.steer import steer_enabled
 
         if steer_enabled("antigravity"):
             from api.agent_harness.agents.antigravity.acp_turn import run_antigravity_turn_acp
 
+            background = (
+                BackgroundWait(chat_session_id, "antigravity", label="Antigravity")
+                if chat_session_id and background_wait_cap is None
+                and detach_enabled("antigravity") else None
+            )
             acp_raw = await run_antigravity_turn_acp(
                 prompt,
                 exe=exe,
@@ -563,6 +570,7 @@ class Adapter:
                 chat_session_id=chat_session_id,
                 timeout=timeout,
                 cancel_event=cancel_event,
+                background=background,
             )
             if acp_raw.get("fallback"):
                 print(
@@ -607,6 +615,8 @@ class Adapter:
                     meta["steered"] = int(acp_raw["steered"])
                 if acp_raw.get("undelivered_steers"):
                     meta["undelivered_steers"] = list(acp_raw["undelivered_steers"])
+                if acp_raw.get("background_job"):
+                    meta["background_job"] = acp_raw["background_job"]
                 if acp_raw.get("timed_out") or acp_raw.get("cancelled"):
                     if chat_session_id and sid:
                         try:

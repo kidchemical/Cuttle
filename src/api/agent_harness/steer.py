@@ -298,6 +298,13 @@ def note_echo(chat_session_id: Any, token: Optional[int], steer_id: Optional[str
         entry.receipts.echo(steer_id)
 
 
+def note_delivered(chat_session_id: Any, token: Optional[int], steer_id: Optional[str]) -> None:
+    """Retroactive delivery confirmation (no live echo; never claims later output)."""
+    entry = _owner(chat_session_id, token)
+    if entry is not None and steer_id:
+        entry.receipts.confirmed_without_echo(steer_id)
+
+
 def note_output_start(chat_session_id: Any, token: Optional[int], item_id: Any) -> None:
     """An agent output item started (only later items can be a steer's reply)."""
     entry = _owner(chat_session_id, token)

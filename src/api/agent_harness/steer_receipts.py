@@ -244,6 +244,20 @@ class Receipts:
             entry['delivered_at'] = entry['delivered_at'] or _now()
             self._emit(entry)
 
+    def confirmed_without_echo(self, steer_id):
+        """Retroactive confirmation when the transport never echoes live input.
+
+        Marks the steer ``delivered`` without setting ``echo_seq``, so no later
+        output item (which may answer a superseding steer) can be attributed as
+        this send's reply excerpt.
+        """
+        with self._lock:
+            entry = self._find(steer_id)
+            if entry is None or entry['delivered_at'] is not None or not self._fresh():
+                return
+            entry['delivered_at'] = _now()
+            self._emit(entry)
+
     def output_start(self, item_id):
         """An agent output item started: only later items can be its reply."""
         with self._lock:

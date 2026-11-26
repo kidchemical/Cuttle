@@ -311,3 +311,222 @@ def test_acp_setup_failure_falls_back_to_print_mode(agy_acp_env, tmp_path, monke
     assert res.output == "fallback pong"
     modes = [c["mode"] for c in calls()]
     assert "acp" in modes and "print" in modes
+
+
+def _write_multi_steer_acp_agy(tmp_path, conversations):
+    """Fake agy acp (no live user_message_chunk echo) that takes two steers in one turn."""
+    script = tmp_path / "agy_multi"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        f"CONVS = {str(conversations)!r}\n"
+        "def emit(obj): print(json.dumps(obj), flush=True)\n"
+        "sid = 'acp-multi-1'\n"
+        "prompts = []\n"
+        "for line in sys.stdin:\n"
+        "    line = line.strip()\n"
+        "    if not line:\n"
+        "        continue\n"
+        "    msg = json.loads(line)\n"
+        "    method = msg.get('method')\n"
+        "    mid = msg.get('id')\n"
+        "    params = msg.get('params') or {}\n"
+        "    if method == 'initialize':\n"
+        "        emit({'jsonrpc': '2.0', 'id': mid, 'result': {'protocolVersion': 1}})\n"
+        "    elif method in ('session/new', 'session/resume'):\n"
+        "        open(os.path.join(CONVS, sid + '.db'), 'w').close()\n"
+        "        emit({'jsonrpc': '2.0', 'id': mid, 'result': {'sessionId': sid, 'configOptions': []}})\n"
+        "    elif method == 'session/set_config_option':\n"
+        "        emit({'jsonrpc': '2.0', 'id': mid, 'result': {'configOptions': []}})\n"
+        "    elif method == 'session/prompt':\n"
+        "        prompts.append(mid)\n"
+        "        if len(prompts) == 1:\n"
+        "            emit({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': {\n"
+        "                'sessionUpdate': 'tool_call', 'toolCallId': 'bg_1', 'name': 'run_command',\n"
+        "                'args': {'CommandLine': 'build.sh'}, 'status': 'in_progress'}}})\n"
+        "        elif len(prompts) == 2:\n"
+        "            # Steer 1 supersedes initial prompt; answer steer 1, keep turn open.\n"
+        "            emit({'jsonrpc': '2.0', 'id': prompts[0], 'result': {'stopReason': 'end_turn'}})\n"
+        "            emit({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': {\n"
+        "                'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'ANSWER_1'}}}})\n"
+        "            emit({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': {\n"
+        "                'sessionUpdate': 'tool_call', 'toolCallId': 'bg_1', 'name': 'run_command',\n"
+        "                'args': {'CommandLine': 'build.sh'}, 'status': 'in_progress'}}})\n"
+        "        elif len(prompts) == 3:\n"
+        "            # Steer 2 supersedes steer 1; answer steer 2, then finish turn.\n"
+        "            emit({'jsonrpc': '2.0', 'id': prompts[1], 'result': {'stopReason': 'end_turn'}})\n"
+        "            emit({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': {\n"
+        "                'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'ANSWER_2'}}}})\n"
+        "            emit({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': {\n"
+        "                'sessionUpdate': 'tool_call_update', 'toolCallId': 'bg_1', 'name': 'run_command',\n"
+        "                'status': 'completed', 'rawOutput': 'ok'}}})\n"
+        "            emit({'jsonrpc': '2.0', 'id': prompts[2], 'result': {'stopReason': 'end_turn'}})\n",
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return str(script)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fake CLI uses a shebang")
+def test_acp_retroactive_steer_never_steals_next_steers_reply(agy_acp_env, tmp_path, monkeypatch):
+    from api.agent_harness import background_wait as bw
+
+    monkeypatch.setattr(bw, "detach_enabled", lambda _agent: False)
+    exe = _write_multi_steer_acp_agy(tmp_path, agy_acp_env)
+    monkeypatch.setattr(agy, "antigravity_executable", lambda: exe)
+    chat = "8806"
+    receipts_holder = {}
+    steers_out = []
+
+    def _send_two_steers():
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            if steer.active_agent(chat) == "antigravity":
+                with steer._lock:
+                    entry = steer._active.get(steer._key(chat))
+                receipts_holder["receipts"] = entry.receipts if entry else None
+                steers_out.append(steer.steer(chat, "first follow-up"))
+                time.sleep(0.15)
+                steers_out.append(steer.steer(chat, "second follow-up"))
+                return
+            time.sleep(0.02)
+
+    t = threading.Thread(target=_send_two_steers, daemon=True)
+    t.start()
+    res = asyncio.run(agy.Adapter().execute(
+        "start build", cwd=str(tmp_path), resume=None, model=None,
+        status_queue=queue.Queue(), chat_session_id=chat, timeout=15,
+    ))
+    t.join(timeout=5.0)
+
+    assert res.success is True
+    assert len(steers_out) == 2
+    assert all(s.get("steered") for s in steers_out)
+    assert res.meta.get("steered") == 2
+    assert not res.meta.get("undelivered_steers")
+    receipts = receipts_holder["receipts"]
+    snap1 = receipts.snapshot(steers_out[0]["steer_id"])
+    snap2 = receipts.snapshot(steers_out[1]["steer_id"])
+    assert snap1["state"] == "delivered"
+    assert snap2["state"] == "delivered"
+    # Steer 1 was confirmed retroactively when steer 2 superseded it: it must NOT
+    # claim steer 2's reply ("ANSWER_2").
+    assert snap1["reply"] is None
+    assert snap2["reply"] is None
+
+
+def _write_bg_detach_acp_agy(tmp_path, conversations):
+    """Fake agy acp with a background tool call, mid-wait steer answer, then completion."""
+    script = tmp_path / "agy_bg"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys, time\n"
+        f"CONVS = {str(conversations)!r}\n"
+        "def emit(obj): print(json.dumps(obj), flush=True)\n"
+        "sid = 'acp-bg-1'\n"
+        "prompts = []\n"
+        "for line in sys.stdin:\n"
+        "    line = line.strip()\n"
+        "    if not line:\n"
+        "        continue\n"
+        "    msg = json.loads(line)\n"
+        "    method = msg.get('method')\n"
+        "    mid = msg.get('id')\n"
+        "    if method == 'initialize':\n"
+        "        emit({'jsonrpc': '2.0', 'id': mid, 'result': {'protocolVersion': 1}})\n"
+        "    elif method in ('session/new', 'session/resume'):\n"
+        "        open(os.path.join(CONVS, sid + '.db'), 'w').close()\n"
+        "        emit({'jsonrpc': '2.0', 'id': mid, 'result': {'sessionId': sid, 'configOptions': []}})\n"
+        "    elif method == 'session/set_config_option':\n"
+        "        emit({'jsonrpc': '2.0', 'id': mid, 'result': {'configOptions': []}})\n"
+        "    elif method == 'session/prompt':\n"
+        "        prompts.append(mid)\n"
+        "        if len(prompts) == 1:\n"
+        "            emit({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': {\n"
+        "                'sessionUpdate': 'tool_call', 'toolCallId': 'bg_build', 'name': 'run_command',\n"
+        "                'args': {'CommandLine': 'unity-build', 'toolSummary': 'Unity 4-platform build'}, 'status': 'in_progress'}}})\n"
+        "            emit({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': {\n"
+        "                'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Started 4-platform build in background.'}}}})\n"
+        "            emit({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': {\n"
+        "                'sessionUpdate': 'usage_update', 'used': 5000, 'size': 1048576}}})\n"
+        "        elif len(prompts) == 2:\n"
+        "            emit({'jsonrpc': '2.0', 'id': prompts[0], 'result': {'stopReason': 'end_turn'}})\n"
+        "            emit({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': {\n"
+        "                'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'Build 2/4 at 81% — should we stop?'}}}})\n"
+        "            emit({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': {\n"
+        "                'sessionUpdate': 'usage_update', 'used': 6000, 'size': 1048576}}})\n"
+        "            time.sleep(0.35)\n"
+        "            emit({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': {\n"
+        "                'sessionUpdate': 'tool_call_update', 'toolCallId': 'bg_build', 'name': 'run_command',\n"
+        "                'status': 'completed', 'rawOutput': 'ALL OK'}}})\n"
+        "            emit({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': {\n"
+        "                'sessionUpdate': 'agent_message_chunk', 'content': {'type': 'text', 'text': 'All 4 builds finished.'}}}})\n"
+        "            emit({'jsonrpc': '2.0', 'method': 'session/update', 'params': {'sessionId': sid, 'update': {\n"
+        "                'sessionUpdate': 'usage_update', 'used': 7000, 'size': 1048576}}})\n"
+        "            emit({'jsonrpc': '2.0', 'id': prompts[1], 'result': {'stopReason': 'end_turn'}})\n",
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    return str(script)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fake CLI uses a shebang")
+def test_acp_background_task_detaches_and_flushes_mid_turn_replies(agy_acp_env, tmp_path, monkeypatch):
+    from api.agent_harness import background_wait as bw
+    from api.agent_harness.agents.antigravity import acp_turn
+    from api import job_watch
+
+    monkeypatch.setattr(acp_turn, "_DETACH_SETTLE_SEC", 0.05)
+    monkeypatch.setattr(bw, "detach_enabled", lambda agent: agent == "antigravity")
+    monkeypatch.setattr(job_watch, "output_dir", lambda: tmp_path)
+    exe = _write_bg_detach_acp_agy(tmp_path, agy_acp_env)
+    monkeypatch.setattr(agy, "antigravity_executable", lambda: exe)
+    chat = "8807"
+
+    res = asyncio.run(agy.Adapter().execute(
+        "build all 4", cwd=str(tmp_path), resume=None, model=None,
+        status_queue=queue.Queue(), chat_session_id=chat, timeout=15,
+    ))
+    assert res.success is True
+    assert "Started 4-platform build in background." in res.output
+    assert "<cuttle_action_form>" in res.output
+    job_id = res.meta.get("background_job")
+    assert job_id and job_id.startswith("antigravity-bg-")
+
+    followups = []
+    assert bw.bind_saver(job_id, lambda body: followups.append(body), {"query_id": "q-bg"})
+
+    # Steer while waiting: answer flushes as its own follow-up bubble before build finishes.
+    steered = bw.steer_detached(chat, "antigravity", "status?")
+    assert steered and steered.get("steered") is True
+
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        st = job_watch.read_status(job_id) or {}
+        if st.get("state") == "done" and len(followups) >= 2:
+            break
+        time.sleep(0.05)
+
+    texts = [f["response"] for f in followups]
+    assert any("Build 2/4 at 81%" in t for t in texts), texts
+    assert any("All 4 builds finished." in t for t in texts), texts
+    assert (job_watch.read_status(job_id) or {}).get("state") == "done"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fake CLI uses a shebang")
+def test_acp_background_detach_skipped_when_capped(agy_acp_env, tmp_path, monkeypatch):
+    from api.agent_harness import background_wait as bw
+    from api.agent_harness.agents.antigravity import acp_turn
+
+    monkeypatch.setattr(acp_turn, "_DETACH_SETTLE_SEC", 0.05)
+    monkeypatch.setattr(bw, "detach_enabled", lambda agent: agent == "antigravity")
+    exe, _ = _write_fake_acp_agy(tmp_path, agy_acp_env, mode="normal")
+    monkeypatch.setattr(agy, "antigravity_executable", lambda: exe)
+
+    res = asyncio.run(agy.Adapter().execute(
+        "say ready", cwd=str(tmp_path), resume=None, model=None,
+        status_queue=queue.Queue(), chat_session_id="8808", timeout=15,
+        background_wait_cap=object(),
+    ))
+    assert res.success is True
+    assert not res.meta.get("background_job")
