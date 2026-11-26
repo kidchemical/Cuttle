@@ -5,7 +5,31 @@ Two version concepts — do not conflate them:
 - **Release version** (`electron/package.json`, e.g. `0.2.26`): user-facing SemVer. Bump **only at release time**, never per push. Patch = bugfix, Minor = feature, Major = breaking. Use `.cuttle/scripts/bump-cuttle-version.py` (`--minor` / `--major` / `--set X.Y.Z`; any OS).
 - **Git hash**: exact commit identity, advertised as `cuttle_git_rev`. This is what client "Update" badges and mesh `needs_update` compare first — it changes every push with no manual step. (`cuttle_version` SemVer mismatch is only one of three `needs_update` inputs in `device_workers/platform.py`, alongside git-rev mismatch and stale boot rev.) Never route staleness checks through the hand-bumped release version.
 
-Release flow: bump version → commit → **`release-check` on that commit** (full suite, ~15 min, run detached; the pre-push hook refuses a `vX.Y.Z` tag without it — see `docs/architecture/ci-failure-patterns.md`) → `git tag vX.Y.Z` → push the branch (`git.push` form) → push the tag (`git.push` form with `"tag":"vX.Y.Z"`; a branch push does not carry tags) → publish GitHub Release notes off the tag. Never push with `--tags` or `--all`: this checkout's older local tags/branches predate the public history and must stay local.
+Release flow — **the PR goes green before the tag exists**. A pushed tag cannot be
+moved (no force-push), so a tag whose build fails is burned and the fix needs the
+next patch number (v0.11.0–v0.13.1 were all burned this way). The PR runs the same
+Quality, Desktop smoke and packaged-host jobs as `release.yml`, so a green PR head
+is the release candidate:
+
+1. Bump the version (`bump-cuttle-version.py`) and commit on `dev`.
+2. **Local checks on that commit, before pushing:** `release-check` (full Linux
+   suite, ~10 min, detached) and, when a Windows checkout is reachable, the full
+   pytest suite there too — Linux cannot see Windows-only branches, rename or
+   lock semantics (`docs/architecture/ci-failure-patterns.md`).
+3. Push `dev` (`git.push` form, or directly when the user has approved the push)
+   and open or update the PR to `main`; bring it up to date with `main` if the
+   ruleset reports it behind.
+4. Wait for **every** PR check. On a failure, fix on `dev`, rerun the local
+   checks, push, repeat — the version stays the same because no tag exists yet.
+5. Only on a green PR: `release-check` the PR head if it changed since step 2
+   (the hook refuses an unchecked tag), `git tag -a vX.Y.Z <PR head sha>`, push the
+   tag alone (`"tag":"vX.Y.Z"`; a branch push does not carry tags).
+6. The tag build creates the draft → write notes, publish (below) → merge the PR.
+
+A tag build that still fails after a green PR is a flake or runner difference:
+record it in the ledger, fix on `dev`, and only then take the next patch number.
+Never push with `--tags` or `--all`: this checkout's older local tags/branches
+predate the public history and must stay local.
 
 ## Mesh-visible changes (no per-push bump)
 

@@ -13,7 +13,7 @@ Owner of the local checks: `core.prepush_tests`, called by the pre-push hook
 | Push | What runs | Your part |
 |---|---|---|
 | Branch (`dev`, feature) | Hook: `src/tests/quality` plus the tests that touch the changed files, in a scratch worktree of the pushed commit, with `EncodingWarning` as an error (300 s budget; over budget warns, does not block) | Nothing. A failure blocks the push and names the tests. |
-| Release tag `vX.Y.Z` | Hook refuses the tag unless that commit has a recorded `release-check` pass | Run `release-check` on the release commit first (below), detached; ~15 min. |
+| Release tag `vX.Y.Z` | Hook refuses the tag unless that commit has a recorded `release-check` pass | Tag only a PR head whose checks are all green (`.cuttle/docs/cuttle-release.md`), after `release-check` on it (below), detached; ~10 min. |
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m core.prepush_tests release-check HEAD   # full suite, records the pass
