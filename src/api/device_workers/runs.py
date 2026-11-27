@@ -309,6 +309,8 @@ def submit(run_id: str, *, spec_sha256: str, target: str = "") -> Dict[str, Any]
     if run_watch.spec_digest(stored) != (spec_sha256 or "").strip():
         return {"success": False, "error": "run spec changed after approval; plan it again"}
     store = get_store()
+    if store.submissions_paused():
+        return {"success": False, "error": "mesh job submissions are paused for a host upgrade; approve again once it is done"}
     ids = []
     for job in stored["jobs"]:
         created = store.submit_job(

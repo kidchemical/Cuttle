@@ -507,6 +507,8 @@ class DeviceWorkerStore:
         jtype = normalize_job_type((job_type or "").strip())
         if not jtype:
             raise ValueError("type required")
+        if jtype != "agent_turn" and self.submissions_paused():
+            raise ValueError("mesh job submissions are paused for a host upgrade; submit again once it is done")
         params = params if isinstance(params, dict) else {}
         # Allow ttl / expires / max_attempts on params for convenience (stripped from stored copy).
         p = dict(params)
@@ -717,6 +719,18 @@ class DeviceWorkerStore:
                 return moved
             finally:
                 conn.close()
+
+    def submissions_paused(self) -> bool:
+        return self.db_path.with_suffix(".paused").exists()
+
+    def pause_submissions(self, paused: bool) -> None:
+        """Refuse new mesh jobs (agent turns aside) while queued ones still drain:
+        a file next to the db, so Flask, the daemon and the CLI all see it."""
+        flag = self.db_path.with_suffix(".paused")
+        if paused:
+            flag.touch()
+        else:
+            flag.unlink(missing_ok=True)
 
     def busy_jobs(self) -> List[Dict[str, Any]]:
         """Jobs not finished or still holding a reservation, agent turns aside: what a

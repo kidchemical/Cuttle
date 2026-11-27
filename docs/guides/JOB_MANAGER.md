@@ -108,14 +108,22 @@ past its lease with a second worker trying to claim, a frozen ComfyUI during Sto
 
 ## Upgrading and mixed versions
 
-- Upgrade or roll back the host only when `python -m api.device_workers.cli drain-check` passes (no mesh job
-  queued, running, or still holding a reservation). Restart the daemon right after: hot reload swaps the
-  executor but not the worker loop, and a new executor's "still running" under the old loop would release a
-  reservation early.
-- A worker on older code still runs jobs that declare no resources. It has no RAM telemetry, so admission refuses
-  resource-declaring jobs on it ("update Cuttle on it"): reservations only ever exist on updated workers.
-  `workers.self-update` restarts the client daemon, so a worker is never half-updated.
-- A rollback drops reservations and run watches the old code does not know: drain first.
+The host never runs old and new code side by side; change the live checkout only with the mesh stopped:
+
+1. `python -m api.device_workers.cli pause-submissions`: new mesh jobs and run approvals are refused with a
+   "paused for a host upgrade" error (agent turns unaffected); queued and running jobs carry on.
+2. Wait for `python -m api.device_workers.cli drain-check` to pass: submissions paused, no mesh job queued,
+   running, or still holding a reservation (a cancelled job counts until its worker confirms it stopped).
+3. Stop the host worker and the daemon, then Flask, through their owners (`/restart`, the Flask restart form;
+   never by signal from an agent they host).
+4. Merge or roll back the live checkout; start the daemon and Flask; `drain-check` once more (nothing queued),
+   then `resume-submissions`. The flag is a file beside `device_workers.db`, so it survives the restarts.
+5. Update remote workers with `workers.self-update` (it restarts their client daemon, so a worker is never
+   half-updated). Until then a worker on older code still runs jobs that declare no resources; it has no RAM
+   telemetry, so admission refuses resource-declaring jobs on it ("update Cuttle on it"): reservations only
+   ever exist on updated workers.
+
+A rollback drops reservations and run watches the old code does not know, which is why step 2 comes first.
 
 ## Non-goals
 

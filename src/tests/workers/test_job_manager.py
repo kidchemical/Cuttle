@@ -577,6 +577,19 @@ def test_plan_approve_watch_and_resume_once(worker_db):
     assert jw.poll_unit_watches() == []
 
 
+def test_a_paused_queue_refuses_the_whole_run_and_keeps_its_approval(worker_db):
+    from api.device_workers import runs
+
+    _register(worker_db)
+    p = runs.plan(SPEC, chat_session_id="CH-002819")["form"]["options"][0]["params"]
+    worker_db.pause_submissions(True)
+    refused = runs.submit(p["run_id"], spec_sha256=p["spec_sha256"])
+    assert not refused["success"] and "paused" in refused["error"]
+    assert worker_db.busy_jobs() == [], "no half-queued run"
+    worker_db.pause_submissions(False)
+    assert runs.submit(p["run_id"], spec_sha256=p["spec_sha256"])["success"]
+
+
 def test_stop_on_the_card_cancels_the_run_without_resuming(worker_db):
     from api import job_watch as jw
     from api.chat_ops import store as ops
@@ -1002,13 +1015,18 @@ def test_drain_check_lists_running_and_still_held_jobs(worker_db, capsys):
     from api.device_workers import cli
 
     _register(worker_db)
-    assert cli.main(["drain-check"]) == 0
+    assert cli.main(["drain-check"]) == 1, "submissions still open: a job may arrive after the check"
     jid = worker_db.submit_job(job_type="ping", requirements={"resources": {"ram_mb": 512}})["id"]
+    assert cli.main(["pause-submissions"]) == 0
+    with pytest.raises(ValueError, match="paused"):
+        worker_db.submit_job(job_type="ping")
     worker_db.claim_jobs(worker_id="desk")
     capsys.readouterr()
-    assert cli.main(["drain-check"]) == 1
+    assert cli.main(["drain-check"]) == 1, "the job queued before the pause still drains"
     assert [j["id"] for j in json.loads(capsys.readouterr().out)["busy"]] == [jid]
     worker_db.cancel_job(jid)
     assert cli.main(["drain-check"]) == 1, "cancelled but not yet confirmed stopped: still held"
     worker_db.release_hold(jid, "desk")
     assert cli.main(["drain-check"]) == 0
+    assert cli.main(["resume-submissions"]) == 0
+    worker_db.submit_job(job_type="ping")

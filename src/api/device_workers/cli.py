@@ -166,7 +166,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_rstat = sub.add_parser("run-status", help="Current watch status of a run")
     p_rstat.add_argument("--run-id", default="")
 
-    sub.add_parser("drain-check", help="Jobs still queued, running or holding a reservation (fails unless none)")
+    sub.add_parser("drain-check", help="Jobs still queued, running or holding a reservation (fails unless submissions are paused and none)")
+    sub.add_parser("pause-submissions", help="Refuse new mesh jobs while queued ones drain (before a host upgrade)")
+    sub.add_parser("resume-submissions", help="Accept new mesh jobs again")
 
     p_probe = sub.add_parser("probe", help="Ping a worker and measure mesh RTT")
     p_probe.add_argument("--target", default="")
@@ -412,8 +414,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         store.reclaim_expired()
         busy = [{k: j.get(k) for k in ("id", "type", "status", "claimed_by", "held_by", "reserved")}
                 for j in store.busy_jobs()]
-        result = {"success": not busy, "busy": busy,
-                  **({"error": f"{len(busy)} job(s) still queued, running or holding a reservation"} if busy else {})}
+        paused = store.submissions_paused()
+        error = (f"{len(busy)} job(s) still queued, running or holding a reservation" if busy
+                 else "" if paused else "submissions are open: run pause-submissions first")
+        result = {"success": not error, "paused": paused, "busy": busy, **({"error": error} if error else {})}
+    elif args.cmd in ("pause-submissions", "resume-submissions"):
+        from api.device_workers.store import get_store
+
+        get_store().pause_submissions(args.cmd == "pause-submissions")
+        result = {"success": True, "paused": get_store().submissions_paused()}
     elif args.cmd == "probe":
         target = str(args.target or env("target") or env("target_worker_id") or env("worker_id") or "").strip()
         if not target:
