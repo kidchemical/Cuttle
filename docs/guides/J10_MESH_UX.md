@@ -19,6 +19,9 @@ same two sources; none keeps its own state.
 | Job history | `metrics.py` (`job_metrics`) | p90 next to the median, a per-sample time series (peaks are already stored) |
 | Scheduling preferences | settings `device_workers.scheduling` | new block, see §4 |
 
+Principle: safe, explainable execution over utilization. An idle GPU is an opportunity, not an obligation;
+never interrupt the user's work or risk a duplicate run to keep hardware busy.
+
 Rules carried over from the design review:
 - **Queued capacity is not a reservation.** A job waiting for a busy machine has `target_worker_id` and a
   `wait_reason` only. `reserved_json`/`held_by` are written at claim, inside the existing
@@ -26,12 +29,21 @@ Rules carried over from the design review:
 - **Counted once:** a shared service (ComfyUI server, its loaded models) is machine load under `services`; a
   job's reservation covers what its own prompt adds.
 - **A user's machine choice is never overridden.** `pinned` jobs never move; auto-routing and failover apply
-  only to jobs the policy routed.
+  only to jobs the policy routed. A one-off override on a card applies to that job only, never to the
+  preferences.
+- **No second copy without fencing** (§7): a lease expiry or timeout alone never lets another worker run the
+  same job or frees its reservation.
+- **Every decision is recorded:** `job_decisions` (job id, snapshot id, strategy, policy rule, options with
+  capacity class / done-in / confidence / score, chosen target, reason, overridden-by-user). The card's "Why"
+  table renders this row; acceptance metrics are computed from it.
+- **Job history splits time:** queue wait, transfer and execution are stored separately in `job_metrics`, so
+  estimates use execution time only and the card's done-in adds the other two.
 
 ## 2. Milestones and dependencies
 
 | # | Milestone | Depends on | Ships |
 |---|---|---|---|
+| F | Fencing and safe reassignment | — | claim epochs, worker self-fencing, stop confirmation before reassignment or hold release, "needs attention" state; also closes today's lease-expiry requeue gap |
 | T | Telemetry and freshness | — | new `load` fields; laptop GPU name via its `nvidia-smi`; `not reported` vs 0; stale greys after 30 s, meters hidden after 2 min |
 | S | Scheduler and policy | T | `scheduler.rank()`, capacity classes, totals, confidence, strategies, `device_workers.scheduling`; `runs.plan` uses it; agents route through it by default |
 | C | Job card | S | stages, three bars, reservation vs use, process groups, cancel checklist, resource history, notice coalescing |
@@ -40,7 +52,7 @@ Rules carried over from the design review:
 | P | Settings → Mesh | S | strategy, interactive protection, host floor, per-kind ask/auto table |
 | X | Process and notice hygiene | C | work-tree classes (workload / supporting / watcher / machine service / stale / orphaned), duplicate-submit attach, one notice per job |
 
-Order: T → S → C → D → A → P → X. S is usable from the CLI and the existing J5 card before any new UI lands;
+Order: F → T → S → C → D → A → P → X. F comes first because auto-routing raises the cost of today's gap. S is usable from the CLI and the existing J5 card before any new UI lands;
 that is the reliability gate.
 
 ## 3. Existing components to reuse
@@ -67,18 +79,24 @@ shardable), each with:
   falling back to "same settings, any machine" scaled by relative speed. Transfer is input bytes divided by
   measured mesh throughput (probe RTT plus the first transfer); zero when the inputs are local.
 - **Confidence:** high with 10 or more samples on that worker, medium with 3–9, low below that or for
-  splits without history.
+  splits without history. A cross-machine estimate is labelled *inferred*, is at most low confidence, and is
+  padded towards p90 (it scales by measured relative speed for the same workload when known, otherwise it is
+  not offered as a number: "no history on this machine"). The form shows rounded ranges, never false precision.
 - **Interactive impact:** which focused app would share CPU/GPU, for how long, and its expected slowdown.
 
 Strategy weights (fastest / balanced / least disruption) combine done-in, interactive impact and host use into
-the score shown under "Why". Balanced accepts up to `max(5 min, 1.5 × fastest)` extra to avoid interactive
-impact. The option also states what would change the pick (an app going idle, a strategy change, an overrun).
+the score shown under "Why". Balanced accepts up to `balanced_extra` (setting; default
+`max(5 min, 0.5 × fastest)`) extra to avoid interactive impact; the form states the allowance it used. The option also states what would change the pick (an app going idle, a strategy change, an overrun).
 
-Policy (`device_workers.scheduling`): `strategy`, `protect_interactive`, `host_floor_ram_mb`,
+Policy (`device_workers.scheduling`): `strategy`, `balanced_extra`, `protect_interactive`, `host_floor_ram_mb`,
 `host_floor_vram_mb`, `kinds: {comfyui: {ask, strategy}, …}`. It always asks for paid API jobs, a job kind seen
 for the first time, and a job needing over 80 % of a machine's free VRAM, RAM or CPU, each resource checked
 separately. Otherwise a covered job is submitted with the top option and only the job card appears, with an
 undo.
+
+A scheduling failure (nothing fits, policy refuses, re-plan loop) parks the job with one `wait_reason` and one
+card update; it is retried when the snapshot changes, with backoff, never in a tight loop and never with a new
+notice per retry.
 
 The plan carries a snapshot id. Submit re-checks it: if the snapshot changed in a way that moves the pick, the
 card re-plans instead of submitting. Admission stays atomic at claim.
@@ -110,23 +128,54 @@ into `css/mesh.css`, and the status pills move out of `mesh_page.html`.
 
 ## 7. Failure handling and recovery
 
+**Fencing (milestone F).** A lease expiry proves nothing about the workload: a ComfyUI prompt keeps running when
+its worker stops responding. So:
+
+1. Each claim gets an epoch (`attempts` already counts claims). Heartbeats, progress, completion and result
+   uploads carry it; the host rejects any write from an older epoch, so a fenced worker can never complete
+   or overwrite the job.
+2. **Worker self-fencing:** a worker that cannot renew its lease for `lease_seconds` stops the workload itself
+   (ComfyUI interrupt, then the job's process scope) and reports `stopped` with its epoch when it reconnects.
+3. On lease expiry the host marks the job **lease lost**, not queued. It keeps the reservation and does not
+   reassign until one of:
+   - the old worker confirms `stopped` for that epoch (on reconnect, or via the stop request it polls);
+   - the user confirms the machine is off or the workload is gone ("needs attention" card with the machine,
+     job, last heartbeat and a "Mark stopped" / "Keep waiting" choice).
+4. Only then is the hold released and the unfinished work requeued (routed jobs may move; pinned jobs wait for
+   their machine).
+5. Paid API jobs (Tripo, cloud) are never re-submitted automatically after a lost lease: the remote task id is
+   recorded at submit, and recovery polls that task instead of starting a new one.
+
+Today's behaviour, to be replaced by F: an expired lease requeues the job (`reclaim_disposition`, unless the
+type is in `no_requeue_types`), so a second worker can claim it while the first may still run; the old
+worker's hold remains until it confirms or has been offline for `HOLD_OFFLINE_RELEASE_SEC`. F removes the
+automatic requeue and the offline timeout release.
+
 | Failure | Behavior |
 |---|---|
-| Worker disconnects mid-job | the lease expires, then the job is requeued (existing); a routed job may move to another worker, a pinned one waits; the hold is released when the worker confirms or after `HOLD_OFFLINE_RELEASE_SEC` |
-| One side of a split fails | its unfinished shards go to the other worker if they fit, otherwise they wait with a `wait_reason`; finished shards are kept |
+| Worker disconnects mid-job | lease lost, hold kept, no reassignment until stop is confirmed (above); the card shows "needs attention" after `lease_seconds` + 2 min |
+| Worker reconnects | it reports its running jobs with epochs; jobs it no longer owns are stopped by the worker (self-fence); telemetry and holds are reconciled from that report, not from the host's guess |
+| One side of a split fails | the same fencing per shard; once stopped, unfinished shards go to the other worker if they fit, otherwise wait with a `wait_reason`; finished shards are kept |
 | Snapshot changed before submit | re-plan on the card; never over-commit |
 | Telemetry stale | admission refuses that worker; the card shows "delayed", never "available" |
-| Cancel | the card checklist follows the store: requested → acknowledged → workload stopped (`stopped`) → hold released (`held_by` cleared); "cancelled" is shown only at the end |
+| Cancel | the card checklist follows the store: requested → acknowledged → workload stopped (`stopped`) → hold released (`held_by` cleared); "cancelled" is shown only at the end; an unreachable worker leaves it at "stop requested" with the needs-attention choice |
+| Repeated failures | after `max_attempts` the job fails with its reasons; one notice, no retry loop |
 | OOM | already handled: `metrics` grows the next reservation 1.5×; the card shows the OOM reason |
+| Host restart | jobs, holds and epochs are in the store; workers re-report on reconnect; nothing is requeued just because the host restarted |
 | Host upgrade | pause / drain / restart (JOB_MANAGER.md); a rollback starts only from a drained state |
 | Mixed versions | older workers get only jobs that declare no resources (existing) |
 
 ## 8. Tests and acceptance
 
 Automated:
+- Fencing: a lease expiry never requeues or frees the hold by itself; an old-epoch completion is rejected; a
+  worker that loses its lease stops the workload; reassignment happens only after a confirmed stop or the
+  user's "Mark stopped"; paid jobs are never re-submitted.
 - `scheduler.rank`, table-driven from the prototype snapshot fixture (Unity focused on the host, laptop busy,
   tower offline). Expected picks per strategy; capacity classes; done-in arithmetic; confidence thresholds;
   a split refused when one side cannot fit.
+- Decisions: every submit writes one `job_decisions` row that matches what the card showed; a card override
+  is recorded and does not change preferences.
 - Policy: always-ask cases (paid, new kind, over 80 % per resource); a pinned job is never moved; the
   remember-preference and auto-run settings stay separate.
 - Store: a queued-capacity job holds nothing until claim; a snapshot mismatch re-plans; holds are counted
@@ -143,10 +192,14 @@ Real machines (desktop RTX 3090 and the laptop):
    within 25 %.
 3. Cancel a running job: the checklist completes and the reservation is released within 10 s of the worker's
    stop.
-4. Disconnect the laptop mid-job: a routed job requeues or moves, a pinned one waits, and no phantom holds
-   remain.
+4. Unplug the laptop's network mid-job: the job shows "needs attention", the hold stays, and nothing starts
+   on the desktop. The laptop's workload stops itself after its lease runs out. On reconnect it reports
+   `stopped`, the hold is released and the job requeues (routed) or resumes there (pinned). No duplicate output
+   files and no phantom holds remain.
 5. Dashboard meters match `nvidia-smi` and `free` on each machine within 5 %; an unplugged machine is never
    shown as idle.
 6. Ten consecutive agent jobs produce no duplicate runs, no agent wait loops, and one notice per job.
-7. Over a week, at least 80 % of heavy jobs submitted while the host is interactive run elsewhere (from
-   `job_metrics`).
+7. Over a week, at least 80 % of *eligible* heavy jobs submitted while the host is interactive run
+   elsewhere. Eligible means: not pinned to the host, remote-capable, fitting an online remote machine, and
+   with inputs that are accessible or transferable. Computed from `job_decisions`, where every job that stayed
+   on the host records why (pinned, no fit, inputs not transferable, faster by policy).
