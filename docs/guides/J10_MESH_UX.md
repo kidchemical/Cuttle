@@ -146,6 +146,14 @@ its worker stops responding. So:
 5. Paid API jobs (Tripo, cloud) are never re-submitted automatically after a lost lease: the remote task id is
    recorded at submit, and recovery polls that task instead of starting a new one.
 
+F acceptance criteria:
+- The self-fencing watchdog lives in the worker process (client daemon / host worker loop), not in an agent
+  session, chat connection or run watcher, so it fires when those are gone.
+- Epoch checks cover output upload and publication too: an older execution can never overwrite or publish
+  over a newer one's results.
+- "Mark stopped" says what the user is confirming ("the old workload on KCsLaptop is no longer running"); it is
+  not offered as a way round an unreachable machine, and an unreachable machine alone never suggests it.
+
 Today's behaviour, to be replaced by F: an expired lease requeues the job (`reclaim_disposition`, unless the
 type is in `no_requeue_types`), so a second worker can claim it while the first may still run; the old
 worker's hold remains until it confirms or has been offline for `HOLD_OFFLINE_RELEASE_SEC`. F removes the
