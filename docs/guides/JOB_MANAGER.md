@@ -26,6 +26,7 @@ Mesh basics: [CUTTLE_WORKERS.md](CUTTLE_WORKERS.md).
 | Multi-stage workflows | Planned (follow-up milestone) | A run as a DAG of stages (hero image → Tripo shape → texture), each stage its own job type |
 | Artifact transfer | Planned (follow-up milestone) | Inputs staged to, and outputs collected from, the worker a job lands on: content hashes checked after copy, a file the target already holds (same hash) not sent again |
 | Adaptive estimates | Planned (follow-up milestone) | Reservations from a high percentile of measured peaks plus a safety margin instead of the max; an outlier (one anomalous peak, or an OOM under unrelated memory pressure) ages out or is dismissed from the card, so one bad run cannot pin a reservation high |
+| J10 Mesh UX and scheduling | **Next milestone** (after deploy + smoke test) | See [below](#next-milestone-j10-mesh-ux-and-scheduling) |
 | Remote previews, Windows isolation | Planned (follow-up milestone) | Previews shipped from remote workers to the host; Windows Job Objects for the memory scope |
 
 Generic adapters: Unity builds and other scripts run as allowlisted `shell` recipes, Blender as `blender_render`,
@@ -124,6 +125,26 @@ The host never runs old and new code side by side; change the live checkout only
    ever exist on updated workers.
 
 A rollback drops reservations and run watches the old code does not know, which is why step 2 comes first.
+
+## Next milestone: J10 mesh UX and scheduling
+
+Starts after this branch is deployed and smoke-tested; the follow-up milestones above stay deferred until then.
+Problem: agents run nearly everything on the host while the laptop sits idle, the user moves work by hand after
+the fact, and nothing shows overall machine use. Goal: the user rarely has to name a machine, investigate
+utilization, watch background work or clean up processes.
+
+| Area | Wanted | Builds on |
+|---|---|---|
+| Resource dashboard | Per machine, live: CPU, RAM, GPU, VRAM, swap, disk, network; open apps, agent workloads, jobs, reservations, queue; availability and connection state | Mesh page (`mesh_page.js`), heartbeat `load` (J0), `reserved_totals`; disk/network/CPU are new telemetry fields |
+| Scheduling | Best target, not first fit: score queue wait, J7 history on that machine, headroom, file locality and transfer cost; keep room for interactive apps; spare the host by default; spread suitable batches | `admission.admit` stays the hard gate; a scorer ranks the admitted workers in `runs.plan`; locality needs the artifact-transfer milestone's hashes |
+| Default for agents | Heavy commands go through `run-plan` without being told; one obvious verb, named in the always-on rules | `cuttle-workers.md` Runs, rule 00-core #4 |
+| Approval form | Auto or pinned machine; preference fastest / balanced / least interactive disruption; resources, ETA, cost, split per worker; remembered preferences | J5 run-plan form (`chat_action_cards.js`), personal settings |
+| Jobs and processes | Processes grouped by machine → chat → job; each marked workload, supporting, watcher, stale or orphaned; progress, stages, elapsed, ETA, resources, previews; expandable process detail | Jobs page (`jobs_page.js`, `jobs_ledger.js`), `api.jobs.work_tree`, J8 card |
+| Duplicates and notices | No duplicate runs or wait loops (a watcher already covers background work); stale or redundant completion notices coalesced into one, keeping any real result | `background_handoff`, chat-ops `job_notice` dedupe |
+
+Seen in CH-002819: Claude CLI background tasks survive a session restart, their completion notices arrive later as
+"stopped" turns with stale output, and an agent's extra wait loop shows up as more processes. These are the
+cases the last row covers.
 
 ## Non-goals
 
