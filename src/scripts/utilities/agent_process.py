@@ -34,7 +34,7 @@ def attach_to_chat_run(chat_session_id: Optional[str], proc) -> None:
     try:
         from api.agent_harness.resource_scope import confine
 
-        confine(proc)
+        confine(proc, chat_session_id)
     except Exception:
         pass
     if not chat_session_id:

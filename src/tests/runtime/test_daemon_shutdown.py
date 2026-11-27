@@ -133,7 +133,8 @@ def test_host_memory_pressure_reads_psi(tmp_path, monkeypatch):
 
     d = _load_daemon()
     psi = tmp_path / "memory"
-    psi.write_text("some avg10=6.65 avg60=15.39 avg300=6.00 total=1\nfull avg10=6.32 avg60=15.02 avg300=5.84 total=1\n")
+    psi.write_text("some avg10=6.65 avg60=15.39 avg300=6.00 total=1\nfull avg10=6.32 avg60=15.02 avg300=5.84 total=1\n",
+                   encoding="utf-8")
     real_open = builtins.open
     monkeypatch.setattr(builtins, "open", lambda p, *a, **k: real_open(psi if p == "/proc/pressure/memory" else p, *a, **k))
     assert d._host_memory_pressure() == 15.39

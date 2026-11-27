@@ -6,6 +6,10 @@ and task limits. A runaway turn is throttled or OOM-killed inside its scope;
 the aggregate agent slice also has soft and hard memory ceilings. These
 limits reduce host memory pressure; they do not guarantee OS stability.
 
+An OOM kill ends the whole scope, CLI included. The dead scope stays behind
+with ``Result=oom-kill`` until :func:`oom_notice` reads it for the failed
+turn's reply, so the chat names the limit instead of an unexplained exit.
+
 Uses systemd's own D-Bus API through ``busctl`` (ships with systemd), so there
 is no Python dependency. Best effort: off Linux, or with no reachable user
 manager, CLIs run exactly as before. The CLI retains its native execution environment.
@@ -42,6 +46,9 @@ _lock = threading.Lock()
 _confined: set[int] = set()  # in-flight moves only
 _slice_limits: tuple | None = None
 _reported: set[str] = set()
+_chat_units: dict[str, list[str]] = {}  # chat session id -> its recent scopes, newest last
+_CHAT_UNITS_KEPT = 8
+_swept = False
 
 
 def parse_size(value, total: int | None = None) -> int | None:
@@ -105,7 +112,7 @@ def _props(limits: dict) -> list[tuple[str, str, str]]:
 def start_scope_argv(unit: str, pids: list[int], limits: dict, description: str) -> list[str]:
     """busctl argv for Manager.StartTransientUnit moving ``pids`` into ``unit``."""
     props = [("Description", "s", description), ("Slice", "s", SLICE),
-             ("CollectMode", "s", "inactive-or-failed"), ("OOMPolicy", "s", "kill"),
+             ("CollectMode", "s", "inactive"), ("OOMPolicy", "s", "kill"),
              *_props(limits)]
     argv = ["busctl", "--user", "call", "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
             "org.freedesktop.systemd1.Manager", "StartTransientUnit", "ssa(sv)a(sa(sv))",
@@ -216,6 +223,45 @@ def _already_scoped(pid: int, unit: str) -> bool:
         return True
 
 
+def _sweep_stale_results() -> None:
+    """Once per process: drop OOM-killed scopes an earlier process never read."""
+    global _swept
+    with _lock:
+        if _swept:
+            return
+        _swept = True
+    _run(["systemctl", "--user", "reset-failed", "cuttle-agent-*.scope"])
+
+
+def _gib(size) -> str:
+    return f"{size / (1 << 30):.0f} GB" if size else "no limit"
+
+
+def oom_notice(chat_session_id) -> str:
+    """Reply text when a scope of this chat was ended by the memory limit, else ''.
+
+    Reads and clears the result, so one kill is reported once."""
+    with _lock:
+        units = _chat_units.pop(str(chat_session_id), None) if chat_session_id else None
+    killed = False
+    for unit in units or ():
+        ok, out = _run(["systemctl", "--user", "show", unit, "-p", "Result", "--value"])
+        if ok and out == "oom-kill":
+            killed = True
+            _run(["systemctl", "--user", "reset-failed", unit])
+    if not killed:
+        return ""
+    try:
+        limits = _load_limits() or {}
+    except Exception:
+        limits = {}
+    return ("⚠️ **Stopped by the agent memory limit.** This turn's agent and the programs it started used more "
+            f"RAM than allowed ({_gib(limits.get('memory_max'))} per agent, "
+            f"{_gib(limits.get('slice_memory_max'))} for all agents together), so Linux ended them. "
+            "Work saved to disk is kept. Retry with a lighter job, or raise the limit under "
+            "Settings → Experimental → Agent resource limits.")
+
+
 def _confine(pid: int) -> bool:
     try:
         return _confine_once(pid)
@@ -246,6 +292,7 @@ def _confine_once(pid: int) -> bool:
             _report("migration", "systemd accepted the scope but PID migration was not confirmed")
             return False
         time.sleep(.01)
+    _sweep_stale_results()
     _report("ok", f"agent CLIs run in per-run scopes under {SLICE} (first: {unit})")
     requested = (limits.get("slice_memory_high"), limits.get("slice_memory_max"))
     with _lock:
@@ -259,8 +306,10 @@ def _confine_once(pid: int) -> bool:
     return True
 
 
-def confine(proc) -> bool:
+def confine(proc, chat_session_id=None) -> bool:
     """Attach before the caller sends input; no background migration threads.
+
+    ``chat_session_id`` lets :func:`oom_notice` find the scope after it died.
 
     False means isolation was disabled or unavailable. This does not change the
     executable, environment, credentials, filesystem, network or vendor protocol.
@@ -281,4 +330,10 @@ def confine(proc) -> bool:
         if pid in _confined:
             return False
         _confined.add(pid)
-    return _confine(pid)
+    confined = _confine(pid)
+    if confined and chat_session_id:
+        with _lock:
+            units = _chat_units.setdefault(str(chat_session_id), [])
+            units.append(unit_name(_comm(pid), pid))
+            del units[:-_CHAT_UNITS_KEPT]
+    return confined

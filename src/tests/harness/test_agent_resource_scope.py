@@ -141,6 +141,7 @@ def test_aggregate_limit_failure_is_reported_and_retried(monkeypatch):
     monkeypatch.setattr(rs, "_already_scoped", lambda *args: next(checks))
     monkeypatch.setattr(rs, "_descendants", lambda _: [])
     monkeypatch.setattr(rs, "_slice_limits", None)
+    monkeypatch.setattr(rs, "_swept", True)
     calls = []
     def run(argv):
         calls.append(argv)
@@ -153,10 +154,10 @@ def test_aggregate_limit_failure_is_reported_and_retried(monkeypatch):
 
 def test_attach_confines_even_without_a_chat_session(monkeypatch):
     seen = []
-    monkeypatch.setattr(rs, "confine", seen.append)
+    monkeypatch.setattr(rs, "confine", lambda proc, chat=None: seen.append((proc, chat)))
     proc = type("P", (), {"pid": 1234})()
     agent_process.attach_to_chat_run(None, proc)
-    assert seen == [proc]
+    assert seen == [(proc, None)]
 
 
 def test_confine_failure_leaves_cli_running_unconfined(monkeypatch):
@@ -212,3 +213,44 @@ def test_host_process_cannot_be_moved_into_agent_scope(monkeypatch):
     monkeypatch.setattr(rs, "_load_limits", lambda: {"enabled": True})
     monkeypatch.setattr(rs, "_confine", lambda _: pytest.fail("host process moved"))
     assert rs.confine(type("P", (), {"pid": rs.os.getpid()})()) is False
+
+
+def _scoped_chat(monkeypatch, results):
+    """A confined CLI for chat 77 whose scope later shows ``results[unit]``."""
+    monkeypatch.setattr(rs.sys, "platform", "linux")
+    monkeypatch.setattr(rs.os.path, "isfile", lambda _: True)
+    monkeypatch.setattr(rs.shutil, "which", lambda _: "/usr/bin/busctl")
+    monkeypatch.setattr(rs, "_load_limits", lambda: rs.resolve_limits({"enabled": True}, env={}, total_memory=32 * GiB))
+    monkeypatch.setattr(rs, "_confine", lambda pid: True)
+    monkeypatch.setattr(rs, "_comm", lambda _: "claude")
+    monkeypatch.setattr(rs, "_chat_units", {})
+    monkeypatch.setattr(rs, "_confined", set())
+    calls = []
+
+    def run(argv):
+        calls.append(argv)
+        return True, results.get(argv[3], "success") if argv[2] == "show" else ""
+
+    monkeypatch.setattr(rs, "_run", run)
+    assert rs.confine(type("P", (), {"pid": 4321})(), 77) is True
+    return calls
+
+
+def test_oom_killed_scope_is_named_in_the_reply_once(monkeypatch):
+    calls = _scoped_chat(monkeypatch, {"cuttle-agent-claude-4321.scope": "oom-kill"})
+    notice = rs.oom_notice("77")
+    assert "agent memory limit" in notice and "8 GB per agent" in notice
+    assert ["systemctl", "--user", "reset-failed", "cuttle-agent-claude-4321.scope"] in calls
+    assert rs.oom_notice("77") == ""  # read once
+
+
+def test_ordinary_failure_gets_no_memory_notice(monkeypatch):
+    calls = _scoped_chat(monkeypatch, {})
+    assert rs.oom_notice("77") == ""
+    assert not [a for a in calls if "reset-failed" in a]
+    assert rs.oom_notice("unknown-chat") == "" and rs.oom_notice(None) == ""
+
+
+def test_failed_scope_survives_until_its_result_is_read():
+    argv = rs.start_scope_argv("u.scope", [1], {}, "d")
+    assert argv[argv.index("CollectMode") + 2] == "inactive"

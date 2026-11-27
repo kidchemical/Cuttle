@@ -556,3 +556,27 @@ def test_adapter_turn_options_are_peeled_before_compile(monkeypatch, tmp_path):
     out = kernel.run_agent_web_command("fakeprobe", "/use-api do the thing", 148, project_path=str(tmp_path))
     assert out.get("success") is True and seen["billing"] == "api"
     assert compiled_from and "/use-api" not in compiled_from[0] and "do the thing" in compiled_from[0]
+
+
+def test_failed_turn_names_the_memory_limit_that_ended_it(monkeypatch, tmp_path):
+    """A CLI killed by its resource scope exits with no reason of its own."""
+    import api.agent_harness.resource_scope as scope_mod
+    import api.cuttle_brain.context_compiler as compiler_mod
+
+    class _KilledAdapter(_FakeAdapter):
+        async def execute(self, prompt, **kwargs):
+            return AgentResult(success=False, output="", error="CLI exited with code -9")
+
+    manifest = _manifest()
+    _quiet_kernel(monkeypatch, manifest, {})
+    monkeypatch.setattr(kernel, "get_agent", lambda aid, project_path=None: (manifest, _KilledAdapter({})))
+    monkeypatch.setattr(compiler_mod, "compile_context", lambda *a, **k: _compiled())
+    monkeypatch.setattr(scope_mod, "oom_notice", lambda sid: "MEMORY-LIMIT-NOTICE" if sid == "148" else "")
+
+    out = kernel.run_agent_web_command("fakeprobe", "do the thing", 148, project_path=str(tmp_path))
+    assert out["response"].startswith("MEMORY-LIMIT-NOTICE")
+    assert "CLI exited with code -9" in out["response"]
+
+    monkeypatch.setattr(scope_mod, "oom_notice", lambda sid: "")
+    out = kernel.run_agent_web_command("fakeprobe", "do the thing", 148, project_path=str(tmp_path))
+    assert out["response"] == "CLI exited with code -9"

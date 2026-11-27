@@ -1298,6 +1298,16 @@ def run_agent_web_command(
             return out
 
         err = (result.output or "").strip() or (result.error or "").strip() or "Unknown error"
+        try:
+            from api.agent_harness.resource_scope import oom_notice
+
+            notice = oom_notice(sid)
+        except Exception:
+            notice = ""
+        if notice:
+            # The CLI's own text for a kill is an exit code at best: lead with the cause.
+            err = f"{notice}\n\n{err}"
+            result.error = "Stopped by the agent memory limit"
         if tracker and tracker.query_id == query_id and tracker.execution_data:
             tracker.add_tool_call(
                 label,

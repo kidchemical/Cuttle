@@ -117,13 +117,19 @@ stop with `cancel`.
 (the parent's agent CLI). If that process is gone when the round ends (your
 turn hit its background-wait limit, timed out, or Flask restarted), the CLI queues
 a Cuttle notice turn on the parent chat with each child's handle, status and
-reply, and the parent continues from there. Running `spawn --wait` as a
-background command is therefore safe for long children: you are told when it
-finishes either way. While the launcher is still alive nothing extra is posted.
+reply, and the parent continues from there. While the launcher is still alive
+nothing extra is posted.
 
-Prefer that ordinary background command over a separate systemd service for
-child chats. Use a service only when the spawn supervisor must survive its
-launching process (for example, a planned Flask restart). `systemd-run` does
+That notice comes from the `--wait` CLI itself, so it only helps while the CLI
+survives. A `spawn --wait` started as a background command of your turn
+(`run_in_background`, `&`) is a child of your agent CLI and can die with it.
+The child's turn runs on that CLI's threads, so the child dies too, and nobody
+posts a notice. On 2026-11-26 (CH-002815) the parent turn ended about 10 s after
+a background spawn: the child failed with "the process running it exited" and
+the parent was never woken. Use the background form only for children you wait
+for in the same turn. For a child that should outlive your turn (long builds, or
+any reply you end before the child finishes), launch the spawn detached with
+`systemd-run` as below. That also covers a planned Flask restart. `systemd-run` does
 not inherit Cuttle's environment. Append `--turn "$CUTTLE_TURN_ID"` to the
 `spawn` / `message` command in the **launching shell**, expanding it before
 crossing the service boundary; alternatively pass
@@ -131,6 +137,17 @@ crossing the service boundary; alternatively pass
 `--setenv=CUTTLE_CHAT_SESSION_ID="$CUTTLE_CHAT_SESSION_ID"` to `systemd-run`.
 Preserve the other ownership variables too (`CUTTLE_AGENT_RUN_ID`,
 `CUTTLE_AGENT_ID`, `CUTTLE_AGENT_PROJECT_PATH`, and `CUTTLE_HOME` if set).
+
+```bash
+systemd-run --user --unit=cuttle-subagent-<name> --collect -p WorkingDirectory=<cuttle repo> \
+  --setenv=PYTHONPATH=src --setenv=CUTTLE_TURN_ID="$CUTTLE_TURN_ID" \
+  --setenv=CUTTLE_CHAT_SESSION_ID="$CUTTLE_CHAT_SESSION_ID" --setenv=CUTTLE_AGENT_RUN_ID="$CUTTLE_AGENT_RUN_ID" \
+  --setenv=CUTTLE_AGENT_ID="$CUTTLE_AGENT_ID" --setenv=CUTTLE_AGENT_PROJECT_PATH="$CUTTLE_AGENT_PROJECT_PATH" \
+  --setenv=CUTTLE_HOME="$CUTTLE_HOME" \
+  <cuttle repo>/.venv/bin/python -m api.subagents spawn --parent CH-900008 --wait --json \
+  --timeout 7200 --turn "$CUTTLE_TURN_ID" --children-json "$(cat children.json)"
+```
+
 A `--wait` CLI started by a service manager (a `systemd-run` unit, or one
 re-parented to init) has no listening agent, so it always queues the notice turn
 on the parent chat when the round ends or hits `--timeout`: a detached spawn wakes
