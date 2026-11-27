@@ -4389,6 +4389,7 @@
         applyAgent: (entry) => applyStickyAgentCommand(entry),
         rerenderChips: () => { renderSlashChips('welcome', document.getElementById('welcomeChatInput')); renderSlashChips('chat', document.getElementById('chatInput')); },
         refreshBranch: () => refreshProjectBranch(true),
+        onBranchSwitched: () => schedulePendingChangesRefresh(80),
         worktreesEnabled: () => !!(window.CuttleChatWorktrees && window.CuttleChatWorktrees.isEnabled()),
         getWorktrees: (projectId) => (window.CuttleChatWorktrees
             ? window.CuttleChatWorktrees.list(projectId) : Promise.resolve([])),
@@ -6406,6 +6407,12 @@
             },
             onAfterIgnore: function () {
                 schedulePendingChangesRefresh(80);
+            },
+            onBranchClick: function (meta) {
+                chipConfigControl.openProject({ repoRoot: meta && meta.repoRoot });
+            },
+            onReposChanged: function (path, repos) {
+                CuttleChipConfig.syncRepoStates(path, repos, renderProjectChips);
             },
             useShellHub: !!inAppShell,
             isPageBackgrounded: function () { return document.hidden; },

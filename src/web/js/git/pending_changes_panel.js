@@ -114,7 +114,7 @@
             + '<button type="button" class="pending-changes-refresh" data-pc="refresh" title="Refresh">Refresh</button>'
             + '<button type="button" class="pending-changes-commit-btn" data-pc="commitBtn" title="Commit selected pending changes">Commit</button>'
             + '</div>'
-            + '<span class="pending-changes-branch" data-pc="branch"></span>'
+            + '<button type="button" class="pending-changes-branch" data-pc="branch" disabled></button>'
             + '</div>'
             + '</div>'
             + '</div>'
@@ -157,6 +157,8 @@
         const onOpenDiff = options.onOpenDiff || function () {};
         const onAfterCommit = options.onAfterCommit || function () {};
         const onAfterIgnore = options.onAfterIgnore || function () {};
+        const onBranchClick = typeof options.onBranchClick === 'function' ? options.onBranchClick : null;
+        const onReposChanged = typeof options.onReposChanged === 'function' ? options.onReposChanged : null;
         const isPageBackgrounded = options.isPageBackgrounded || function () { return document.hidden; };
         const fetchWithTimeout = options.fetchWithTimeout || defaultFetchWithTimeout;
         const escapeHtmlInline = options.escapeHtml || defaultEsc;
@@ -329,13 +331,22 @@
                 return n > 0 || files.length > 0;
             });
             lastReposList = (repos || []).map(function (r) {
+                const files = Array.isArray(r.files) ? r.files : [];
+                const count = Number(r.pending_file_count) || (r.totals && Number(r.totals.files)) || files.length || 0;
                 return {
                     repo_root: r.repo_root,
                     label: r.label || repoBasename(r.repo_root),
                     branch: r.branch || null,
                     clean: !!r.clean,
+                    pending_file_count: count,
                 };
             });
+            if (onReposChanged) {
+                const projPath = (projectMeta && projectMeta.path) || (currentProject() && currentProject().path) || '';
+                if (projPath) {
+                    try { onReposChanged(projPath, lastReposList.slice()); } catch (_) {}
+                }
+            }
             const multi = lastReposList.length > 1;
             if (!dirty.length) {
                 hideAll();
@@ -465,6 +476,7 @@
             let suggestInFlight = false;
             let avoidMessages = [];
             let commitEditMode = false;
+            let currentBranch = '';
             let bound = false;
             // Agent review (CuttleAgentReview, flag `agent_review`): repo-relative path → entry.
             let reviewMap = {};
@@ -1123,17 +1135,23 @@
                 }
                 if (branchEl) {
                     const br = data.branch ? String(data.branch) : '';
+                    currentBranch = br;
                     const name = (data.project && data.project.name)
                         || (currentProject() && currentProject().name)
                         || '';
                     const worktree = currentProject() && currentProject().worktree;
-                    setPolledHtml(branchEl, worktree
+                    const clickable = !!onBranchClick;
+                    branchEl.disabled = !clickable;
+                    branchEl.classList.toggle('is-clickable', clickable);
+                    const caret = clickable ? '<span class="pending-changes-branch-caret" aria-hidden="true">▾</span>' : '';
+                    setPolledHtml(branchEl, (worktree
                         ? escapeHtmlInline('\uD83C\uDF3F ' + (br || 'worktree'))
                         : [
                             name ? '<span class="pending-changes-branch-project">' + escapeHtmlInline(name) + '</span>' : '',
                             br ? '<span class="pending-changes-branch-name">' + escapeHtmlInline(br) + '</span>' : '',
-                        ].join(''));
-                    branchEl.title = String(repoRoot || '') + (br ? ' (' + br + ')' : '');
+                        ].join('')) + caret);
+                    branchEl.title = String(repoRoot || '') + (br ? ' (' + br + ')' : '')
+                        + (clickable ? ' — Click to switch branch' : '');
                 }
                 if (list) {
                     let html = files.map(function (f) {
@@ -1390,6 +1408,14 @@
                             e.preventDefault();
                             submitCommit();
                         }
+                    });
+                }
+                const branchBtn = qs('branch');
+                if (branchBtn && onBranchClick) {
+                    branchBtn.addEventListener('click', function (e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onBranchClick({ repoRoot: repoRoot, branch: currentBranch, label: label });
                     });
                 }
                 setExpanded(expanded);
