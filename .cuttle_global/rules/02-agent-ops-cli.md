@@ -14,8 +14,8 @@ verb table is in `agent-ops-cli.md`: open it instead of guessing a module.
 - Background work you started reports its own exit: do not add a second task or
   loop to wait for it, and never wait with `pgrep -f <name>` (it matches the
   waiting shell itself and never ends) → `headless-turns.md`.
-- End only PIDs verified as yours (`work-tree` + create time) via `api.jobs end-process`;
-  never by name or pattern (`pkill`, `killall`, `kill $(pgrep …)`): other chats share this machine.
+- End only PIDs verified as yours (`api.jobs end-process`), never by name or pattern
+  (`pkill`, `killall`): other chats share this machine.
 - Worktrees → `python -m api.worktrees`, never raw `git worktree add`.
 - Sub-agent child chats → `python -m api.subagents` (`03-subagents.md`).
 
