@@ -11,6 +11,9 @@ verb table is in `agent-ops-cli.md`: open it instead of guessing a module.
   read back the list; leave unfinished items open with a reason.
 - Long-running OS jobs → a status-backed watch card with measured progress
   (`action-forms.md` / `headless-turns.md`). A Tasks list does not replace it.
+- Background work you started reports its own exit: do not add a second task or
+  loop to wait for it, and never wait with `pgrep -f <name>` (it matches the
+  waiting shell itself and never ends) → `headless-turns.md`.
 - Worktrees → `python -m api.worktrees`, never raw `git worktree add`.
 - Sub-agent child chats → `python -m api.subagents` (`03-subagents.md`).
 

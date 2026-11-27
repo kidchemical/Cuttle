@@ -18,9 +18,12 @@ Cuttle harness agents (Cursor `agent -p`, etc.) are **one-shot** CLI runs per tu
   In-CLI tasks with no process of their own (Claude `Task` agents) end with the turn.
   This wait needs **background detach** on for the agent (on by default; off via
   setting `agent_background_detach` → `{"claude": false}` or `CUTTLE_BACKGROUND_DETACH=0`).
-  With detach off, the turn ends at its reply. If the CLI ignores EOF, it is stopped (SIGTERM)
-  about 3 s later. Cuttle's kill spares the background shells, but Claude Code's own shutdown
-  does not: the task output ends with `[killed]` (Claude Code 2.1.332, CH-002815, 2026-11-26).
+  With detach off, the turn ends at its reply and the CLI is stopped about 3 s later;
+  background shells still running keep going and Cuttle tells the chat when each one ends,
+  as at the cap. (The CLI is killed without its shutdown handler: on SIGTERM Claude Code
+  stops its own background shells, output ending `[killed]`, CH-002815.) The next turn's
+  CLI reports those shells as "didn't finish before the previous session ended"; they did
+  not stop, so trust Cuttle's notice, not that line.
   Check with `PYTHONPATH=src .venv/bin/python -c "from api.agent_harness.background_wait import detach_enabled; print(detach_enabled('claude'))"`;
   when it prints `False`, launch anything that must outlive the reply detached (`systemd-run`,
   [subagents.md](subagents.md)).

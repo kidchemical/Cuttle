@@ -827,11 +827,21 @@ def out(msg):
 def result(text):
     out({"type": "result", "subtype": "success", "result": text, "total_cost_usd": 0.01,
          "usage": {"input_tokens": 10, "output_tokens": 2}})
-q.get()
+first = q.get()
 out({"type": "system", "subtype": "init", "model": "fake"})
+if mode == "orphans":
+    # Claude Code 2.1.302 resuming a session whose background tasks died with
+    # the last CLI: their notice ends in an empty result, then the prompt is read.
+    out({"type": "system", "subtype": "task_notification", "task_id": "b0", "status": "stopped"})
+    result("")
+    out({"type": "system", "subtype": "init", "model": "fake"})
+    out({"type": "user", "isReplay": True, "parent_tool_use_id": None, "message": first["message"]})
 task = {"task_id": "b1", "task_type": "local_bash", "description": "watch CI"}
 out({"type": "system", "subtype": "background_tasks_changed", "tasks": [task]})
 result("started the watcher")
+if mode == "orphans":
+    time.sleep(30)  # ignores EOF while its task runs
+    sys.exit(0)
 if mode == "finishes":
     time.sleep(0.5)
     try:
@@ -909,6 +919,33 @@ def test_claude_reply_is_not_held_for_background_work(tmp_path, monkeypatch):
     assert "Stopped waiting" not in res["output"]  # it waited on nothing
     assert "- watch CI" in res["output"]
     assert steer.active_agent(5450) is None
+
+
+@pytestmark_posix
+def test_claude_leftover_notice_result_is_not_the_reply(tmp_path, monkeypatch):
+    """CH-002819: a resumed session's empty leftover-tasks result closed stdin
+    before the prompt was read; the real reply then sat unsaved for an hour
+    behind a background loop, because nothing bounded a CLI that ignores EOF."""
+    import time
+
+    monkeypatch.setenv("CLAUDE_BACKGROUND_EXIT_GRACE_SEC", "0.5")
+    started = time.monotonic()
+    res = _run_fake_claude_background(tmp_path, monkeypatch, "orphans", 5451)
+    assert time.monotonic() - started < 10
+    assert res["success"] is True
+    assert res["output"].startswith("started the watcher") and "- watch CI" in res["output"]
+
+
+@pytestmark_posix
+def test_claude_leftover_notice_result_keeps_the_turn_steerable(tmp_path, monkeypatch):
+    """The same empty result must not end a capped turn's wait either: the
+    follow-up after it still merges, so stdin was still open."""
+    monkeypatch.setenv("CLAUDE_BACKGROUND_WAIT_SEC", "1")
+    monkeypatch.setenv("CLAUDE_BACKGROUND_EXIT_GRACE_SEC", "0.5")
+    res = _run_fake_claude_background(tmp_path, monkeypatch, "orphans", 5452,
+                                      background_wait_cap=_child_cap())
+    assert res["output"].startswith("started the watcher")
+    assert "Stopped waiting for background work" in res["output"]  # it reached the wait
 
 
 @pytestmark_posix

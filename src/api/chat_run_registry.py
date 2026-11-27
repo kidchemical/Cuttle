@@ -702,7 +702,7 @@ def kill_pid_tree(pid, keep=()) -> bool:
                 encoding="utf-8", errors="replace",
             )
             killed = True
-        else:
+        elif not spared:
             os.kill(pid_i, 15)
             killed = True
     except PermissionError:
@@ -739,6 +739,20 @@ def kill_pid_tree(pid, keep=()) -> bool:
             except Exception:
                 pass
         wait_pid_dead(child_i, timeout=3.0)
+    if spared and os.name != "nt":
+        # A root that shuts down gracefully takes the spared work with it:
+        # Claude Code stops its background shells on SIGTERM (their output ends
+        # "[killed]"), so it gets no shutdown handler. Last, not first: the
+        # sweep above may only signal pids that are still this root's tree.
+        try:
+            os.kill(pid_i, 9)
+            killed = True
+        except PermissionError:
+            return False
+        except ProcessLookupError:
+            pass
+        except Exception:
+            return False
     wait_pid_dead(pid_i, timeout=5.0)
     return killed
 

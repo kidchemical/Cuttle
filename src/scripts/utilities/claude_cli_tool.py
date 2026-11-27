@@ -717,7 +717,7 @@ class ClaudeCliTool:
 
         st: Dict[str, Any] = {
             "token": None, "open": False, "delivery": SteerDelivery(),
-            "prompt_replayed": False, "results": [],
+            "prompt_replayed": False, "answered": False, "results": [],
             "bg": [], "waiting": False, "wait_timer": None, "abandoned": [],
             "reap_timer": None, "reaped": False, "posted": 0, "waited": 0.0,
             # task_id -> output file (from the run_in_background tool result);
@@ -848,7 +848,7 @@ class ClaudeCliTool:
             Their processes are found first (the reap spares them, a watcher
             reports them), then stdin closes; a CLI that lingers is reaped."""
             st["waiting"] = False
-            if st["open"] and st["bg"]:
+            if st["bg"]:
                 st["abandoned"] = [_task_label([t]) for t in st["bg"]]
                 st["waited"] = waited
                 try:
@@ -877,8 +877,10 @@ class ClaudeCliTool:
             """The reply is complete and nothing more is waited on: EOF.
 
             Background work the CLI still lists is handed off now, not waited
-            on: this turn's reply is saved only when the run ends."""
-            if st["open"] and st["bg"]:
+            on: this turn's reply is saved only when the run ends. That holds
+            with stdin already closed too: the CLI ignores EOF while a task is
+            alive, so only the reap bounds it (CH-002819: an hour unsaved)."""
+            if st["bg"] and not st["abandoned"]:
                 _release_background(0.0, "reply finished — background work keeps running",
                                     min(_REPLY_EXIT_GRACE_SEC, _background_exit_grace_seconds()))
                 return
@@ -957,6 +959,8 @@ class ClaudeCliTool:
                 ctl.wait.working("Claude Code is following up…")
             if not obj.get("parent_tool_use_id"):
                 _note_output(obj)
+                if obj.get("type") in ("assistant", "stream_event"):
+                    st["answered"] = True
             echoed = _replay_text(obj)
             if echoed is not None:
                 if not st["prompt_replayed"] and echoed.strip() == (prompt or "").strip():
@@ -993,6 +997,14 @@ class ClaudeCliTool:
                     stream.activity.emit(f"waiting on background task: {_task_label(st['bg'])}", force=True)
             elif obj.get("type") == "result" and not obj.get("parent_tool_use_id"):
                 st["results"].append(costs.turn(obj))
+                if (not st["prompt_replayed"] and not st["answered"]
+                        and not str(obj.get("result") or "").strip()):
+                    # A resumed session settles its leftovers first: the notice
+                    # that earlier background tasks did not survive ends in an
+                    # empty result before the CLI reads this prompt. Not this
+                    # turn's reply: closing stdin on it left the real turn
+                    # unsteerable and unbounded (CH-002819).
+                    return
                 waits = bool(st["bg"] and st["open"] and bg_wait > 0)
                 if ctl is not None:
                     _deliver_result(waits)

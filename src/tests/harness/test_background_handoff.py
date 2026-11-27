@@ -166,6 +166,30 @@ def test_kill_process_tree_spares_kept_pids():
     # The kept child then finishes on its own (it is no longer ours to signal).
 
 
+@posix_only
+def test_kill_process_tree_spares_kept_pids_of_a_root_that_cleans_up_on_sigterm():
+    """Claude Code stops its background shells when it gets SIGTERM (their
+    output ends "[killed]"; verified on 2.1.302), so hand-off spared nothing.
+    A root with spared work gets no chance to run that shutdown."""
+    from api.chat_run_registry import kill_process_tree
+
+    script = (
+        "import os, signal, subprocess, sys, time\n"
+        "c = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(8)'], start_new_session=True)\n"
+        "def bye(*_):\n"
+        "    os.kill(c.pid, signal.SIGKILL); sys.exit(0)\n"
+        "signal.signal(signal.SIGTERM, bye)\n"
+        "print(c.pid, flush=True)\n"
+        "time.sleep(60)\n"
+    )
+    parent = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, text=True, encoding="utf-8")
+    kept = int(parent.stdout.readline())
+    kill_process_tree(parent, keep=[kept])
+    assert parent.poll() is not None
+    time.sleep(0.3)
+    assert _alive(kept), "the root must not get to take the kept work down with it"
+
+
 def test_notice_turn_renders_as_cuttle_with_its_label():
     from api.chat_metadata import chat_op_metadata
 
