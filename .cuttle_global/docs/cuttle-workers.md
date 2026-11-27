@@ -144,6 +144,7 @@ rotation on that machine, not a side effect of pairing.
 | `gap-fill` (CLI) | Scan batch output for missing durable frames → enqueue stealable jobs |
 | `batch-watch` (CLI) | Write job_watch status with **overall + per-worker `bars`**; auto gap-fills when idle+incomplete |
 | `run-plan` (CLI) / `workers.run` / `run-status` | Runs: approval form → queued batch with a host-owned live card and one resume (below) |
+| `drain-check` (CLI) | Fails while any mesh job is queued, running or still holds a reservation; gate for a host upgrade or rollback |
 
 CLI: `.cuttle_global\scripts\workers-cli.ps1 <verb>` or `python -m api.device_workers.cli <verb>`.
 

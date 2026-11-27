@@ -996,3 +996,19 @@ def test_remote_workers_get_release_work_and_keep_holds_over_http(worker_db, mon
     client.worker_id = "lap"
     client._request = lambda method, path, json_body=None, timeout=None: {"jobs": [], "release": [{"id": "x"}]}
     assert client.claim() == [] and client.release == [{"id": "x"}]
+
+
+def test_drain_check_lists_running_and_still_held_jobs(worker_db, capsys):
+    from api.device_workers import cli
+
+    _register(worker_db)
+    assert cli.main(["drain-check"]) == 0
+    jid = worker_db.submit_job(job_type="ping", requirements={"resources": {"ram_mb": 512}})["id"]
+    worker_db.claim_jobs(worker_id="desk")
+    capsys.readouterr()
+    assert cli.main(["drain-check"]) == 1
+    assert [j["id"] for j in json.loads(capsys.readouterr().out)["busy"]] == [jid]
+    worker_db.cancel_job(jid)
+    assert cli.main(["drain-check"]) == 1, "cancelled but not yet confirmed stopped: still held"
+    worker_db.release_hold(jid, "desk")
+    assert cli.main(["drain-check"]) == 0

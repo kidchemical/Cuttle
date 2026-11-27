@@ -103,6 +103,17 @@ The chat's own Stop ends the agent's turn, not the run: a run outlives turns by 
 Validated live (CH-002819, Flux 2 Klein on ComfyUI): kill -9 of worker and host mid-prompt, a frozen worker
 past its lease with a second worker trying to claim, a frozen ComfyUI during Stop, an orphaned scope.
 
+## Upgrading and mixed versions
+
+- Upgrade or roll back the host only when `python -m api.device_workers.cli drain-check` passes (no mesh job
+  queued, running, or still holding a reservation). Restart the daemon right after: hot reload swaps the
+  executor but not the worker loop, and a new executor's "still running" under the old loop would release a
+  reservation early.
+- A worker on older code still runs jobs that declare no resources. It has no RAM telemetry, so admission refuses
+  resource-declaring jobs on it ("update Cuttle on it"): reservations only ever exist on updated workers.
+  `workers.self-update` restarts the client daemon, so a worker is never half-updated.
+- A rollback drops reservations and run watches the old code does not know: drain first.
+
 ## Non-goals
 
 - A second queue, a second progress-card system, or agent-side polling loops.

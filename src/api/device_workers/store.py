@@ -718,6 +718,20 @@ class DeviceWorkerStore:
             finally:
                 conn.close()
 
+    def busy_jobs(self) -> List[Dict[str, Any]]:
+        """Jobs not finished or still holding a reservation, agent turns aside: what a
+        host upgrade or rollback must wait for (``workers drain-check``)."""
+        with _lock:
+            conn = _connect(self.db_path)
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM jobs WHERE type != 'agent_turn' AND "
+                    "(status IN ('queued', 'claimed', 'running') OR held_by IS NOT NULL) ORDER BY created_at",
+                ).fetchall()
+                return [_row_job(r) for r in rows]
+            finally:
+                conn.close()
+
     def held_after_end(self, worker_id: str) -> List[Dict[str, Any]]:
         """Ended jobs whose workload the worker has not confirmed stopped (cancelled, expired).
 

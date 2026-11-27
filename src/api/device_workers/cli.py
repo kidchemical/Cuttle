@@ -166,6 +166,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_rstat = sub.add_parser("run-status", help="Current watch status of a run")
     p_rstat.add_argument("--run-id", default="")
 
+    sub.add_parser("drain-check", help="Jobs still queued, running or holding a reservation (fails unless none)")
+
     p_probe = sub.add_parser("probe", help="Ping a worker and measure mesh RTT")
     p_probe.add_argument("--target", default="")
     p_probe.add_argument("--timeout", type=float, default=20)
@@ -403,6 +405,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         run_id = str(args.run_id or env("run_id") or "").strip()
         status = read_status(run_id) if run_id else None
         result = {"success": status is not None, "status": status, **({} if status else {"error": "no such run"})}
+    elif args.cmd == "drain-check":
+        from api.device_workers.store import get_store
+
+        store = get_store()
+        store.reclaim_expired()
+        busy = [{k: j.get(k) for k in ("id", "type", "status", "claimed_by", "held_by", "reserved")}
+                for j in store.busy_jobs()]
+        result = {"success": not busy, "busy": busy,
+                  **({"error": f"{len(busy)} job(s) still queued, running or holding a reservation"} if busy else {})}
     elif args.cmd == "probe":
         target = str(args.target or env("target") or env("target_worker_id") or env("worker_id") or "").strip()
         if not target:
