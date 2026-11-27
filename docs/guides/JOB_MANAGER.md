@@ -128,7 +128,7 @@ A rollback drops reservations and run watches the old code does not know, which 
 
 ## Next milestone: J10 mesh UX and scheduling
 
-Starts after this branch is deployed and smoke-tested; the follow-up milestones above stay deferred until then.
+Starts after this branch is deployed and smoke-tested; the follow-up milestones above stay deferred until then. Implementation plan and signed-off design: [J10_MESH_UX.md](J10_MESH_UX.md).
 Problem: agents run nearly everything on the host while the laptop sits idle, the user moves work by hand after
 the fact, and nothing shows overall machine use. Goal: the user rarely has to name a machine, investigate
 utilization, watch background work or clean up processes.
