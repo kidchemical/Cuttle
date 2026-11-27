@@ -94,9 +94,11 @@ What the chat hears when a run ends:
 | Ending | Card | Resume turn |
 |---|---|---|
 | Every job succeeded or failed | Done / Failed | one, with the counts |
-| Every job stopped on purpose (card Stop, chat Stop, decision "cancel", or each job from Jobs / `workers cancel`) | Stopped | none: the user ended it, and a resume would make the agent start it again |
+| Every job stopped on purpose (card Stop, decision "cancel", or each job from Jobs / `workers cancel`) | Stopped | none: the user ended it, and a resume would make the agent start it again |
 | Some jobs stopped on purpose, the rest finished | Done / Failed | one; the counts say how many were stopped and not to resubmit them |
 | Jobs cancelled by the system (queue TTL, retries exhausted) | Failed | one: an outcome the agent must hear about |
+
+The chat's own Stop ends the agent's turn, not the run: a run outlives turns by design, and its card's Stop ends it.
 
 Validated live (CH-002819, Flux 2 Klein on ComfyUI): kill -9 of worker and host mid-prompt, a frozen worker
 past its lease with a second worker trying to claim, a frozen ComfyUI during Stop, an orphaned scope.
