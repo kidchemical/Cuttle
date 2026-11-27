@@ -1078,35 +1078,54 @@ def _flask_health_check() -> bool:
 
 
 def watch_flask_health():
-    """Background thread: if Flask stops responding, restart it to recover from freezes."""
+    """Background thread: if Flask stops responding, restart it to recover from freezes.
+
+    A restart ends every running agent turn, so one missed check is not enough:
+    a busy Flask can miss a single 5 s TLS handshake while still serving. Only
+    FAILURES_BEFORE_RESTART consecutive misses count as a freeze.
+    """
     last_restart = 0.0
     RESTART_COOLDOWN = 45  # Don't restart again within 45 seconds
     CHECK_INTERVAL = 15    # Check every 15 seconds
+    RECHECK_INTERVAL = 5   # Re-check sooner after a miss
+    FAILURES_BEFORE_RESTART = 3
+    failures = 0
     while daemon_running:
-        time.sleep(CHECK_INTERVAL)
+        time.sleep(RECHECK_INTERVAL if failures else CHECK_INTERVAL)
         if not daemon_running:
             return
         if _flask_restart_in_progress:
+            failures = 0
             continue
         if "flask" not in processes:
+            failures = 0
             continue
         proc = processes["flask"]
         if proc.poll() is not None:
+            failures = 0
             continue  # Process dead - main loop will restart
-        if not _flask_health_check():
-            if _shutdown_done or not daemon_running:
-                return
-            now = time.time()
-            if now - last_restart < RESTART_COOLDOWN:
-                continue  # Already restarted recently
-            print("[DAEMON] Flask unresponsive — restarting...")
-            perform_flask_restart(
-                restart_id=f"watchdog-{int(now)}",
-                mode="watchdog",
-                source="health_watchdog",
-            )
-            last_restart = now
-            time.sleep(5)  # Give Flask time to bind before next check
+        if _flask_health_check():
+            if failures:
+                print(f"[DAEMON] Flask liveness recovered after {failures} missed check(s)")
+            failures = 0
+            continue
+        if _shutdown_done or not daemon_running:
+            return
+        failures += 1
+        if failures < FAILURES_BEFORE_RESTART:
+            continue
+        now = time.time()
+        if now - last_restart < RESTART_COOLDOWN:
+            continue  # Already restarted recently
+        print(f"[DAEMON] Flask unresponsive ({failures} consecutive missed checks) — restarting...")
+        perform_flask_restart(
+            restart_id=f"watchdog-{int(now)}",
+            mode="watchdog",
+            source="health_watchdog",
+        )
+        last_restart = now
+        failures = 0
+        time.sleep(5)  # Give Flask time to bind before next check
 
 
 def _load_tray_icon_image():

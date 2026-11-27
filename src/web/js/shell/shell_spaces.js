@@ -303,6 +303,16 @@
             scheduleSpaceActivityPoll(true);
         }
 
+        /** User-gesture close (× / middle-click): confirm first, a stray click
+         *  on the × otherwise drops the space and its pane layout. */
+        function requestCloseSpace(id) {
+            if (!CuttleSpaces.planSpaceClose(spacesState, id).ok) return;
+            const space = spacesState.spaces.find((s) => s.id === id);
+            const label = space && space.name ? '“' + space.name + '”' : 'this space';
+            if (typeof win.confirm === 'function' && !win.confirm('Close ' + label + '?')) return;
+            closeSpace(id);
+        }
+
         /** Saved-workspace payload: every space + group, with the active space's
          *  live layout folded in (its stored `root` is stale while it is live). */
         function exportSnapshot() {
@@ -1974,7 +1984,7 @@
                 if (!id) return;
                 if (e.target.closest('.shell-space-close')) {
                     e.stopPropagation();
-                    closeSpace(id);
+                    requestCloseSpace(id);
                     return;
                 }
                 switchSpace(id);
@@ -1989,7 +1999,7 @@
                 const id = tabId(e);
                 if (id && e.button === 1) {
                     e.preventDefault();
-                    closeSpace(id);
+                    requestCloseSpace(id);
                 }
             });
             hostEl.addEventListener('keydown', (e) => {

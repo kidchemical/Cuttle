@@ -70,3 +70,43 @@ def test_signal_handler_and_tray_exit_share_shutdown():
     assert "request_shutdown" in on_exit
     # The pystray non-daemon thread must be stopped during shutdown.
     assert "icon.stop()" in src
+
+
+def _run_watchdog(d, checks):
+    """Drive watch_flask_health with scripted health results; return restart count."""
+    results = iter(checks)
+    restarts = []
+
+    class FakeProc:
+        def poll(self):
+            return None
+
+    def health():
+        try:
+            return next(results)
+        except StopIteration:
+            d.daemon_running = False
+            return True
+
+    d.daemon_running = True
+    d._shutdown_done = False
+    d._flask_restart_in_progress = False
+    d.processes = {"flask": FakeProc()}
+    d._flask_health_check = health
+    d.perform_flask_restart = lambda **kw: restarts.append(kw)
+    d.time = type("T", (), {"sleep": staticmethod(lambda s: None), "time": staticmethod(lambda: 1000.0)})
+    d.watch_flask_health()
+    return restarts
+
+
+def test_watchdog_ignores_a_single_missed_check():
+    """One slow check must not restart Flask: that ends every running agent turn."""
+    d = _load_daemon()
+    assert _run_watchdog(d, [True, False, True, False, False, True]) == []
+
+
+def test_watchdog_restarts_after_consecutive_missed_checks():
+    d = _load_daemon()
+    restarts = _run_watchdog(d, [True, False, False, False, True])
+    assert len(restarts) == 1
+    assert restarts[0]["mode"] == "watchdog"

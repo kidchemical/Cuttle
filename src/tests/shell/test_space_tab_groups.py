@@ -254,3 +254,13 @@ def test_group_menu_css():
     assert ".shell-space-ctx" in css
     assert ".shell-group-bubble" in css
     assert ".shell-ctx-swatch" in css
+
+
+def test_tab_close_gestures_confirm_first():
+    # A stray click on × (or middle-click) must not drop a space unasked.
+    src = OWNER_JS.read_text(encoding="utf-8")
+    assert "function requestCloseSpace(" in src
+    assert "win.confirm('Close ' + label + '?')" in src
+    strip = src[src.index("hostEl.addEventListener('click'"):src.index("hostEl.addEventListener('keydown'")]
+    assert strip.count("requestCloseSpace(id)") == 2
+    assert "closeSpace(id)" not in strip.replace("requestCloseSpace(id)", "")

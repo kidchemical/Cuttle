@@ -476,7 +476,7 @@ def heal_orphans(db: Any, session_id: Any, *, store: Any = None) -> list:
         from api.chat_turn_recovery import interrupted_turn_card
 
         content, card_meta = interrupted_turn_card(qid, status=status, run=run, cutoff=time.time(),
-                                                   store=store)
+                                                   store=store, host_exited=status == 'interrupted')
         card_meta = with_subagent_cards(db, sid, int(row['id']), card_meta)
         try:
             db.update_message_content(int(row['id']), content, metadata=card_meta)

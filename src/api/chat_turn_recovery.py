@@ -55,13 +55,14 @@ def _captured_writing(store, qid, cutoff):
     return writing
 
 
-def interrupted_turn_card(qid, *, status, run=None, cutoff=None, store=None):
+def interrupted_turn_card(qid, *, status, run=None, cutoff=None, store=None, host_exited=False):
     """``(content, metadata)`` for a turn that ended before its reply was saved.
 
     Every such turn leaves a durable card, even when it was stopped before
     emitting any writing: the card carries the query-log link, so no work
     disappears from history. Shared by Stop/history recovery and by the turn's
-    own early row (``api.chat_turn_row``)."""
+    own early row (``api.chat_turn_row``). ``host_exited`` (or a reconciled run's
+    ``capture_interrupted``) names the cause: the process running the turn went away."""
     run = run or {}
     cutoff = cutoff if cutoff is not None else time.time()
     writing = []
@@ -78,6 +79,9 @@ def interrupted_turn_card(qid, *, status, run=None, cutoff=None, store=None):
     started = run.get('started_at') or cutoff
     when = datetime.fromtimestamp(started, timezone.utc).astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')
     content = f'**Agent {label} before completion.** Recorded activity from {when} is preserved in the query log.'
+    if status == 'interrupted' and (host_exited or (run.get('metadata') or {}).get('capture_interrupted')):
+        content += ('\n\nCause: the Cuttle server process running this turn exited mid-turn (a restart or'
+                    ' crash), not the agent. Send the message again to continue.')
     if any(writing):
         content += '\n\nText captured before the turn ended:\n\n' + '\n\n'.join(filter(None, writing))
     metadata = {
