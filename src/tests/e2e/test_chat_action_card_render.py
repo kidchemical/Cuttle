@@ -534,3 +534,59 @@ def test_watch_and_progress_blocks_are_indeterminate_without_data(browser, stati
         assert not errors
     finally:
         page.close()
+
+
+def _png(w=96, h=96):
+    """A small gradient PNG (the stand-in generation preview)."""
+    import struct
+    import zlib
+
+    rows = b"".join(b"\x00" + b"".join(bytes((x * 255 // w, y * 255 // h, 120)) for x in range(w)) for y in range(h))
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
+
+
+def test_mesh_run_card_shows_previews_resources_errors_and_decision(browser, static_server):
+    status = {
+        "state": "running", "percent": 46, "label": "1/3 done · crate-b: Sampling 13/20", "eta_s": 95,
+        "started_at": "2026-11-27T11:44:00", "run_id": "t1", "unit_watch": True,
+        "bars": [{"id": "overall", "label": "Overall", "percent": 46, "kind": "primary"},
+                 {"id": "w-desk", "label": "desk", "percent": 70, "kind": "worker"}],
+        "previews": [{"job": "a", "url": "/output/jobs/a/preview.png?t=1"},
+                     {"job": "b", "url": "javascript:alert(1)"}],
+        "resources": [{"worker": "desk", "ram_total_gb": 30.6, "ram_available_gb": 12.1, "swap_used_gb": 2.4,
+                       "vram_used_mb": 9582, "vram_total_mb": 24576, "gpu_pct": 98,
+                       "reserved_ram_mb": 11750, "reserved_vram_mb": 10342,
+                       "apps": [{"name": "python", "rss_mb": 7858, "vram_mb": 8056, "kind": "service:comfyui"},
+                                {"name": "Unity Editor", "rss_mb": 967, "vram_mb": 0, "kind": "interactive"}]}],
+        "errors": [{"job": "c", "label": "crate-c", "error": "oom: went past its 14 GB memory scope", "oom": True}],
+        "decision": {"asked_at": 1, "form": True},
+    }
+    spec = {"mode": "choice", "title": "Mesh run — crates", "watch": {
+        "id": "t1", "url": "/output/t1-status.json", "interval_ms": 1500, "snapshot": status},
+        "options": [{"id": "park", "label": "I'll reply", "action": "__watch_park__"}]}
+    world = CardWorld(["<cuttle_action_form>" + json.dumps(spec) + "</cuttle_action_form>"])
+    page, frame, errors = _open_card_chat(browser, static_server, world)
+    page.route(static_server + "/output/t1-status.json*", lambda r: r.fulfill(json=status))
+    page.route(static_server + "/output/jobs/a/preview.png*", lambda r: r.fulfill(body=_png(), content_type="image/png"))
+    try:
+        card = _send_and_wait_card(frame, "show run")
+        from playwright.sync_api import expect
+
+        expect(card.locator(".watch-previews img")).to_have_count(1, timeout=10000)
+        assert card.locator(".watch-previews img").evaluate("(img) => img.complete && img.naturalWidth > 0")
+        text = card.locator("[data-watch-details]").inner_text()
+        assert "RAM 18.5/31 GB" in text and "VRAM 9.4/24.0 GB" in text and "GPU 98%" in text
+        assert "Unity Editor 0.9 GB" in text and "python 7.9 GB (service:comfyui)" in text
+        assert "crate-c" in text and "pick what to do" in text
+        assert "left" in card.locator("[data-watch-meta]").inner_text()
+        from pathlib import Path
+        shots = Path(__file__).resolve().parents[3] / "temp" / "mesh-run-card"
+        shots.mkdir(parents=True, exist_ok=True)
+        card.screenshot(path=str(shots / "desktop.png"))
+        assert not errors
+    finally:
+        page.close()

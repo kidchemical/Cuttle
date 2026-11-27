@@ -60,6 +60,10 @@ def test_parsers_read_recorded_nvidia_smi_and_psi_output():
 def test_services_are_recognised_by_command_line():
     assert capabilities.classify_service(["python", "/mnt/galaxy/AI/ComfyUI/main.py", "--listen"]) == "comfyui"
     assert capabilities.classify_service(["python", "-m", "http.server"]) == ""
+    # started from its own folder (start-comfyui.sh): only the working directory says so
+    assert capabilities.classify_service([".venv/bin/python", "main.py", "--port", "8188"],
+                                         "/mnt/galaxy/AI/ComfyUI") == "comfyui"
+    assert capabilities.classify_service(["python", "main.py"], "/home/me/other-app") == ""
 
 
 # ── J1 admission ─────────────────────────────────────────────────────────────
@@ -93,6 +97,47 @@ def test_memory_a_service_already_holds_counts_as_free_for_its_own_jobs():
     assert res and res["service"] == "comfyui"
 
 
+def test_open_editors_keep_burst_room_and_refusals_name_what_uses_memory():
+    load = _load(ram_total=32.0, ram_available=14.0,
+                 interactive=[{"name": "Unity Editor", "rss_mb": 6144}],
+                 heavy=[{"name": "Unity Editor", "rss_mb": 6144, "vram_mb": 900, "kind": "interactive"},
+                        {"name": "blender", "rss_mb": 3500, "vram_mb": 2100, "kind": "headless"},
+                        {"name": "python3", "rss_mb": 1500, "vram_mb": 0, "kind": "external"}])
+    # 14 GB free − 1 GB margin − 3 GB kept for the open Unity Editor = 10 GB.
+    assert admission.admit({"ram_mb": 10 * 1024}, load, [], telemetry_age=1)[0] is not None
+    res, why = admission.admit({"ram_mb": 11 * 1024}, load, [], telemetry_age=1)
+    assert res is None and why.startswith("needs 11.0 GB RAM, 10.0 GB free")
+    assert "keeping room for Unity Editor" in why
+    assert "Unity Editor 6.0 GB" in why and "blender 3.4 GB (headless)" in why
+    res, why = admission.admit({"vram_mb": 21 * 1024}, load, [], telemetry_age=1)
+    assert res is None and "blender 2.1 GB (headless)" in why
+
+
+def test_heavy_processes_are_tagged_by_owner(monkeypatch):
+    import psutil
+
+    class P:
+        def __init__(self, pid, name, cmd, rss):
+            self.info = {"pid": pid, "name": name, "cmdline": cmd,
+                         "memory_info": type("M", (), {"rss": rss * 1024**2})()}
+
+        def cwd(self):
+            return "/ai/ComfyUI"
+
+    procs = [P(1, "Unity Main Thre", ["/opt/Unity/Hub/Editor/6000.6.3f1/Editor/Unity", "-projectPath", "/g"], 6000), P(2, "blender", ["blender", "-b", "x.blend"], 3000),
+             P(3, "python3", ["python3", "main.py"], 9000), P(4, "python3", ["python3", "hog.py"], 200),
+             P(5, "bash", ["bash"], 10)]
+    monkeypatch.setattr(psutil, "process_iter", lambda attrs: procs)
+    monkeypatch.setattr(capabilities, "_in_job_scope", lambda pid: False)
+    gpus = [{"index": 0, "uuid": "GPU-a"}]
+    apps = [{"gpu_uuid": "GPU-a", "pid": 4, "used_mb": 8000}, {"gpu_uuid": "GPU-a", "pid": 3, "used_mb": 5000}]
+    interactive, services, heavy = capabilities._processes(apps, gpus)
+    assert interactive == [{"name": "Unity Editor", "rss_mb": 6000}]
+    assert services["comfyui"]["vram_mb"] == {"0": 5000}
+    kinds = {h["pid"]: h["kind"] for h in heavy}
+    assert kinds == {1: "interactive", 2: "headless", 3: "service:comfyui", 4: "external"}  # bash is not heavy
+
+
 def test_claim_reserves_and_waits_with_a_reason(worker_db):
     _register(worker_db, ram_total=24.0, ram_available=22.0)  # budget 20 GB
     ids = [worker_db.submit_job(job_type="ping", requirements={"resources": {"ram_mb": 8192}})["id"]
@@ -108,14 +153,137 @@ def test_claim_reserves_and_waits_with_a_reason(worker_db):
     assert worker_db.get_job(ids[2])["wait_reason"] is None
 
 
-def test_cancel_releases_the_reservation_and_refuses_the_heartbeat(worker_db):
+def _gpu_pair(store):
+    a = store.submit_job(job_type="ping", requirements={"resources": {"vram_mb": 6000}})["id"]
+    b = store.submit_job(job_type="ping", requirements={"resources": {"vram_mb": 6000}})["id"]
+    assert [j["id"] for j in store.claim_jobs(worker_id="desk", limit=5)] == [a]  # one GPU slot
+    return a, b
+
+
+def test_a_cancel_holds_the_reservation_until_the_worker_confirms(worker_db):
     _register(worker_db)
-    a = worker_db.submit_job(job_type="ping", requirements={"resources": {"vram_mb": 6000}})["id"]
-    b = worker_db.submit_job(job_type="ping", requirements={"resources": {"vram_mb": 6000}})["id"]
-    assert [j["id"] for j in worker_db.claim_jobs(worker_id="desk", limit=5)] == [a]  # one GPU slot
+    a, b = _gpu_pair(worker_db)
     worker_db.cancel_job(a)
     assert worker_db.heartbeat_job(a, "desk") is False  # → the worker's _cancelled flag
+    # Cancelled, but the workload may still be running: the GPU slot stays taken.
+    assert worker_db.get_job(a)["held_by"] == "desk"
+    assert worker_db.claim_jobs(worker_id="desk", limit=5) == []
+    assert [j["id"] for j in worker_db.held_after_end("desk")] == [a]
+    # The worker stopped it and reports (its fail on a cancelled job): released.
+    assert worker_db.fail_job(a, "desk", error="cancelled") is False
+    assert worker_db.get_job(a)["held_by"] is None and worker_db.get_job(a)["status"] == "cancelled"
     assert [j["id"] for j in worker_db.claim_jobs(worker_id="desk", limit=5)] == [b]
+
+
+def test_an_unconfirmed_stop_keeps_the_reservation(worker_db):
+    _register(worker_db)
+    a, b = _gpu_pair(worker_db)
+    assert worker_db.fail_job(a, "desk", error="ComfyUI did not confirm the cancel", keep_hold=True)
+    assert worker_db.get_job(a)["status"] == "failed" and worker_db.get_job(a)["held_by"] == "desk"
+    assert worker_db.claim_jobs(worker_id="desk", limit=5) == []
+    assert worker_db.release_hold(a, "lap") is False  # only the holder can release
+    assert worker_db.release_hold(a, "desk") is True
+    assert [j["id"] for j in worker_db.claim_jobs(worker_id="desk", limit=5)] == [b]
+
+
+def test_a_lost_lease_requeues_pinned_to_the_worker_that_may_still_run_it(worker_db):
+    _register(worker_db)
+    _register(worker_db, wid="lap")
+    a, _b = _gpu_pair(worker_db)
+    with worker_db_conn(worker_db) as conn:
+        conn.execute("UPDATE jobs SET claim_expires = 1 WHERE id = ?", (a,))
+    worker_db.reclaim_expired()
+    job = worker_db.get_job(a)
+    assert job["status"] == "queued" and job["held_by"] == "desk"
+    assert a not in [j["id"] for j in worker_db.claim_jobs(worker_id="lap", limit=5)]  # never twice
+    # The holder re-claims its own job (the adapter reattaches) without counting itself twice.
+    assert a in [j["id"] for j in worker_db.claim_jobs(worker_id="desk", limit=5)]
+
+
+def test_a_holder_gone_for_half_an_hour_releases_its_jobs(worker_db):
+    from api.device_workers import store as store_mod
+
+    _register(worker_db)
+    _register(worker_db, wid="lap")
+    a, _b = _gpu_pair(worker_db)
+    worker_db.cancel_job(a)
+    with worker_db_conn(worker_db) as conn:
+        conn.execute("UPDATE workers SET last_seen = ? WHERE worker_id = 'desk'",
+                     (__import__("time").time() - store_mod.HOLD_OFFLINE_RELEASE_SEC - 5,))
+    worker_db.reclaim_expired()
+    assert worker_db.get_job(a)["held_by"] is None
+
+
+def test_a_restarted_worker_gets_its_jobs_back_at_once(worker_db):
+    caps = {"shell": True}
+    worker_db.upsert_worker(worker_id="desk", capabilities=caps, load=_load(), meta={"worker_run": "one"})
+    a, _b = _gpu_pair(worker_db)
+    worker_db.heartbeat_job(a, "desk")
+    worker_db.upsert_worker(worker_id="desk", capabilities=caps, load=_load(), meta={"worker_run": "one"})
+    assert worker_db.get_job(a)["status"] == "running"  # same process: nothing happens
+    worker_db.upsert_worker(worker_id="desk", capabilities=caps, load=_load(), meta={"worker_run": "two"})
+    job = worker_db.get_job(a)
+    assert job["status"] == "queued" and job["held_by"] == "desk" and "worker restarted" in job["error"]
+    assert [j["id"] for j in worker_db.claim_jobs(worker_id="desk", limit=5)] == [a]
+    assert worker_db.get_job(a)["attempts"] == 2
+
+
+def worker_db_conn(store):
+    from contextlib import contextmanager
+
+    from api.device_workers.store import _connect
+
+    @contextmanager
+    def cm():
+        conn = _connect(store.db_path)
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+    return cm()
+
+
+def test_worker_releases_only_what_it_could_stop(monkeypatch):
+    from api.device_workers import executor, worker_loop
+
+    stopped = {"a": True, "b": False}
+    monkeypatch.setattr(executor, "stop_workload", lambda job: stopped[job["id"]])
+    released = []
+    worker_loop._release_ended([{"id": "a"}, {"id": "b"}], released.append)
+    assert released == ["a"]
+
+
+def test_a_workload_still_running_fails_the_job_but_keeps_its_hold(monkeypatch):
+    from api.device_workers import executor, worker_loop
+
+    def boom(job, auth_token=None):
+        raise executor.WorkloadStillRunning("cancel not confirmed")
+
+    monkeypatch.setattr(executor, "execute_job", boom)
+    calls = []
+    worker_loop._run_one({"id": "j", "params": {}}, complete=lambda *a: None,
+                         fail=lambda jid, **kw: calls.append(kw), heartbeat=lambda jid, progress=None: True)
+    assert calls == [{"error": "cancel not confirmed", "retry": False, "keep_hold": True}]
+
+
+def test_stop_scope_stops_a_scope_left_running(monkeypatch):
+    seen = []
+    state = {"active": "active"}
+
+    def fake(*args):
+        seen.append(args)
+        if args[0] == "stop":
+            state["active"] = "inactive"
+        return state["active"] if args[0] == "is-active" else ""
+
+    monkeypatch.setattr(isolation, "available", lambda: True)
+    monkeypatch.setattr(isolation, "_systemctl", fake)
+    assert isolation.stop_scope("job1") is True
+    assert ("stop", "cuttle-job-job1.scope") in seen
+    state["active"] = "active"
+    monkeypatch.setattr(isolation, "_systemctl", lambda *a: "active")  # will not stop
+    assert isolation.stop_scope("job1") is False
 
 
 def _claim_in_process(db_path, out):
@@ -355,10 +523,12 @@ def test_summary_reports_percent_eta_and_errors():
                  progress={"units_done": 1, "units_total": 4, "step": 15, "steps": 30, "message": "KSampler 15/30"}),
             _job("queued", id="c", wait_reason="desk: needs 7.0 GB VRAM, 3.1 GB free"),
             _job("failed", id="d", error="oom: recipe went past its scope")]
-    s = run_watch.summarize(jobs, now=now, started_ts=now - 300, history={"hunyuan": 120.0})
+    s = run_watch.summarize(jobs, now=now, started_ts=now - 300, expected={"b": 120.0, "c": 120.0})
     assert s["state"] == "running" and s["percent"] == round(100 * (1 + 0.375 + 0 + 1) / 4)
     assert "1/4 done" in s["label"] and "1 failed" in s["label"] and "KSampler 15/30" in s["label"]
-    assert s["eta_s"] == int(30 * (1 - 0.375) / 0.375 + 120)
+    assert s["eta_s"] == (120 - 30) + 120  # history of the workload, not node counts
+    no_history = run_watch.summarize(jobs[1:2], now=now, started_ts=now - 30)
+    assert no_history["eta_s"] == int(30 * (1 - 0.375) / 0.375)  # observed rate when there is none
     assert s["errors"][0]["oom"] is True
     assert [c["state"] for c in s["grid"]["cells"]] == ["completed", "running", "pending", "failed"]
     assert s["activity"]["steps"][2]["detail"].startswith("waiting — desk: needs 7.0 GB VRAM")
@@ -441,3 +611,331 @@ def test_heartbeats_refresh_the_card_between_polls(worker_db):
 def test_websockets_sync_client_is_available():
     # comfyui_prompt needs it on every worker, packaged ones included (requirements.txt + lock).
     import websockets.sync.client  # noqa: F401
+
+
+def test_an_unacknowledged_comfyui_cancel_keeps_the_hold(fake_comfy, monkeypatch):
+    from api.device_workers.executor import WorkloadStillRunning
+
+    monkeypatch.setattr(comfyui, "CANCEL_CONFIRM_SEC", 0)
+    fake_comfy(events=[{"type": "execution_start", "data": {"prompt_id": PID}}],
+               queue={"queue_running": [[1, PID]], "queue_pending": []})  # ComfyUI keeps running it
+    with pytest.raises(WorkloadStillRunning):
+        comfyui.run({"prompt": PROMPT, "_job_id": JOB, "_cancelled": lambda: True})
+    assert comfyui.stop({"_job_id": JOB}) is False
+
+
+def test_stop_confirms_once_comfyui_no_longer_lists_the_prompt(fake_comfy):
+    fake = fake_comfy(queue={"queue_running": [], "queue_pending": []})
+    assert comfyui.stop({"_job_id": JOB}) is True
+    assert fake.posts == [("/api/jobs/" + PID + "/cancel", None)]
+
+
+def test_losing_comfyui_mid_prompt_retries_with_the_hold(fake_comfy):
+    from websockets.exceptions import ConnectionClosed
+
+    from api.device_workers.executor import WorkloadStillRunning
+
+    fake = fake_comfy(queue={"queue_running": [[1, PID]], "queue_pending": []})
+
+    def drop(url, **_kw):
+        class WS:
+            def recv(self, timeout=None):
+                raise ConnectionClosed(None, None)
+
+            def close(self):
+                pass
+        return WS()
+
+    import websockets.sync.client as wsc
+
+    wsc.connect = drop
+    with pytest.raises(WorkloadStillRunning) as err:
+        comfyui.run({"prompt": PROMPT, "_job_id": JOB})
+    assert err.value.retry is True and not [p for p in fake.posts if p[0] == "/prompt"]  # already queued
+
+
+# ── Performance history ──────────────────────────────────────────────────────
+
+def _finished(store, wid, *, seconds, peak_ram=0, template="hunyuan", steps=30, outcome="succeeded", reserved=0):
+    from api.device_workers import metrics
+
+    job = {"id": __import__("uuid").uuid4().hex, "type": "comfyui_prompt", "status": outcome if outcome != "oom" else "failed",
+           "params": {"template": template, "prompt": {"3": {"class_type": "KSampler", "inputs": {"steps": steps, "seed": 1}}}},
+           "result": {"elapsed_seconds": seconds, "peak_ram_mb": peak_ram},
+           "error": "oom: past its scope" if outcome == "oom" else None,
+           "reserved": {"ram_mb": reserved} if reserved else {}, "created_at": 1.0, "started_at": 2.0,
+           "completed_at": 2.0 + seconds}
+    metrics.record(job, wid)
+    return job
+
+
+def test_config_ignores_seeds_and_text_but_not_steps():
+    from api.device_workers import metrics
+
+    def job(seed, steps, text):
+        return {"type": "comfyui_prompt", "params": {"prompt": {
+            "3": {"class_type": "KSampler", "inputs": {"seed": seed, "steps": steps}},
+            "6": {"class_type": "CLIPTextEncode", "inputs": {"text": text}}}}}
+    assert metrics.config_key(job(1, 30, "a gun")) == metrics.config_key(job(99, 30, "a crate"))
+    assert metrics.config_key(job(1, 30, "a gun")) != metrics.config_key(job(1, 50, "a gun"))
+
+
+def test_estimates_prefer_this_machine_and_these_settings(worker_db):
+    from api.device_workers import metrics
+
+    for s in (100, 120, 110):
+        _finished(worker_db, "desk", seconds=s, peak_ram=7000)
+    _finished(worker_db, "lap", seconds=400, peak_ram=7400)
+    probe = {"type": "comfyui_prompt", "params": {"template": "hunyuan", "prompt": {
+        "3": {"class_type": "KSampler", "inputs": {"steps": 30, "seed": 5}}}}}
+    desk = metrics.estimate(probe, "desk")
+    assert desk["seconds"] == 110 and desk["basis"] == "this machine, same settings" and desk["samples"] == 3
+    assert metrics.estimate(probe, "lap")["seconds"] == 400
+    anywhere = metrics.estimate(probe)
+    assert anywhere["basis"] == "same settings, any machine" and anywhere["peak_ram_mb"] == 7400
+    other = {**probe, "params": {**probe["params"], "prompt": {"3": {"class_type": "KSampler", "inputs": {"steps": 60}}}}}
+    assert metrics.estimate(other)["basis"] == "same workload"
+    assert metrics.estimate({"type": "shell", "params": {"recipe": "never-ran"}})["seconds"] is None
+
+
+def test_suggestions_never_lower_and_grow_past_an_oom(worker_db):
+    from api.device_workers import metrics
+
+    assert metrics.suggest({"ram_mb": 9000}, {"peak_ram_mb": 7000})["ram_mb"] == 9000
+    assert metrics.suggest({"ram_mb": 4000}, {"peak_ram_mb": 7000})["ram_mb"] == 8050
+    assert metrics.suggest({"ram_mb": 4000}, {"peak_ram_mb": 3000, "oom_reserved_ram_mb": 4000})["ram_mb"] == 6000
+
+
+def test_store_records_metrics_when_a_job_ends(worker_db):
+    from api.device_workers import metrics
+
+    _register(worker_db)
+    jid = worker_db.submit_job(job_type="ping", params={"template": "t"},
+                               requirements={"resources": {"ram_mb": 1024}})["id"]
+    worker_db.claim_jobs(worker_id="desk")
+    worker_db.complete_job(jid, "desk", result={"elapsed_seconds": 2.0, "peak_ram_mb": 900})  # a reattach
+    job = worker_db.get_job(jid)
+    est = metrics.estimate(job, "desk")
+    assert est["seconds"] == pytest.approx(job["completed_at"] - job["started_at"]) and est["peak_ram_mb"] == 900
+
+
+def test_plan_raises_a_reservation_to_the_measured_peak(worker_db):
+    from api.device_workers import runs
+
+    _register(worker_db)
+    for _ in range(2):
+        _finished(worker_db, "desk", seconds=60, peak_ram=8192, template="drafts")
+    spec = {"title": "Drafts", "jobs": [{"type": "comfyui_prompt", "template": "drafts", "label": "nacre",
+                                        "params": {"prompt": {"3": {"class_type": "KSampler", "inputs": {"steps": 30}}}},
+                                        "requirements": {"resources": {"ram_mb": 4096, "service": "comfyui"}}}]}
+    planned = runs.plan(spec, chat_session_id="CH-002819")
+    stored = runs._load(planned["run_id"])
+    assert stored["jobs"][0]["requirements"]["resources"]["ram_mb"] == 9421
+    assert "nacre: reservation from 2 past run(s)" in planned["form"]["description"]
+    assert planned["estimate_seconds"] == 60
+
+
+# ── Nothing fits: explicit, never silent ────────────────────────────────────
+
+BIG = {"title": "Big", "jobs": [{"type": "ping", "label": "big", "requirements": {"resources": {"ram_mb": 60000}}}]}
+
+
+def test_plan_says_nothing_fits_and_names_offline_workers(worker_db):
+    from api.device_workers import runs
+
+    _register(worker_db)
+    worker_db.upsert_worker(worker_id="lap", hostname="lap", capabilities={"shell": True}, load=_load())
+    with worker_db_conn(worker_db) as conn:
+        conn.execute("UPDATE workers SET last_seen = 1 WHERE worker_id = 'lap'")
+    planned = runs.plan(BIG, chat_session_id="CH-002819")
+    desc = planned["form"]["description"]
+    assert desc.startswith("Nothing can start right now. If it still cannot after 10 min")
+    assert "desk: 0/1 fit now — needs 58.6 GB RAM" in desc and "lap: offline" in desc
+    assert planned["form"]["options"][0]["label"].startswith("Queue it — ask me again")
+
+
+def _submitted(store, spec, **extra):
+    from api.device_workers import runs
+
+    p = runs.plan({**spec, **extra}, chat_session_id="CH-002819")["form"]["options"][0]["params"]
+    return p["run_id"], runs.submit(p["run_id"], spec_sha256=p["spec_sha256"])
+
+
+def test_a_stuck_run_asks_once_with_alternatives(worker_db):
+    import time as _time
+
+    from api import job_watch as jw
+    from api.chat_ops import store as ops
+    from api.device_workers import runs
+
+    _register(worker_db, ram_total=32.0, ram_available=10.0)
+    worker_db.upsert_worker(worker_id="lap", hostname="lap", capabilities={"shell": True},
+                            load=_load(ram_total=64.0, ram_available=60.0))
+    spec = {"title": "Mid", "jobs": [{"type": "ping", "label": "mid", "requirements": {"resources": {"ram_mb": 20000}}}]}
+    run_id, sub = _submitted(worker_db, spec, ask_after_s=60)
+    worker_db.retarget_queued(sub["jobs"], "desk")  # pinned where it does not fit
+    worker_db.claim_jobs(worker_id="desk")
+    assert jw.poll_unit_watches() == [] and not [o for o in ops.listing(2819) if o["kind"] == "notice"]
+
+    later = _time.time() + 120
+    for _ in range(2):  # asks once, however many polls
+        jw.poll_unit_watches(now=later)
+    notices = [o for o in ops.listing(2819) if o["kind"] == "notice"]
+    assert len(notices) == 1 and notices[0]["payload"]["job_id"] == f"{run_id}#decide1"
+    text = notices[0]["payload"]["text"]
+    assert "post it exactly as given" in text and "mid: desk: needs 19.5 GB RAM" in text
+    form = json.loads(text.split("<cuttle_action_form>\n", 1)[1].split("\n</cuttle_action_form>")[0])
+    assert [o["id"] for o in form["options"]] == ["move-lap", "wait", "cancel"]
+    assert jw.read_status(run_id)["decision"]["form"] is True
+
+    assert runs.decide(run_id, choice="move:lap")["moved"] == 1
+    assert [j["id"] for j in worker_db.claim_jobs(worker_id="lap")] == sub["jobs"]
+
+
+def test_decisions_wait_and_cancel(worker_db):
+    import time as _time
+
+    from api import job_watch as jw
+    from api.chat_ops import store as ops
+    from api.device_workers import runs
+
+    _register(worker_db)
+    run_id, sub = _submitted(worker_db, BIG, ask_after_s=60)
+    jw.poll_unit_watches(now=_time.time() + 120)
+    assert runs.decide(run_id, choice="wait")["ask_again_in_s"] == runs.WAIT_MORE_SEC
+    jw.poll_unit_watches(now=_time.time() + 300)  # still inside the 30 min
+    assert len([o for o in ops.listing(2819) if o["kind"] == "notice"]) == 1
+    jw.poll_unit_watches(now=_time.time() + runs.WAIT_MORE_SEC + 60)
+    assert len([o for o in ops.listing(2819) if o["kind"] == "notice"]) == 2
+    assert runs.decide(run_id, choice="cancel")["cancelled"]
+    assert worker_db.get_job(sub["jobs"][0])["status"] == "cancelled"
+    resolved = jw.poll_unit_watches()
+    assert resolved and resolved[0]["resume"] == "cancelled"  # the user chose: no resume turn
+    assert not runs.decide(run_id, choice="bogus")["success"]
+
+
+def test_a_run_is_not_finished_while_a_worker_still_holds_a_job(worker_db):
+    from api import job_watch as jw
+    from api.chat_ops import store as ops
+
+    _register(worker_db)
+    spec = {"title": "One", "jobs": [{"type": "ping", "label": "one", "requirements": {"resources": {"ram_mb": 1024}}}]}
+    run_id, sub = _submitted(worker_db, spec)
+    jid = worker_db.claim_jobs(worker_id="desk")[0]["id"]
+    worker_db.cancel_job(jid, reason="cancelled from the Jobs page")
+    assert jw.poll_unit_watches() == []
+    status = jw.read_status(run_id)
+    assert status["state"] == "running" and "stopping — waiting for desk" in status["label"]
+    assert status["counts"]["stopping"] == 1
+    worker_db.release_hold(jid, "desk")
+    done = jw.poll_unit_watches()
+    assert done and done[0]["state"] == "failed"
+    assert len([o for o in ops.listing(2819) if o["kind"] == "notice"]) == 1
+
+
+def test_a_worker_back_after_its_lease_ran_out_picks_its_job_back_up(worker_db):
+    _register(worker_db)
+    _register(worker_db, wid="lap")
+    a, _b = _gpu_pair(worker_db)
+    with worker_db_conn(worker_db) as conn:
+        conn.execute("UPDATE jobs SET claim_expires = 1 WHERE id = ?", (a,))
+    worker_db.reclaim_expired()
+    assert worker_db.heartbeat_job(a, "lap") is False  # not lap's
+    assert worker_db.heartbeat_job(a, "desk", progress={"units_done": 3, "units_total": 9}) is True
+    job = worker_db.get_job(a)
+    assert job["status"] == "running" and job["claimed_by"] == "desk" and job["attempts"] == 1
+    # and its report of the end lands too
+    with worker_db_conn(worker_db) as conn:
+        conn.execute("UPDATE jobs SET claim_expires = 1 WHERE id = ?", (a,))
+    worker_db.reclaim_expired()
+    assert worker_db.complete_job(a, "desk", result={"ok": True}) is True
+    assert worker_db.get_job(a)["status"] == "succeeded" and worker_db.get_job(a)["held_by"] is None
+
+
+def test_the_pulse_refreshes_telemetry_while_a_job_runs(monkeypatch):
+    import threading
+
+    from api.device_workers import executor, worker_loop
+
+    refreshed = threading.Event()
+
+    def slow(job, auth_token=None):
+        assert refreshed.wait(10)
+        return {"ok": True}
+
+    monkeypatch.setattr(executor, "execute_job", slow)
+    done = []
+    worker_loop._run_one({"id": "j", "params": {}}, complete=lambda jid, result: done.append(result),
+                         fail=lambda *a, **k: None, heartbeat=lambda jid, progress=None: True,
+                         lease_seconds=12, telemetry=refreshed.set)
+    assert done == [{"ok": True}]
+
+
+def test_reattaching_mid_prompt_shows_the_running_sampler():
+    t = comfyui.Tracker(PID, {"11": "Sampling"})
+    assert t.handle({"type": "progress", "data": {"prompt_id": PID, "node": "11", "value": 12, "max": 60}})
+    assert t.progress()["message"] == "Sampling 12/60" and t.progress()["stage"] == "Sampling"
+
+
+def test_a_hung_comfyui_is_not_taken_for_a_stopped_one(fake_comfy, monkeypatch):
+    from api.device_workers.executor import WorkloadStillRunning
+
+    monkeypatch.setattr(comfyui, "CANCEL_CONFIRM_SEC", 0)
+    fake = fake_comfy(events=[{"type": "execution_start", "data": {"prompt_id": PID}}])
+
+    answered = fake.get
+
+    def hung(url, timeout=0):  # up at start, then stops answering mid-prompt
+        if url.endswith("/system_stats") or not hung.started:
+            hung.started = hung.started or "/queue" in url
+            return answered(url, timeout)
+        raise comfyui.requests.ReadTimeout("read timed out")
+    hung.started = False
+
+    comfyui.requests.get = hung
+    with pytest.raises(WorkloadStillRunning):  # not a plain failure that would release the hold
+        comfyui.run({"prompt": PROMPT, "_job_id": JOB})
+    assert comfyui.stop({"_job_id": JOB}) is False
+
+    def refused(url, timeout=0):
+        raise comfyui.requests.ConnectionError("refused")
+
+    comfyui.requests.get = refused
+    comfyui.requests.post = refused
+    assert comfyui.stop({"_job_id": JOB}) is True  # nothing listens: the prompt is gone
+
+
+def test_remote_workers_get_release_work_and_keep_holds_over_http(worker_db, monkeypatch):
+    from flask import Flask
+
+    from api.device_workers.client import DeviceWorkerClient
+    from api.device_workers.routes import workers_bp
+
+    monkeypatch.setattr("api.device_workers.routes.get_store", lambda: worker_db)
+    app = Flask(__name__)
+    app.register_blueprint(workers_bp)
+    http = app.test_client()
+    headers = {"Authorization": f"Bearer {worker_db.enroll_device(worker_id='lap')['token']}"}
+
+    def call(path, body):
+        r = http.post(path, json={"worker_id": "lap", **body}, headers=headers,
+                      environ_base={"REMOTE_ADDR": "127.0.0.1"})
+        return r.status_code, r.get_json()
+
+    worker_db.upsert_worker(worker_id="lap", capabilities={"shell": True}, load=_load())
+    a = worker_db.submit_job(job_type="ping", requirements={"resources": {"vram_mb": 6000}})["id"]
+    code, body = call("/api/workers/jobs/claim", {"capabilities": {"shell": True}})
+    assert code == 200 and [j["id"] for j in body["jobs"]] == [a] and body["release"] == []
+    # unconfirmed stop over HTTP: failed, still held
+    assert call(f"/api/workers/jobs/{a}/fail", {"error": "cancel not confirmed", "keep_hold": True})[0] == 200
+    assert worker_db.get_job(a)["held_by"] == "lap"
+    code, body = call("/api/workers/jobs/claim", {"capabilities": {"shell": True}})
+    assert [r["id"] for r in body["release"]] == [a] and body["jobs"] == []
+    assert call(f"/api/workers/jobs/{a}/release", {})[0] == 200
+    assert worker_db.get_job(a)["held_by"] is None
+
+    # the client keeps the release list from its last claim
+    client = DeviceWorkerClient.__new__(DeviceWorkerClient)
+    client.worker_id = "lap"
+    client._request = lambda method, path, json_body=None, timeout=None: {"jobs": [], "release": [{"id": "x"}]}
+    assert client.claim() == [] and client.release == [{"id": "x"}]

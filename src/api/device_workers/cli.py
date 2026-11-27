@@ -159,6 +159,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_rsub.add_argument("--spec-sha256", default="")
     p_rsub.add_argument("--target", default="")
 
+    p_rdec = sub.add_parser("run-decide", help="Apply a pick from a blocked run's form (the workers.run-decide action)")
+    p_rdec.add_argument("--run-id", default="")
+    p_rdec.add_argument("--choice", default="", help="move:<worker_id> | wait | cancel")
+
     p_rstat = sub.add_parser("run-status", help="Current watch status of a run")
     p_rstat.add_argument("--run-id", default="")
 
@@ -388,6 +392,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             spec_sha256=str(args.spec_sha256 or env("spec_sha256") or ""),
             target=str(args.target or env("target") or ""),
         )
+    elif args.cmd == "run-decide":
+        from api.device_workers import runs
+
+        result = runs.decide(str(args.run_id or env("run_id") or "").strip(),
+                             choice=str(args.choice or env("choice") or "").strip())
     elif args.cmd == "run-status":
         from api.job_watch import read_status
 

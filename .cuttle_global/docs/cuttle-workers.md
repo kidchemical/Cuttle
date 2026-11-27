@@ -239,14 +239,19 @@ Long GPU/CPU work an agent starts for a chat (ComfyUI graphs, Blender bakes, Uni
 them) goes through a **run**, not a hand-written runner, poll loop or `watch-unit` glue. Design + status:
 `docs/guides/JOB_MANAGER.md`.
 
-1. Write a spec: `{"title", "resume_message", "jobs": [{"type", "label", "template", "params",
+1. Write a spec: `{"title", "resume_message", "ask_after_s", "jobs": [{"type", "label", "template", "params",
    "requirements": {"resources": {"ram_mb", "vram_mb", "service"}}}]}`. ComfyUI: `type: comfyui_prompt`,
-   `params.prompt` = API-format graph. Declare measured peaks; the claim admits a job only where they fit now.
+   `params.prompt` = API-format graph. Declare what you know; Cuttle raises a reservation to the peak it
+   measured on past runs of the same workload and says so in the form.
 2. `PYTHONPATH=src .venv/bin/python -m api.device_workers.cli run-plan --spec run.json` → paste its `card`
-   (approval form: per-worker fit, ETA, reservations) and end the turn. Never submit without the user's pick.
+   (approval form: per-worker fit with what is using the memory, offline machines, ETA, reservations) and end
+   the turn. Never submit without the user's pick.
 3. The pick runs `workers.run`; its result carries the watch `card` — post it. The host refreshes the card from
    heartbeats and resumes the chat **once** when every job has ended. Do not poll, sleep or re-check.
-4. Results: `run-status --run-id <id>` (per-job errors, `oom`, outputs) or `workers.status` per job.
+4. If nothing can place the run for `ask_after_s` (default 10 min), the chat is resumed with a form Cuttle
+   built (move to a worker that fits, keep waiting, cancel): post it exactly as given and end the turn; its
+   `workers.run-decide` pick is applied by Cuttle. Do not retarget, resubmit or cancel jobs yourself.
+5. Results: `run-status --run-id <id>` (per-job errors, `oom`, outputs) or `workers.status` per job.
 
 ### Mesh progress bars (hard)
 

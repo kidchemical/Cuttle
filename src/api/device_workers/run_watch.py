@@ -10,9 +10,16 @@ A run is the jobs submitted together by :func:`submit_run` (they share
 * every job heartbeat that lands on the host calls :func:`touch`, so the card
   follows node-level progress within a couple of seconds.
 
-:func:`summarize` is pure: jobs (+ worker telemetry + history) → the watch
-status (``percent``, ``label``, ``bars``, ``grid``, activity ``steps``) plus
-``eta_s``, ``elapsed_s``, ``errors``, ``previews`` and per-worker ``resources``.
+:func:`summarize` is pure: jobs (+ worker telemetry + expected durations from
+``api.device_workers.metrics``) → the watch status (``percent``, ``label``,
+``bars``, ``grid``, activity ``steps``) plus ``eta_s``, ``elapsed_s``,
+``errors``, ``previews`` and per-worker ``resources``.
+
+A run is finished only when every job has ended **and** no worker still holds
+a reservation for one (a cancel the worker has not confirmed yet): until then
+the card says it is stopping. A run that makes no progress for its
+``ask_after_s`` gets one decision form (``runs.ask_if_blocked``) instead of
+waiting silently.
 """
 
 from __future__ import annotations
@@ -20,7 +27,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import statistics
 import threading
 import time
 import uuid
@@ -33,22 +39,6 @@ TERMINAL = ("succeeded", "failed", "cancelled")
 TOUCH_MIN_SEC = 2.0
 _touched: Dict[str, float] = {}
 _touch_lock = threading.Lock()
-
-
-def history_key(job: Dict[str, Any]) -> str:
-    """Jobs with the same key take comparable time (template, else type + recipe)."""
-    params = job.get("params") or {}
-    return str(params.get("template") or f"{job.get('type')}:{params.get('recipe') or ''}")
-
-
-def median_durations(history: List[Dict[str, Any]]) -> Dict[str, float]:
-    """Median wall time of succeeded jobs, per :func:`history_key`."""
-    by_key: Dict[str, List[float]] = {}
-    for job in history:
-        if job.get("status") != "succeeded" or not job.get("started_at") or not job.get("completed_at"):
-            continue
-        by_key.setdefault(history_key(job), []).append(float(job["completed_at"]) - float(job["started_at"]))
-    return {k: statistics.median(v) for k, v in by_key.items() if v}
 
 
 def _fraction(job: Dict[str, Any], expected: Optional[float], now: float) -> float:
@@ -73,9 +63,11 @@ def _remaining(job: Dict[str, Any], frac: float, expected: Optional[float], now:
         return 0.0
     if status in ("claimed", "running") and job.get("started_at"):
         elapsed = now - float(job["started_at"])
-        if frac >= 0.05:
-            return elapsed * (1 - frac) / frac  # observed rate beats history once it exists
-        return max(0.0, expected - elapsed) if expected else None
+        if expected:
+            # Measured history of this workload beats node counts: one sampler node is
+            # most of a graph's time but one unit of its progress.
+            return max(0.0, expected - elapsed) if elapsed < expected else expected * 0.05
+        return elapsed * (1 - frac) / frac if frac >= 0.05 else None
     return expected
 
 
@@ -87,14 +79,22 @@ def _job_label(job: Dict[str, Any], index: int) -> str:
 def _detail(job: Dict[str, Any]) -> str:
     status = job.get("status")
     prog = job.get("progress") or {}
+    if status in TERMINAL and job.get("held_by"):
+        return f"stopping — waiting for {job['held_by']} to confirm the workload ended"
     if status in ("claimed", "running"):
         where = job.get("claimed_by") or ""
         return f"{where}: {prog.get('message') or 'running'}"[:240]
     if status == "queued":
-        return f"waiting — {job['wait_reason']}" if job.get("wait_reason") else "queued"
+        return _waiting(job)
     if status in ("failed", "cancelled"):
         return str(job.get("error") or status)[:240]
     return "done"
+
+
+def _waiting(job: Dict[str, Any]) -> str:
+    if job.get("held_by"):
+        return f"{job['held_by']} stopped responding — kept for it, its work may still be running"
+    return f"waiting — {job['wait_reason']}" if job.get("wait_reason") else "queued"
 
 
 _STEP_STATE = {"queued": "pending", "claimed": "running", "running": "running",
@@ -103,20 +103,35 @@ _CELL_STATE = {"queued": "pending", "claimed": "running", "running": "running",
                "succeeded": "completed", "failed": "failed", "cancelled": "cancelled"}
 
 
-def _resources(workers: List[Dict[str, Any]], busy: set) -> List[Dict[str, Any]]:
+def _resources(workers: List[Dict[str, Any]], jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Live telemetry of the workers this run is using or waiting on, for the card."""
+    involved: Dict[str, List[Dict[str, Any]]] = {}
+    for job in jobs:
+        wid = job.get("claimed_by") or job.get("held_by") or job.get("target_worker_id")
+        if wid:
+            involved.setdefault(str(wid), []).append(job)
     out = []
     for w in workers:
-        if w.get("worker_id") not in busy:
+        wid = str(w.get("worker_id") or "")
+        if wid not in involved:
             continue
         load = w.get("load") or {}
         gpus = load.get("gpus") or []
+        reserved = [j.get("reserved") or {} for j in involved[wid] if j.get("held_by") == wid]
         out.append({
-            "worker": w.get("worker_id"),
+            "worker": wid,
             "ram_used_gb": load.get("ram_used_gb"),
+            "ram_available_gb": load.get("ram_available_gb"),
             "ram_total_gb": load.get("ram_total_gb"),
+            "swap_used_gb": load.get("swap_used_gb"),
             "vram_used_mb": sum(int(g.get("vram_used_mb") or 0) for g in gpus) if gpus else None,
             "vram_total_mb": sum(int(g.get("vram_total_mb") or 0) for g in gpus) if gpus else None,
+            "gpu_pct": load.get("gpu_pct"),
             "psi_memory_some": ((load.get("psi") or {}).get("memory") or {}).get("some"),
+            "reserved_ram_mb": sum(int(r.get("ram_mb") or 0) for r in reserved),
+            "reserved_vram_mb": sum(int(r.get("vram_mb") or 0) for r in reserved),
+            "apps": [{"name": a.get("name"), "rss_mb": a.get("rss_mb"), "vram_mb": a.get("vram_mb"),
+                      "kind": a.get("kind")} for a in (load.get("heavy") or [])][:6],
         })
     return out
 
@@ -130,19 +145,20 @@ def summarize(
     *,
     now: float,
     started_ts: float,
-    history: Optional[Dict[str, float]] = None,
+    expected: Optional[Dict[str, float]] = None,
     workers: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """The watch status for a run's jobs (see module doc)."""
-    history = history or {}
+    """The watch status for a run's jobs (see module doc); ``expected`` maps job id → seconds."""
+    expected_by_id = expected or {}
     n = len(jobs)
     counts = {s: sum(1 for j in jobs if j.get("status") == s) for s in ("queued", "succeeded", "failed", "cancelled")}
     active = [j for j in jobs if j.get("status") in ("claimed", "running")]
-    finished = all(j.get("status") in TERMINAL for j in jobs)
+    stopping = [j for j in jobs if j.get("status") in TERMINAL and j.get("held_by")]
+    finished = all(j.get("status") in TERMINAL for j in jobs) and not stopping
 
     fractions, remaining = [], []
     for job in jobs:
-        expected = history.get(history_key(job))
+        expected = expected_by_id.get(str(job.get("id")))
         frac = _fraction(job, expected, now)
         fractions.append(frac)
         remaining.append(_remaining(job, frac, expected, now))
@@ -160,8 +176,9 @@ def summarize(
         focus = active[0]
         parts.append(f"{_job_label(focus, jobs.index(focus))}: {(focus.get('progress') or {}).get('message') or 'running'}")
     elif counts["queued"] and not finished:
-        waiting = next((j for j in jobs if j.get("status") == "queued"), {})
-        parts.append(f"waiting — {waiting['wait_reason']}" if waiting.get("wait_reason") else "queued")
+        parts.append(_waiting(next(j for j in jobs if j.get("status") == "queued")))
+    elif stopping:
+        parts.append(f"stopping — waiting for {stopping[0]['held_by']} to confirm the workload ended")
 
     bars = [{"id": "overall", "label": "Overall", "percent": percent, "kind": "primary"}]
     by_worker: Dict[str, List[float]] = {}
@@ -186,8 +203,8 @@ def summarize(
         "eta_s": eta,
         "errors": errors,
         "previews": previews[-4:],
-        "resources": _resources(workers or [], {j.get("claimed_by") for j in active}),
-        "counts": {**counts, "running": len(active), "total": n},
+        "resources": _resources(workers or [], [j for j in jobs if j.get("status") not in TERMINAL or j.get("held_by")]),
+        "counts": {**counts, "running": len(active), "stopping": len(stopping), "total": n},
     }
     if n > 1:
         status["grid"] = {"unit": "item", "total": n,
@@ -206,16 +223,28 @@ def summarize(
     return status
 
 
-def _status_for(record: Dict[str, Any], now: float) -> Dict[str, Any]:
+def _jobs_for(record: Dict[str, Any]) -> List[Dict[str, Any]]:
     from api.device_workers.store import get_store
 
     store = get_store()
-    jobs = [store.get_job(jid) or {"id": jid, "status": "cancelled", "error": "job record missing"}
+    return [store.get_job(jid) or {"id": jid, "status": "cancelled", "error": "job record missing"}
             for jid in record.get("mesh_jobs") or []]
-    keys = {history_key(j) for j in jobs}
-    recent = [j for j in store.list_jobs(status="succeeded", limit=300) if history_key(j) in keys]
+
+
+def _status_for(record: Dict[str, Any], now: float, jobs: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    from api.device_workers import metrics
+    from api.device_workers.store import get_store
+
+    store = get_store()
+    jobs = _jobs_for(record) if jobs is None else jobs
+    expected = {}
+    for job in jobs:
+        if job.get("status") not in TERMINAL:
+            est = metrics.estimate(job, job.get("claimed_by") or job.get("target_worker_id"))
+            if est["seconds"] is not None:
+                expected[str(job["id"])] = est["seconds"]
     return summarize(jobs, now=now, started_ts=float(record.get("created_ts") or now),
-                     history=median_durations(recent), workers=store.list_workers())
+                     expected=expected, workers=store.list_workers())
 
 
 def write(record: Dict[str, Any], status: Dict[str, Any]) -> None:
@@ -241,9 +270,17 @@ def watch_fields(record: Dict[str, Any]) -> Dict[str, Any]:
 
 def check(record: Dict[str, Any], *, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
     """None while the run is going (its status refreshed); else the watch outcome."""
+    from api.device_workers import runs
+    from api.device_workers.store import get_store
+
     now = time.time() if now is None else now
-    status = _status_for(record, now)
+    get_store().reclaim_expired()  # lost leases and long-gone holders, even with no worker polling
+    jobs = _jobs_for(record)
+    status = _status_for(record, now, jobs)
     if status["state"] == "running":
+        decision = runs.ask_if_blocked(record, jobs, now=now)
+        if decision:
+            status["decision"] = decision
         write(record, status)
         return None
     counts = status["counts"]

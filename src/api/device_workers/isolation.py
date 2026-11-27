@@ -15,7 +15,9 @@ import re
 import shutil
 import subprocess
 import sys
-from typing import List, Tuple
+import threading
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 SWAP_MAX_MB = 512
 
@@ -64,3 +66,82 @@ def oom_killed(scope: str) -> bool:
     except (OSError, subprocess.SubprocessError):
         return False
     return shown == "oom-kill"
+
+
+def _systemctl(*args: str) -> str:
+    try:
+        return subprocess.run(
+            ["systemctl", "--user", *args], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def stop_scope(job_id: str) -> bool:
+    """Stop what is left of a job's scope (a worker that died left it running).
+
+    True once no process of it runs; False when it would not stop, so the
+    caller keeps the job's reservation."""
+    if not available():
+        return True
+    scope = _scope_name(job_id)
+    if _systemctl("is-active", scope) not in ("active", "activating", "deactivating"):
+        return True
+    _systemctl("stop", scope)
+    _systemctl("reset-failed", scope)
+    return _systemctl("is-active", scope) not in ("active", "activating", "deactivating")
+
+
+class ScopeMeter:
+    """Peak RAM (cgroup ``memory.peak``) and VRAM of a running scope, sampled in the background.
+
+    The scope is gone once its last process exits, so the meter keeps the last
+    reading; ``memory.peak`` is monotonic, so that is the job's peak to within
+    one interval."""
+
+    def __init__(self, scope: str, *, interval: float = 2.0):
+        self.scope = scope
+        self.interval = interval
+        self.peak_ram_mb = 0
+        self.peak_vram_mb = 0
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def __enter__(self) -> "ScopeMeter":
+        if self.scope:
+            self._thread = threading.Thread(target=self._run, name=f"meter-{self.scope}", daemon=True)
+            self._thread.start()
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+    def _run(self) -> None:
+        from api.device_workers.capabilities import _gpus
+
+        cgroup: Optional[Path] = None
+        while not self._stop.wait(self.interval):
+            if cgroup is None:
+                rel = _systemctl("show", self.scope, "-p", "ControlGroup", "--value")
+                cgroup = Path("/sys/fs/cgroup" + rel) if rel else None
+                if cgroup is None:
+                    continue
+            try:
+                self.peak_ram_mb = max(self.peak_ram_mb, int((cgroup / "memory.peak").read_text(encoding="utf-8")) // (1024**2))
+                pids = {int(p) for p in (cgroup / "cgroup.procs").read_text(encoding="utf-8").split()}
+            except (OSError, ValueError):
+                continue
+            _gpu_list, apps = _gpus()
+            used = sum(int(a["used_mb"]) for a in apps if a["pid"] in pids)
+            self.peak_vram_mb = max(self.peak_vram_mb, used)
+
+    def as_result(self) -> Dict[str, int]:
+        out = {}
+        if self.peak_ram_mb:
+            out["peak_ram_mb"] = self.peak_ram_mb
+        if self.peak_vram_mb:
+            out["peak_vram_mb"] = self.peak_vram_mb
+        return out

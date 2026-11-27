@@ -82,6 +82,16 @@ class JobExecError(RuntimeError):
     """Permanent failure (do not retry unless caller overrides)."""
 
 
+class WorkloadStillRunning(JobExecError):
+    """The job ended but its workload could not be confirmed stopped (a cancel the
+    service did not acknowledge, a scope that would not stop): the worker reports
+    the failure and keeps the job's reservation until ``stop_workload`` succeeds."""
+
+    def __init__(self, message: str, *, retry: bool = False):
+        super().__init__(message)
+        self.retry = retry
+
+
 class PartialRetryError(JobExecError):
     """Durable partial progress — shrink params and requeue when attempts remain."""
 
@@ -149,6 +159,20 @@ def path_allowed(path: str, prefixes: List[str] | None = None) -> bool:
         except (OSError, ValueError):
             continue
     return False
+
+
+def stop_workload(job: Dict[str, Any]) -> bool:
+    """Stop whatever is left of an ended job's workload; True once nothing of it runs.
+
+    Called for jobs the host lists as ended but still held by this worker (a
+    cancel that landed while the worker was away, a worker that restarted)."""
+    from api.device_workers import adapters, isolation
+
+    jid = str(job.get("id") or "")
+    adapter = adapters.get(_normalize_job_type(str(job.get("type") or "")))
+    if adapter is not None:
+        return adapter.stop({**(job.get("params") or {}), "_job_id": jid})
+    return isolation.stop_scope(jid)
 
 
 def execute_job(job: Dict[str, Any], auth_token: Optional[str] = None) -> Dict[str, Any]:
@@ -258,23 +282,30 @@ def _shell_recipe(params: Dict[str, Any]) -> Dict[str, Any]:
     idle_s, hard_s, prog_mode = resolve_timeouts(job_type="shell", params=params)
     on_prog = params.get("_on_progress")
     ram_mb = int((params.get("_resources") or {}).get("ram_mb") or 0)
-    run_argv, scope = isolation.scoped_argv(argv, job_id=str(params.get("_job_id") or recipe), ram_mb=ram_mb)
+    scope_id = str(params.get("_job_id") or recipe)
+    run_argv, scope = isolation.scoped_argv(argv, job_id=scope_id, ram_mb=ram_mb)
+    if scope and not isolation.stop_scope(scope_id):
+        raise WorkloadStillRunning(f"an earlier attempt of {recipe} is still running in {scope} and would not stop")
+    meter = isolation.ScopeMeter(scope)
     try:
-        completed = run_long_process(
-            run_argv,
-            hard_timeout_seconds=hard_s,
-            idle_timeout_seconds=idle_s,
-            progress_mode=prog_mode,
-            on_progress=on_prog if callable(on_prog) else None,
-            cwd=str(repo),
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            should_stop=params.get("_cancelled"),
-        )
+        with meter:
+            completed = run_long_process(
+                run_argv,
+                hard_timeout_seconds=hard_s,
+                idle_timeout_seconds=idle_s,
+                progress_mode=prog_mode,
+                on_progress=on_prog if callable(on_prog) else None,
+                cwd=str(repo),
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                should_stop=params.get("_cancelled"),
+            )
     except IdleTimeoutError as e:
         raise JobExecError(f"shell recipe idle timeout: {recipe} ({int(e.idle)}s)") from e
     except HardTimeoutError as e:
         raise JobExecError(f"shell recipe timed out: {recipe} ({int(e.hard)}s)") from e
     except CancelledError as e:
+        if scope and not isolation.stop_scope(scope_id):
+            raise WorkloadStillRunning(f"shell recipe {recipe} {e}, but {scope} would not stop") from e
         raise JobExecError(f"shell recipe {recipe} {e}") from e
     except OSError as e:
         raise JobExecError(f"shell launch failed: {e}") from e
@@ -297,6 +328,7 @@ def _shell_recipe(params: Dict[str, Any]) -> Dict[str, Any]:
         "stdout": out[-4000:],
         "stderr": err[-1000:],
         "elapsed_seconds": float(completed.elapsed_seconds),
+        **meter.as_result(),
     }
 
 
@@ -972,20 +1004,34 @@ def _blender_render(params: Dict[str, Any]) -> Dict[str, Any]:
             partial_result=partial,
         )
 
+    from api.device_workers import isolation
+    from api.device_workers.long_run import CancelledError
+
+    ram_mb = int((params.get("_resources") or {}).get("ram_mb") or 0)
+    scope_id = str(params.get("_job_id") or "blender")
+    cmd, scope = isolation.scoped_argv(cmd, job_id=scope_id, ram_mb=ram_mb)
+    if scope and not isolation.stop_scope(scope_id):
+        raise WorkloadStillRunning(f"an earlier attempt is still running in {scope} and would not stop")
+    meter = isolation.ScopeMeter(scope)
     started = time.time()
     try:
         try:
-            completed = run_long_process(
-                cmd,
-                hard_timeout_seconds=hard_s,
-                idle_timeout_seconds=idle_s,
-                progress_mode=prog_mode,
-                progress_poll=_poll_progress,
-                on_progress=progress_cb,
-                poll_interval=5.0,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                should_stop=params.get("_cancelled"),
-            )
+            with meter:
+                completed = run_long_process(
+                    cmd,
+                    hard_timeout_seconds=hard_s,
+                    idle_timeout_seconds=idle_s,
+                    progress_mode=prog_mode,
+                    progress_poll=_poll_progress,
+                    on_progress=progress_cb,
+                    poll_interval=5.0,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    should_stop=params.get("_cancelled"),
+                )
+        except CancelledError as e:
+            if scope and not isolation.stop_scope(scope_id):
+                raise WorkloadStillRunning(f"blender {e}, but {scope} would not stop") from e
+            raise JobExecError(f"blender {e}") from e
         except IdleTimeoutError as e:
             _raise_partial(f"blender idle timeout after {int(e.idle)}s")
             # If no missing frames, fall through as soft success.
@@ -1049,6 +1095,11 @@ def _blender_render(params: Dict[str, Any]) -> Dict[str, Any]:
             **stats,
         }
 
+    if completed.returncode != 0 and isolation.oom_killed(scope):
+        raise JobExecError(
+            f"oom: blender went past its {isolation.memory_limit_mb(ram_mb)} MB memory scope "
+            f"(reserved {ram_mb} MB); raise requirements.resources.ram_mb"
+        )
     if completed.returncode != 0:
         present = _list_frames_in_range(out_path, frame_start, frame_end)
         missing = _missing_frames(frame_start, frame_end, present)
@@ -1122,6 +1173,7 @@ def _blender_render(params: Dict[str, Any]) -> Dict[str, Any]:
         "elapsed_seconds": elapsed,
         "frame_times": sample,
         **stats,
+        **meter.as_result(),
     }
 
 

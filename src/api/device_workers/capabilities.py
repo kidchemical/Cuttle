@@ -183,20 +183,37 @@ INTERACTIVE_APPS = {"unity": "Unity Editor", "unity.exe": "Unity Editor", "blend
                     "blender.exe": "Blender"}
 
 
-def classify_service(cmdline: List[str]) -> str:
-    """Name of a long-lived adapter service a process is (``comfyui``), else ``""``."""
+def classify_service(cmdline: List[str], cwd: str = "") -> str:
+    """Name of a long-lived adapter service a process is (``comfyui``), else ``""``.
+
+    ComfyUI is usually started as ``python main.py`` from its own folder, so the
+    working directory counts as much as the command line."""
     joined = " ".join(cmdline or []).replace("\\", "/").lower()
-    if "main.py" in joined and "comfyui" in joined:
+    if "main.py" in joined and "comfyui" in (joined + " " + (cwd or "").lower()):
         return "comfyui"
     return ""
 
 
+HEAVY_RSS_MB = 1024
+HEAVY_VRAM_MB = 256
+
+
+def _in_job_scope(pid: int) -> bool:
+    try:
+        return "cuttle-job-" in Path(f"/proc/{pid}/cgroup").read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
 def _processes(apps: List[Dict[str, Any]], gpus: List[Dict[str, Any]]) -> tuple:
-    """Interactive apps and adapter services with their RAM and VRAM."""
+    """``(interactive, services, heavy)``: apps a person is using, adapter services, and
+    open interactive apps plus every process holding ≥ 1 GB RAM or real VRAM, each tagged with what it is
+    (``interactive``, ``service``, ``cuttle-job``, ``headless``, ``external``) so a
+    wait reason can name what is in the way, whether Cuttle started it or not."""
     try:
         import psutil
     except ImportError:
-        return [], {}
+        return [], {}, []
     index_by_uuid = {g["uuid"]: g["index"] for g in gpus}
     vram_by_pid: Dict[int, Dict[int, int]] = {}
     for app in apps:
@@ -205,27 +222,49 @@ def _processes(apps: List[Dict[str, Any]], gpus: List[Dict[str, Any]]) -> tuple:
             vram_by_pid.setdefault(app["pid"], {})[idx] = app["used_mb"]
     interactive: Dict[str, float] = {}
     services: Dict[str, Dict[str, Any]] = {}
+    heavy: List[Dict[str, Any]] = []
     for proc in psutil.process_iter(["pid", "name", "cmdline", "memory_info"]):
         info = proc.info
+        pid = int(info["pid"])
         name = str(info.get("name") or "").lower()
         rss_mb = int((info.get("memory_info").rss if info.get("memory_info") else 0) / (1024**2))
-        label = INTERACTIVE_APPS.get(name)
+        vram_mb = sum(vram_by_pid.get(pid, {}).values())
         args = [str(a).lower() for a in (info.get("cmdline") or [])]
+        # The Unity Editor renames its main thread ("Unity Main Thre"), so the
+        # executable in the command line identifies the app, not the process name.
+        exe = args[0].replace("\\", "/").rsplit("/", 1)[-1] if args else ""
+        label = INTERACTIVE_APPS.get(exe) or INTERACTIVE_APPS.get(name)
         # A headless run (blender -b, Unity -batchmode) is a job, not a person's session;
         # Unity Hub's own `unity serve` helper is not the Editor.
         if label == "Unity Editor" and "-projectpath" not in args:
             label = None
-        if label and not {"-b", "--background", "-batchmode"} & set(args):
+        headless = bool(label) and bool({"-b", "--background", "-batchmode"} & set(args))
+        service = ""
+        if name.startswith("python") and "main.py" in " ".join(args):
+            try:
+                cwd = proc.cwd()
+            except (psutil.Error, OSError):
+                cwd = ""
+            service = classify_service(info.get("cmdline") or [], cwd)
+        if label and not headless:
             interactive[label] = interactive.get(label, 0) + rss_mb
-            continue
-        service = classify_service(info.get("cmdline") or []) if name.startswith("python") else ""
-        if service:
+            kind = "interactive"
+        elif service:
             entry = services.setdefault(service, {"pids": [], "rss_mb": 0, "vram_mb": {}})
-            entry["pids"].append(int(info["pid"]))
+            entry["pids"].append(pid)
             entry["rss_mb"] += rss_mb
-            for idx, mb in vram_by_pid.get(int(info["pid"]), {}).items():
+            for idx, mb in vram_by_pid.get(pid, {}).items():
                 entry["vram_mb"][str(idx)] = entry["vram_mb"].get(str(idx), 0) + mb
-    return [{"name": k, "rss_mb": v} for k, v in sorted(interactive.items())], services
+            kind = f"service:{service}"
+        elif _in_job_scope(pid):
+            kind = "cuttle-job"
+        else:
+            kind = "headless" if headless else "external"
+        if kind == "interactive" or rss_mb >= HEAVY_RSS_MB or vram_mb >= HEAVY_VRAM_MB:
+            heavy.append({"name": label or (info.get("name") or "?"), "pid": pid, "rss_mb": rss_mb,
+                          "vram_mb": vram_mb, "kind": kind})
+    heavy.sort(key=lambda h: -(h["rss_mb"] + h["vram_mb"]))
+    return [{"name": k, "rss_mb": v} for k, v in sorted(interactive.items())], services, heavy[:12]
 
 
 def _blender_gpu() -> Optional[str]:
@@ -482,7 +521,7 @@ def collect_capabilities(
     load["gpus"] = [{k: v for k, v in g.items() if k != "uuid"} for g in gpus]
     load["gpu_pct"] = max((g["util_pct"] or 0.0 for g in gpus), default=None)
     load["psi"] = _psi()
-    load["interactive"], load["services"] = _processes(apps, gpus)
+    load["interactive"], load["services"], load["heavy"] = _processes(apps, gpus)
     caps = {
         "shell": True,
         "filesystem": True,

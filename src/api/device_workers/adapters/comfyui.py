@@ -13,7 +13,10 @@ per-node seconds and peak VRAM.
 Because the prompt id is a function of the job id, a retry after a worker or
 lease loss first asks ComfyUI about that id (``/history``, ``/queue``) and
 reattaches or collects instead of running the graph twice. Cancel is
-``POST /api/jobs/<id>/cancel`` (interrupts if running, dequeues if pending).
+``POST /api/jobs/<id>/cancel`` (interrupts if running, dequeues if pending),
+and counts only once ComfyUI no longer lists the prompt as running or queued;
+otherwise the job keeps its reservation (``WorkloadStillRunning``) and the
+worker retries the stop (:func:`stop`).
 
 Params: ``prompt`` (API-format graph, required), ``server`` (default
 ``http://127.0.0.1:8188``), ``stages`` (optional ``{node_id: label}``),
@@ -32,7 +35,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from api.device_workers.executor import JobExecError
+from api.device_workers.executor import JobExecError, WorkloadStillRunning
 
 TYPE = "comfyui_prompt"
 DEFAULT_SERVER = "http://127.0.0.1:8188"
@@ -40,6 +43,7 @@ _LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 _RECV_TIMEOUT = 5.0
 _SAMPLE_EVERY = 2.0
 _PREVIEW_EVERY = 2.0
+CANCEL_CONFIRM_SEC = 30.0
 
 
 def prompt_id_for(job_id: str) -> str:
@@ -137,6 +141,11 @@ class Tracker:
                 self.node_peak_vram = int((sample or {}).get("vram_used_mb") or 0)
                 self.step = self.steps = None
         elif kind == "progress":
+            # After a reattach the prompt's ``executing`` event is long gone; the
+            # sampler's own events still name its node.
+            self.started = True
+            if self.node is None and data.get("node") is not None:
+                self.node, self.node_started = str(data["node"]), self.now()
             self.step, self.steps = int(data.get("value") or 0), int(data.get("max") or 0)
         elif kind == "executed":
             if data.get("node") is not None:
@@ -196,9 +205,10 @@ def decode_preview(frame: bytes) -> Optional[Tuple[str, bytes]]:
 
 
 def _sample() -> Dict[str, Any]:
+    """GPU VRAM in use, free RAM, and the ComfyUI server's own RSS and VRAM."""
     from api.device_workers import capabilities
 
-    gpus, _apps = capabilities._gpus()
+    gpus, apps = capabilities._gpus()
     out: Dict[str, Any] = {"vram_used_mb": max((g["vram_used_mb"] for g in gpus), default=0)}
     try:
         import psutil
@@ -206,7 +216,33 @@ def _sample() -> Dict[str, Any]:
         out["ram_available_mb"] = int(psutil.virtual_memory().available / (1024**2))
     except ImportError:
         pass
+    service = capabilities._processes(apps, gpus)[1].get("comfyui") or {}
+    if service:
+        out["service_rss_mb"] = int(service.get("rss_mb") or 0)
+        out["service_vram_mb"] = sum(int(v) for v in (service.get("vram_mb") or {}).values())
     return out
+
+
+def _cancel(base: str, pid: str) -> bool:
+    """Cancel a prompt; True once ComfyUI lists it neither running nor queued."""
+    deadline = time.time() + CANCEL_CONFIRM_SEC
+    while True:
+        try:
+            requests.post(f"{base}/api/jobs/{pid}/cancel", timeout=15)
+            entry, position = _known(base, pid)
+            if position is None:
+                return True
+        except requests.ConnectionError:
+            return True  # nothing listens: the server (and the prompt) is gone
+        except requests.RequestException:
+            pass  # a hung server may still be running it
+        if time.time() >= deadline:
+            return False
+        time.sleep(2)
+
+
+def stop(params: Dict[str, Any]) -> bool:
+    return _cancel(_server(params), prompt_id_for(str(params.get("_job_id") or "")))
 
 
 def _preview_target(job_id: str):
@@ -282,6 +318,7 @@ def _files(outputs: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def run(params: Dict[str, Any]) -> Dict[str, Any]:
+    from websockets.exceptions import ConnectionClosed
     from websockets.sync.client import connect
 
     from api.device_workers.job_policy import resolve_timeouts
@@ -303,6 +340,7 @@ def run(params: Dict[str, Any]) -> Dict[str, Any]:
     ws = connect(base.replace("http", "ws", 1) + f"/ws?clientId={pid}", open_timeout=15, max_size=None)
     try:
         entry, position = _known(base, pid)
+        tracker.started = position == 0  # reattached to a prompt ComfyUI is running
         if entry is None and position is None:
             resp = requests.post(f"{base}/prompt", json={"prompt": prompt, "client_id": pid, "prompt_id": pid},
                                  timeout=60)
@@ -316,19 +354,26 @@ def run(params: Dict[str, Any]) -> Dict[str, Any]:
         preview_dir, preview_url = _preview_target(job_id)
         last_event = last_sample_at = last_preview_at = last_beat = time.time()
         sample: Optional[Dict[str, Any]] = None
+        peak_ram = peak_vram = 0
         while entry is None and tracker.outcome is None:
             now = time.time()
             if cancelled():
-                requests.post(f"{base}/api/jobs/{pid}/cancel", timeout=15)
+                if not _cancel(base, pid):
+                    raise WorkloadStillRunning("cancelled, but ComfyUI did not confirm the prompt stopped")
                 raise JobExecError("cancelled: ComfyUI prompt cancelled")
             if now - started > hard_s:
-                requests.post(f"{base}/api/jobs/{pid}/cancel", timeout=15)
+                if not _cancel(base, pid):
+                    raise WorkloadStillRunning(f"timed out after {int(hard_s)}s; ComfyUI did not confirm the cancel")
                 raise JobExecError(f"ComfyUI prompt timed out after {int(hard_s)}s")
             if idle_s and now - last_event > idle_s:
+                if not _cancel(base, pid):
+                    raise WorkloadStillRunning(f"no ComfyUI progress for {int(idle_s)}s; cancel not confirmed")
                 raise JobExecError(f"no ComfyUI progress for {int(idle_s)}s")
             if now - last_sample_at >= _SAMPLE_EVERY:
                 sample, last_sample_at = _sample(), now
                 tracker.observe(sample)
+                peak_ram = max(peak_ram, int(sample.get("service_rss_mb") or 0))
+                peak_vram = max(peak_vram, int(sample.get("service_vram_mb") or 0))
             try:
                 frame = ws.recv(timeout=_RECV_TIMEOUT)
             except TimeoutError:
@@ -358,6 +403,19 @@ def run(params: Dict[str, Any]) -> Dict[str, Any]:
                 last_event = now
                 on_progress(tracker.progress())
                 last_beat = now
+    except (requests.RequestException, OSError, ConnectionClosed) as exc:
+        # Lost the server mid-prompt. Unless it is provably gone (nothing listens) or no
+        # longer has the prompt, keep the hold: a hung server may still be running it,
+        # and the retry, pinned to this worker, reattaches to the same prompt id.
+        try:
+            live = _known(base, pid)[1] is not None
+        except requests.ConnectionError:
+            live = False
+        except requests.RequestException:
+            live = True
+        if live:
+            raise WorkloadStillRunning(f"lost ComfyUI mid-prompt ({exc})", retry=True) from exc
+        raise
     finally:
         ws.close()
 
@@ -384,4 +442,6 @@ def run(params: Dict[str, Any]) -> Dict[str, Any]:
         "node_timings": tracker.timings,
         "cached_nodes": sorted(tracker.cached),
         "elapsed_seconds": round(time.time() - started, 2),
+        **({"peak_ram_mb": peak_ram} if peak_ram else {}),
+        **({"peak_vram_mb": peak_vram} if peak_vram else {}),
     }

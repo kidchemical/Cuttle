@@ -357,13 +357,18 @@ def claim_jobs():
     except (TypeError, ValueError):
         limit = 1
     caps = data.get("capabilities") if isinstance(data.get("capabilities"), dict) else {}
-    jobs = get_store().claim_jobs(
+    store = get_store()
+    jobs = store.claim_jobs(
         worker_id=wid,
         capabilities=caps,
         limit=limit,
         lease_seconds=lease_seconds(),
     )
-    return jsonify({"success": True, "jobs": jobs})
+    # Ended jobs whose workload this worker must stop and confirm before its
+    # reservation is released (``/jobs/<id>/release``).
+    release = [{"id": j["id"], "type": j["type"], "params": j["params"], "requirements": j["requirements"]}
+               for j in store.held_after_end(wid)]
+    return jsonify({"success": True, "jobs": jobs, "release": release})
 
 
 @workers_bp.route("/jobs/<job_id>", methods=["GET"])
@@ -402,10 +407,21 @@ def complete_job(job_id: str):
         return denied
     result = data.get("result") if isinstance(data.get("result"), dict) else {}
     ok = get_store().complete_job(job_id, wid, result=result)
-    if ok:
-        run_watch.touch(job_id)
+    run_watch.touch(job_id)
     if not ok:
         return jsonify({"success": False, "error": "job not claimed by worker"}), 409
+    return jsonify({"success": True})
+
+
+@workers_bp.route("/jobs/<job_id>/release", methods=["POST"])
+def release_job(job_id: str):
+    """The worker confirmed the job's workload stopped; its reservation stops counting."""
+    data = request.get_json(silent=True) or {}
+    wid, denied = _worker_id_or_error(data)
+    if denied:
+        return denied
+    if get_store().release_hold(job_id, wid):
+        run_watch.touch(job_id)
     return jsonify({"success": True})
 
 
@@ -554,9 +570,9 @@ def fail_job(job_id: str):
         retry=bool(data.get("retry")),
         params_update=params_update,
         partial_result=partial_result,
+        keep_hold=bool(data.get("keep_hold")),
     )
-    if ok:
-        run_watch.touch(job_id)
+    run_watch.touch(job_id)
     if not ok:
         return jsonify({"success": False, "error": "job not claimed by worker"}), 409
     return jsonify({"success": True})

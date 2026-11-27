@@ -381,7 +381,7 @@ def test_raw_artifact_viewer_enforces_ownership(supervised_env, monkeypatch):
 def test_js_activity_card_not_pending_queue(supervised_env):
     js = (REPO_ROOT / "src/web/js/chat/chat_page.js").read_text(encoding="utf-8")
     html = (REPO_ROOT / "src/web/chat_page.html").read_text(encoding="utf-8")
-    helper = Path("src/web/js/chat/supervised_control.js").read_text(encoding="utf-8")
+    helper = (REPO_ROOT / "src/web/js/chat/supervised_control.js").read_text(encoding="utf-8")
     assert "upsertSupervisedActivityCard" in js
     assert "dispatchSupervisedControlMessage" in js
     assert "buildActivityDisclosureHtml" in helper

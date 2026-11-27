@@ -8,10 +8,14 @@ the reservations its claimed/running jobs hold. A job declares
     {"ram_mb": 9000, "vram_mb": 7000, "gpu_slots": 1, "service": "comfyui"}
 
 Headroom is the smaller of the reservation budget (total minus a host reserve,
-minus what active jobs reserved) and the live free amount, so an app the mesh
-does not own (a Unity Editor, a game) still blocks admission. Memory a named
-``service`` already holds (ComfyUI's cached models) counts as free for jobs
-that run inside that service, because the service reuses or evicts it.
+minus what the worker's held jobs reserved) and the live free amount, so an app
+the mesh does not own (a Unity Editor, a game, someone's headless Blender
+render) still blocks admission. A person's open Unity Editor or Blender also
+keeps :data:`INTERACTIVE_BURST` free on top, because what it uses now is not
+what it uses when they hit Play or bake. Memory a named ``service`` already
+holds (ComfyUI's cached models) counts as free for jobs that run inside that
+service, because the service reuses or evicts it. A refusal names the
+processes using the most memory (``load["heavy"]``).
 """
 
 from __future__ import annotations
@@ -22,6 +26,8 @@ HOST_RESERVE_MB = 4096  # RAM never reserved: the desktop, Flask, the daemon
 RAM_MARGIN_MB = 1024
 VRAM_MARGIN_MB = 512
 TELEMETRY_STALE_SEC = 60.0
+# Kept free for an open interactive app's next spike (RAM MB, VRAM MB).
+INTERACTIVE_BURST = {"Unity Editor": (3072, 2048), "Blender": (2048, 2048)}
 
 
 def requested(requirements: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -68,6 +74,31 @@ def _gb_to_mb(value: Any) -> Optional[int]:
         return None
 
 
+def _burst(load: Dict[str, Any]) -> Tuple[int, int, List[str]]:
+    names = [str(a.get("name")) for a in load.get("interactive") or [] if isinstance(a, dict)]
+    ram = sum(INTERACTIVE_BURST.get(n, (0, 0))[0] for n in names)
+    vram = sum(INTERACTIVE_BURST.get(n, (0, 0))[1] for n in names)
+    return ram, vram, [n for n in names if n in INTERACTIVE_BURST]
+
+
+def _users(load: Dict[str, Any], key: str, service: str) -> str:
+    heavy = [h for h in load.get("heavy") or [] if isinstance(h, dict) and int(h.get(key) or 0) > 0
+             and h.get("kind") != f"service:{service}"]
+    heavy.sort(key=lambda h: -int(h.get(key) or 0))
+    return ", ".join(f"{h.get('name')} {int(h[key]) / 1024:.1f} GB"
+                     + ("" if h.get("kind") in ("interactive", "cuttle-job") else f" ({h.get('kind')})")
+                     for h in heavy[:3])
+
+
+def _why(base: str, burst_apps: List[str], users: str) -> str:
+    notes = []
+    if burst_apps:
+        notes.append(f"keeping room for {' and '.join(burst_apps)}")
+    if users:
+        notes.append(f"in use: {users}")
+    return base + (f" ({'; '.join(notes)})" if notes else "")
+
+
 def admit(
     need: Dict[str, Any],
     load: Dict[str, Any],
@@ -82,7 +113,9 @@ def admit(
     if telemetry_age > TELEMETRY_STALE_SEC:
         return None, f"telemetry {int(telemetry_age)}s old"
     held = reserved_totals(reservations)
-    service = (load.get("services") or {}).get(need.get("service") or "") or {}
+    service_name = need.get("service") or ""
+    service = (load.get("services") or {}).get(service_name) or {}
+    burst_ram, burst_vram, burst_apps = _burst(load)
     reservation: Dict[str, Any] = {}
 
     ram_mb = int(need.get("ram_mb") or 0)
@@ -92,9 +125,10 @@ def admit(
         if total is None or available is None:
             return None, "worker reports no RAM telemetry (update Cuttle on it)"
         available += int(service.get("rss_mb") or 0)
-        headroom = min(total - host_reserve_mb - held["ram_mb"], available - RAM_MARGIN_MB)
+        headroom = min(total - host_reserve_mb - held["ram_mb"], available - RAM_MARGIN_MB) - burst_ram
         if ram_mb > headroom:
-            return None, f"needs {ram_mb / 1024:.1f} GB RAM, {max(0, headroom) / 1024:.1f} GB free"
+            return None, _why(f"needs {ram_mb / 1024:.1f} GB RAM, {max(0, headroom) / 1024:.1f} GB free",
+                              burst_apps if burst_ram else [], _users(load, "rss_mb", service_name))
         reservation["ram_mb"] = ram_mb
 
     vram_mb = int(need.get("vram_mb") or 0)
@@ -104,20 +138,23 @@ def admit(
         if not gpus:
             return None, "worker reports no GPU telemetry"
         best: Optional[Tuple[int, int]] = None
+        widest = 0  # the most any free GPU slot offers, for the refusal
         for gpu in gpus:
             idx = int(gpu.get("index") or 0)
             if held["gpu_slots"].get(idx, 0) + gpu_slots > 1:
                 continue
             total = int(gpu.get("vram_total_mb") or 0)
             used = int(gpu.get("vram_used_mb") or 0) - int((service.get("vram_mb") or {}).get(str(idx)) or 0)
-            headroom = min(total - VRAM_MARGIN_MB - held["vram_mb"].get(idx, 0), total - used - VRAM_MARGIN_MB)
+            headroom = min(total - VRAM_MARGIN_MB - held["vram_mb"].get(idx, 0),
+                           total - used - VRAM_MARGIN_MB) - burst_vram
+            widest = max(widest, headroom)
             if headroom >= vram_mb and (best is None or headroom > best[1]):
                 best = (idx, headroom)
         if best is None:
-            free = max((int(g.get("vram_total_mb") or 0) - int(g.get("vram_used_mb") or 0) for g in gpus), default=0)
             busy = all(held["gpu_slots"].get(int(g.get("index") or 0), 0) for g in gpus)
-            return None, "GPU busy with another job" if busy and gpu_slots else (
-                f"needs {vram_mb / 1024:.1f} GB VRAM, {free / 1024:.1f} GB free")
+            return None, "GPU busy with another job" if busy and gpu_slots else _why(
+                f"needs {vram_mb / 1024:.1f} GB VRAM, {max(0, widest) / 1024:.1f} GB free",
+                burst_apps if burst_vram else [], _users(load, "vram_mb", service_name))
         reservation.update({"gpu_index": best[0], "vram_mb": vram_mb, "gpu_slots": gpu_slots})
     if need.get("service"):
         reservation["service"] = need["service"]

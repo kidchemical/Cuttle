@@ -1,0 +1,12 @@
+name: workers.run-decide
+title: Decide on a blocked mesh run
+description: >-
+  Apply the pick from the form Cuttle posts when a mesh run cannot start
+  (api.device_workers.runs.ask_if_blocked). Params: run_id, choice
+  (move:<worker_id> pins the waiting jobs there; wait asks again in 30 min;
+  cancel stops the run without resuming the chat).
+type: shell
+run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle_global\scripts\workers-cli.ps1 run-decide
+run_posix: .venv/bin/python -m api.device_workers.cli run-decide
+workdir: .
+timeout: 60

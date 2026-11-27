@@ -240,6 +240,61 @@
             + (omitted ? `<div class="watch-grid-summary">Showing first 2048 ${esc(unit)}s · ${esc(String(omitted))} more; bars cover the full job.</div>` : '');
     }
 
+    /** Only same-origin job output (``/output/…``) is shown as a preview image. */
+    function safePreviewUrl(url) {
+        const u = String(url || '');
+        return /^\/output\/[A-Za-z0-9._~\/-]+(\?[A-Za-z0-9=&._-]*)?$/.test(u) && !u.includes('..') ? u : '';
+    }
+
+    function _gbText(mb) { return (Number(mb) / 1024).toFixed(1); }
+
+    /**
+     * Mesh-run extras under the bars (api.device_workers.run_watch): latest
+     * generation previews, each worker's live RAM/VRAM/GPU with what the run
+     * reserved and which processes use the most, job errors, and an open
+     * decision. Empty string when the status carries none of them.
+     */
+    function renderWatchDetailsHtml(data, esc) {
+        const d = data || {};
+        let html = '';
+        const previews = (Array.isArray(d.previews) ? d.previews : []).map(p => safePreviewUrl(p && p.url)).filter(Boolean);
+        if (previews.length) {
+            html += '<div class="watch-previews">' + previews.slice(-4).map(u =>
+                `<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="Generation preview" loading="lazy"></a>`).join('') + '</div>';
+        }
+        const resources = Array.isArray(d.resources) ? d.resources : [];
+        if (resources.length) {
+            html += '<div class="watch-resources">' + resources.slice(0, 8).map((r) => {
+                const bits = [];
+                if (r.ram_total_gb != null) {
+                    const used = r.ram_available_gb != null ? Number(r.ram_total_gb) - Number(r.ram_available_gb) : Number(r.ram_used_gb);
+                    bits.push(`RAM ${used.toFixed(1)}/${Number(r.ram_total_gb).toFixed(0)} GB`);
+                }
+                if (Number(r.swap_used_gb) >= 0.5) bits.push(`swap ${Number(r.swap_used_gb).toFixed(1)} GB`);
+                if (r.vram_total_mb) bits.push(`VRAM ${_gbText(r.vram_used_mb)}/${_gbText(r.vram_total_mb)} GB`);
+                if (r.gpu_pct != null) bits.push(`GPU ${Math.round(Number(r.gpu_pct))}%`);
+                if (Number(r.reserved_ram_mb) || Number(r.reserved_vram_mb)) {
+                    bits.push(`reserved ${_gbText(r.reserved_ram_mb || 0)} GB RAM / ${_gbText(r.reserved_vram_mb || 0)} GB VRAM`);
+                }
+                const apps = (Array.isArray(r.apps) ? r.apps : []).slice(0, 4).map(a =>
+                    `${String(a.name || '?').slice(0, 40)} ${_gbText(Math.max(Number(a.rss_mb) || 0, Number(a.vram_mb) || 0))} GB`
+                    + (a.kind && a.kind !== 'interactive' ? ` (${String(a.kind).slice(0, 24)})` : ''));
+                return `<div class="watch-resource"><b>${esc(String(r.worker || '').slice(0, 80))}</b> ${esc(bits.join(' · '))}`
+                    + (apps.length ? `<div class="watch-resource-apps">in use: ${esc(apps.join(', '))}</div>` : '') + '</div>';
+            }).join('') + '</div>';
+        }
+        const errors = Array.isArray(d.errors) ? d.errors : [];
+        if (errors.length) {
+            html += '<ul class="watch-errors">' + errors.slice(0, 6).map(e =>
+                `<li class="${e && e.oom ? 'is-oom' : ''}"><b>${esc(String((e && e.label) || '').slice(0, 80))}</b> `
+                + `${esc(String((e && e.error) || '').replace(/^oom:\s*/, '').slice(0, 300))}</li>`).join('') + '</ul>';
+        }
+        if (d.decision && d.decision.form && String(d.state || '') === 'running') {
+            html += '<div class="watch-decision">Nothing can start this run right now — Cuttle posted a form in this chat to pick what to do.</div>';
+        }
+        return html;
+    }
+
     const RESTART_PROGRESS_PCT = {
         waiting_for_idle: 12,
         acknowledged: 22,
@@ -705,6 +760,8 @@
         formatWatchElapsedSeconds,
         watchElapsedText,
         watchEtaText,
+        renderWatchDetailsHtml,
+        safePreviewUrl,
         normalizeWatchBars,
         RESTART_PROGRESS_PCT,
         restartProgressPercent,

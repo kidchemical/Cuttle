@@ -19,6 +19,17 @@ DEFAULT_DB_PATH = data_db_dir() / "device_workers.db"
 
 _lock = threading.RLock()
 
+# A hold whose worker has not been seen for this long is released: a machine
+# that stays gone cannot still be running the workload in any useful way, and
+# its pinned jobs may then run elsewhere.
+HOLD_OFFLINE_RELEASE_SEC = 1800.0
+
+# A worker's reports (heartbeat, complete, fail) count for a job it has claimed, and
+# for a job requeued while pinned to it (its lease ran out while it was unreachable,
+# but nobody else may take it): it simply picks the job back up. One ``?``: the worker.
+_OWNED = ("? = CASE WHEN status IN ('claimed', 'running') THEN claimed_by "
+          "WHEN status = 'queued' AND claimed_by IS NULL THEN held_by END")
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS render_deliveries (
     batch_id TEXT PRIMARY KEY,
@@ -139,8 +150,13 @@ def _migrate_jobs_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE jobs ADD COLUMN progress_json TEXT")
         altered = True
     if "reserved_json" not in cols:
-        # Resources held while claimed/running (api.device_workers.admission); released by any end state.
+        # Resources a job's workload holds on a worker (api.device_workers.admission).
         conn.execute("ALTER TABLE jobs ADD COLUMN reserved_json TEXT")
+        altered = True
+    if "held_by" not in cols:
+        # The worker whose admission still counts ``reserved_json``: set at claim, cleared
+        # only when that worker reports the workload ended (see ``release_hold``).
+        conn.execute("ALTER TABLE jobs ADD COLUMN held_by TEXT")
         altered = True
     if "wait_reason" not in cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN wait_reason TEXT")
@@ -239,6 +255,7 @@ def _row_job(row: sqlite3.Row) -> Dict[str, Any]:
         "expires_at": row["expires_at"] if "expires_at" in keys else None,
         "attempts": int(row["attempts"] or 0) if "attempts" in keys else 0,
         "reserved": _loads(row["reserved_json"], default=None) if "reserved_json" in keys else None,
+        "held_by": (row["held_by"] if "held_by" in keys else None) or None,
         "wait_reason": (row["wait_reason"] if "wait_reason" in keys else None) or None,
         "max_attempts": int(row["max_attempts"] or 2) if "max_attempts" in keys else 2,
         "created_at": row["created_at"],
@@ -283,6 +300,8 @@ class DeviceWorkerStore:
                 incoming_meta = meta if isinstance(meta, dict) else {}
                 # Merge so heartbeats (empty/partial meta) do not wipe last_rtt_*.
                 merged_meta = {**existing_meta, **incoming_meta}
+                restarted = bool(existing_meta.get("worker_run") and incoming_meta.get("worker_run")
+                                 and existing_meta["worker_run"] != incoming_meta["worker_run"])
                 ver = str(
                     incoming_meta.get("cuttle_version")
                     or merged_meta.get("cuttle_version")
@@ -341,6 +360,8 @@ class DeviceWorkerStore:
                         prev_rtt_at,
                     ),
                 )
+                if restarted:
+                    _requeue_restarted(conn, wid, now)
                 conn.commit()
                 row = conn.execute(
                     "SELECT * FROM workers WHERE worker_id = ?", (wid,)
@@ -646,9 +667,64 @@ class DeviceWorkerStore:
                             (reason[:2000], now, now, job["id"]),
                         )
                     changed += 1
+                gone = conn.execute(
+                    """
+                    UPDATE jobs SET held_by = NULL, updated_at = ?
+                    WHERE held_by IS NOT NULL AND status NOT IN ('claimed', 'running')
+                      AND held_by NOT IN (SELECT worker_id FROM workers WHERE last_seen >= ?)
+                    """,
+                    (now, now - HOLD_OFFLINE_RELEASE_SEC),
+                ).rowcount
+                changed += gone
                 if changed:
                     conn.commit()
                 return changed
+            finally:
+                conn.close()
+
+    def release_hold(self, job_id: str, worker_id: str) -> bool:
+        """The worker confirmed a job's workload stopped: its reservation stops counting."""
+        with _lock:
+            conn = _connect(self.db_path)
+            try:
+                released = _release(conn, job_id, worker_id, time.time())
+                conn.commit()
+                return released
+            finally:
+                conn.close()
+
+    def retarget_queued(self, job_ids: List[str], worker_id: str) -> int:
+        """Pin still-queued jobs to ``worker_id`` (a decision form's "move"). Jobs another
+        worker still holds stay put: their workload may still be running there."""
+        if not job_ids:
+            return 0
+        marks = ",".join("?" * len(job_ids))
+        with _lock:
+            conn = _connect(self.db_path)
+            try:
+                moved = conn.execute(
+                    f"UPDATE jobs SET target_worker_id = ?, wait_reason = NULL, updated_at = ? "
+                    f"WHERE id IN ({marks}) AND status = 'queued' AND (held_by IS NULL OR held_by = ?)",
+                    (worker_id, time.time(), *job_ids, worker_id),
+                ).rowcount
+                conn.commit()
+                return moved
+            finally:
+                conn.close()
+
+    def held_after_end(self, worker_id: str) -> List[Dict[str, Any]]:
+        """Ended jobs whose workload the worker has not confirmed stopped (cancelled, expired).
+
+        The worker stops each one (``executor.stop_workload``) and then calls
+        :meth:`release_hold`; until then admission keeps counting it."""
+        with _lock:
+            conn = _connect(self.db_path)
+            try:
+                rows = conn.execute(
+                    "SELECT * FROM jobs WHERE held_by = ? AND status IN ('succeeded', 'failed', 'cancelled')",
+                    ((worker_id or "").strip(),),
+                ).fetchall()
+                return [_row_job(r) for r in rows]
             finally:
                 conn.close()
 
@@ -665,6 +741,13 @@ class DeviceWorkerStore:
         One ``BEGIN IMMEDIATE`` transaction covers the read of active
         reservations and every claim, so the daemon's local loop and Flask
         (remote workers) can never both admit against the same headroom.
+
+        A reservation counts for as long as the worker *holds* it
+        (``held_by``), not just while the job is claimed: a cancelled or
+        reclaimed job keeps its resources until the worker confirms the
+        workload stopped. A queued job another worker still holds is pinned
+        to that worker, so a workload that may still be running is never
+        started a second time elsewhere.
         """
         from api.device_workers.admission import admit, requested
 
@@ -685,14 +768,13 @@ class DeviceWorkerStore:
                 ).fetchone()
                 load = _loads(worker["load_json"]) if worker else {}
                 telemetry_age = now - float(worker["last_seen"]) if worker else float("inf")
-                reservations = [
-                    _loads(r["reserved_json"])
+                held = {
+                    r["id"]: _loads(r["reserved_json"])
                     for r in conn.execute(
-                        "SELECT reserved_json FROM jobs WHERE claimed_by = ? "
-                        "AND status IN ('claimed', 'running') AND reserved_json IS NOT NULL",
+                        "SELECT id, reserved_json FROM jobs WHERE held_by = ? AND reserved_json IS NOT NULL",
                         (wid,),
                     ).fetchall()
-                ]
+                }
                 rows = conn.execute(
                     """
                     SELECT * FROM jobs
@@ -708,11 +790,15 @@ class DeviceWorkerStore:
                     target = job.get("target_worker_id")
                     if target and target != wid:
                         continue
+                    if job.get("held_by") and job["held_by"] != wid:
+                        continue
                     reqs = job.get("requirements") or {}
                     if not _requirements_met(reqs, caps):
                         continue
                     need = requested(reqs)
-                    reservation, reason = admit(need, load, reservations, telemetry_age=telemetry_age)
+                    # Re-claiming a job this worker still holds takes over its own hold.
+                    others = [r for jid, r in held.items() if jid != job["id"]]
+                    reservation, reason = admit(need, load, others, telemetry_age=telemetry_age)
                     if reservation is None:
                         conn.execute(
                             "UPDATE jobs SET wait_reason = ? WHERE id = ?",
@@ -728,16 +814,18 @@ class DeviceWorkerStore:
                             attempts = COALESCE(attempts, 0) + 1,
                             started_at = COALESCE(started_at, ?),
                             reserved_json = ?,
+                            held_by = ?,
                             wait_reason = NULL,
                             updated_at = ?
                         WHERE id = ? AND status = 'queued'
                         """,
-                        (wid, expires, now, _dumps(reservation) if need else None, now, job["id"]),
+                        (wid, expires, now, _dumps(reservation) if need else None,
+                         wid if need else None, now, job["id"]),
                     )
                     if cur.rowcount != 1:
                         continue
                     if need:
-                        reservations.append(reservation)
+                        held[job["id"]] = reservation
                     refreshed = conn.execute(
                         "SELECT * FROM jobs WHERE id = ?", (job["id"],)
                     ).fetchone()
@@ -784,26 +872,26 @@ class DeviceWorkerStore:
             try:
                 if prog_json is not None:
                     cur = conn.execute(
-                        """
+                        f"""
                         UPDATE jobs SET
-                            status = CASE WHEN status = 'claimed' THEN 'running' ELSE status END,
+                            status = CASE WHEN status IN ('claimed', 'queued') THEN 'running' ELSE status END,
+                            claimed_by = COALESCE(claimed_by, held_by),
                             claim_expires = ?,
                             progress_json = ?,
                             updated_at = ?
-                        WHERE id = ? AND claimed_by = ?
-                          AND status IN ('claimed', 'running')
+                        WHERE id = ? AND {_OWNED}
                         """,
                         (expires, prog_json, now, job_id, worker_id),
                     )
                 else:
                     cur = conn.execute(
-                        """
+                        f"""
                         UPDATE jobs SET
-                            status = CASE WHEN status = 'claimed' THEN 'running' ELSE status END,
+                            status = CASE WHEN status IN ('claimed', 'queued') THEN 'running' ELSE status END,
+                            claimed_by = COALESCE(claimed_by, held_by),
                             claim_expires = ?,
                             updated_at = ?
-                        WHERE id = ? AND claimed_by = ?
-                          AND status IN ('claimed', 'running')
+                        WHERE id = ? AND {_OWNED}
                         """,
                         (expires, now, job_id, worker_id),
                     )
@@ -825,19 +913,22 @@ class DeviceWorkerStore:
             conn = _connect(self.db_path)
             try:
                 cur = conn.execute(
-                    """
+                    f"""
                     UPDATE jobs SET
                         status = 'succeeded',
                         result_json = ?,
                         error = NULL,
                         claim_expires = NULL,
+                        held_by = NULL,
                         completed_at = ?,
                         updated_at = ?
-                    WHERE id = ? AND claimed_by = ?
-                      AND status IN ('claimed', 'running')
+                    WHERE id = ? AND {_OWNED}
                     """,
                     (_dumps(result or {}), now, now, job_id, worker_id),
                 )
+                if cur.rowcount != 1:
+                    # Cancelled or reclaimed meanwhile: the workload has ended all the same.
+                    _release(conn, job_id, worker_id, now)
                 conn.commit()
                 if cur.rowcount != 1:
                     return False
@@ -847,6 +938,7 @@ class DeviceWorkerStore:
             finally:
                 conn.close()
         if row is not None:
+            _record_metrics(_row_job(row), worker_id)
             try:
                 from api.device_workers.profiles import maybe_record_job_result
 
@@ -870,7 +962,11 @@ class DeviceWorkerStore:
         retry: bool = False,
         params_update: Optional[Dict[str, Any]] = None,
         partial_result: Optional[Dict[str, Any]] = None,
+        keep_hold: bool = False,
     ) -> bool:
+        """Record a failed attempt. The worker's report means its workload ended, so the
+        reservation is released, unless ``keep_hold`` (it could not confirm that: a
+        cancel ComfyUI did not acknowledge, a scope that would not stop)."""
         now = time.time()
         with _lock:
             conn = _connect(self.db_path)
@@ -881,10 +977,15 @@ class DeviceWorkerStore:
                 if not row:
                     return False
                 job = _row_job(row)
-                if str(job.get("claimed_by") or "") != worker_id:
+                status = str(job.get("status") or "")
+                owner = job.get("claimed_by") if status in ("claimed", "running") else (
+                    job.get("held_by") if status == "queued" and not job.get("claimed_by") else None)
+                if owner != worker_id:
+                    if not keep_hold:
+                        _release(conn, job_id, worker_id, now)
+                        conn.commit()
                     return False
-                if str(job.get("status") or "") not in ("claimed", "running"):
-                    return False
+                hold = worker_id if keep_hold else None
 
                 from api.device_workers.job_policy import fail_disposition
 
@@ -910,19 +1011,20 @@ class DeviceWorkerStore:
                             {"partial": True, **partial_result}
                         )
                     cur = conn.execute(
-                        """
+                        f"""
                         UPDATE jobs SET
                             status = 'queued',
                             claimed_by = NULL,
                             claim_expires = NULL,
+                            held_by = CASE WHEN ? IS NULL THEN NULL ELSE held_by END,
                             params_json = ?,
                             result_json = COALESCE(?, result_json),
                             error = ?,
                             updated_at = ?
-                        WHERE id = ? AND claimed_by = ?
-                          AND status IN ('claimed', 'running')
+                        WHERE id = ? AND {_OWNED}
                         """,
                         (
+                            hold,
                             _dumps(params),
                             result_payload,
                             err_text,
@@ -938,20 +1040,21 @@ class DeviceWorkerStore:
                             {"partial": True, **partial_result}
                         )
                     cur = conn.execute(
-                        """
+                        f"""
                         UPDATE jobs SET
                             status = 'failed',
                             error = ?,
                             result_json = COALESCE(?, result_json),
                             claim_expires = NULL,
+                            held_by = CASE WHEN ? IS NULL THEN NULL ELSE held_by END,
                             completed_at = ?,
                             updated_at = ?
-                        WHERE id = ? AND claimed_by = ?
-                          AND status IN ('claimed', 'running')
+                        WHERE id = ? AND {_OWNED}
                         """,
                         (
                             err_text,
                             result_payload,
+                            hold,
                             now,
                             now,
                             job_id,
@@ -959,6 +1062,9 @@ class DeviceWorkerStore:
                         ),
                     )
                 conn.commit()
+                if cur.rowcount == 1:
+                    _record_metrics(_row_job(conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()),
+                                    worker_id)
                 return cur.rowcount == 1
             finally:
                 conn.close()
@@ -1235,6 +1341,51 @@ class DeviceWorkerStore:
                 ]
             finally:
                 conn.close()
+
+
+def _record_metrics(job: Dict[str, Any], worker_id: str) -> None:
+    """Performance history (api.device_workers.metrics); never fails the report."""
+    try:
+        from api.device_workers import metrics
+
+        metrics.record(job, worker_id)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).warning("job metrics not recorded for %s", job.get("id"), exc_info=True)
+
+
+def _release(conn: sqlite3.Connection, job_id: str, worker_id: str, now: float) -> bool:
+    return conn.execute(
+        "UPDATE jobs SET held_by = NULL, updated_at = ? WHERE id = ? AND held_by = ?",
+        (now, job_id, worker_id),
+    ).rowcount == 1
+
+
+def _requeue_restarted(conn: sqlite3.Connection, worker_id: str, now: float) -> None:
+    """A worker came back as a new process: what it had claimed is not running in it.
+
+    Requeue those jobs now instead of waiting out the lease (attempt budget as for a
+    lost lease). Holds stay, so each job is pinned to this worker, which re-claims
+    it (the ComfyUI adapter reattaches to its prompt) or stops what is left of it.
+    Agent turns are left to ``api.exec_nodes``."""
+    from api.device_workers.job_policy import reclaim_disposition
+
+    rows = conn.execute(
+        "SELECT * FROM jobs WHERE claimed_by = ? AND status IN ('claimed', 'running') AND type != 'agent_turn'",
+        (worker_id,),
+    ).fetchall()
+    for row in rows:
+        job = _row_job(row)
+        action, reason = reclaim_disposition(job_type=str(job["type"]), attempts=int(job["attempts"] or 0),
+                                             max_attempts=int(job["max_attempts"] or 1))
+        reason = reason.replace("lease expired", "worker restarted", 1)
+        conn.execute(
+            "UPDATE jobs SET status = ?, claimed_by = NULL, claim_expires = NULL, error = ?, "
+            "completed_at = ?, updated_at = ? WHERE id = ?",
+            ("queued" if action == "requeue" else "cancelled", reason[:2000],
+             None if action == "requeue" else now, now, job["id"]),
+        )
 
 
 def _requirements_met(reqs: Dict[str, Any], caps: Dict[str, Any]) -> bool:

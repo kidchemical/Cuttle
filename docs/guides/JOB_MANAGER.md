@@ -12,16 +12,18 @@ Mesh basics: [CUTTLE_WORKERS.md](CUTTLE_WORKERS.md).
 
 | Phase | State | What exists |
 |---|---|---|
-| J0 Telemetry v2 | **Done** | Heartbeat `load`: per-GPU VRAM used/total + util (`nvidia-smi`), RAM available, swap, PSI memory/io avg10 (Linux), interactive apps (Unity Editor with a project, Blender UI; headless runs excluded), adapter services (ComfyUI: pids, RSS, VRAM per GPU). `capabilities.py` |
-| J1 Reservations | **Done** | `requirements.resources` (`ram_mb`, `vram_mb`, `gpu_slots`, `service`); `admission.admit` inside `claim_jobs`'s `BEGIN IMMEDIATE` transaction; reservation stored on the job (`reserved`), released by any end state; `wait_reason` on queued jobs. Tested with 8 processes claiming at once |
-| J2 Isolation | **Done (Linux)** | Jobs that declare `ram_mb` run in `cuttle-job-<id>.scope` under `cuttle-jobs.slice` (`MemoryMax` = reservation + 25 % / ≥1 GB, swap 512 MB, `OOMPolicy=kill`, `choom 1000`); OOM is reported as `oom: …`. Shell recipes and Blender. Windows Job Objects: planned |
-| J3 Runs | **Done (flat batches)** | `runs.plan` / `runs.submit`, run watch on the unit-watch records (`mesh_jobs`): status, Stop, exactly-once resume through the chat-ops outbox, polled by the daemon and Flask, refreshed on every host-side heartbeat. Multi-stage DAGs: planned |
-| J4 ComfyUI adapter | **Done** | `comfyui_prompt` job type: WebSocket node events → stage, nodes done/total, sampler steps, previews (host worker), per-node seconds + peak VRAM; deterministic prompt id → reattach on retry; cancel via `/api/jobs/<id>/cancel`; optional `start_recipe`. Tested against recorded sessions; not yet run against a live ComfyUI |
-| J5 Approval | **Done (no spend)** | `run-plan` returns per-worker fit, estimates and a ready form; `workers.run` action submits only the approved spec (SHA-256 check, once). Spend ledger and per-wallet caps: planned with J6 |
-| J6 Tripo adapter | Planned | Developer-API stages, dry-run cost, idempotency key = job id, spend ledger. Studio (MCP) stays agent-driven |
-| J7 Estimates | **Partial** | ETA from median duration of past jobs with the same `template` (or type + recipe), corrected by observed progress. `stage_profiles` table and resource predictions from history: planned |
-| J8 Card v2 | **Partial** | Watch card shows bars, grid, label, elapsed and ETA; status also carries `errors`, `previews`, `resources`, activity steps (background-work bubble). Preview/resource renderers on the card: planned |
-| J9 Distribution | **Partial** | Auto (any worker that fits) or pinned target, chosen in the approval form; requeue on lease loss. Policies `ask`/`stop` when nothing fits, staging inputs to other machines, laptop rollout (needs this branch on it): planned |
+| J0 Telemetry v2 | **Done** | Heartbeat `load`: per-GPU VRAM used/total + util (`nvidia-smi`), RAM available, swap, PSI memory/io avg10 (Linux), interactive apps (Unity Editor with a project, Blender UI; headless runs excluded), adapter services (ComfyUI: pids, RSS, VRAM per GPU), and `heavy`: every process with ≥ 1 GB RAM or real VRAM tagged `interactive` / `service:<name>` / `cuttle-job` / `headless` / `external`. Refreshed on the job pulse while a job runs. `capabilities.py` |
+| J1 Reservations | **Done** | `requirements.resources` (`ram_mb`, `vram_mb`, `gpu_slots`, `service`); `admission.admit` inside `claim_jobs`'s `BEGIN IMMEDIATE` transaction. A reservation counts while the worker **holds** it (`held_by`), not just while claimed: it is released only when the worker reports the workload ended or confirms it stopped. Open interactive apps keep burst room (Unity 3 GB RAM / 2 GB VRAM, Blender 2/2). Refusals name what uses the memory. Tested with 8 processes claiming at once |
+| J2 Isolation | **Done (Linux)** | Jobs that declare `ram_mb` run in `cuttle-job-<id>.scope` under `cuttle-jobs.slice` (`MemoryMax` = reservation + 25 % / ≥1 GB, swap 512 MB, `OOMPolicy=kill`, `choom 1000`); OOM is reported as `oom: …`; peak RAM/VRAM measured from the scope. Shell recipes and Blender renders. A scope left running by a dead worker is stopped before the retry starts. Windows Job Objects: planned |
+| J3 Runs | **Done (flat batches)** | `runs.plan` / `runs.submit`, run watch on the unit-watch records (`mesh_jobs`): status, Stop, exactly-once resume through the chat-ops outbox, polled by the daemon and Flask, refreshed on every host-side heartbeat. A run is finished only when no worker still holds one of its jobs ("stopping" until then). Multi-stage DAGs: planned |
+| J4 ComfyUI adapter | **Done, validated live** | `comfyui_prompt` job type: WebSocket node events → stage, nodes done/total, sampler steps, previews (host worker), per-node seconds, service peak RAM/VRAM; deterministic prompt id → reattach on retry; cancel via `/api/jobs/<id>/cancel`, counted only once ComfyUI no longer lists the prompt; optional `start_recipe` |
+| J5 Approval | **Done (no spend)** | `run-plan` returns per-worker fit (named processes, offline workers), estimates with their history basis, reservation raises, and a ready form; `workers.run` submits only the approved spec (SHA-256 check, once). Spend ledger and per-wallet caps: planned with J6 |
+| J5b Nothing fits | **Done** | The plan says so up front; a run with no progress for `ask_after_s` (default 10 min) resumes the chat once with a Cuttle-built form: move the waiting jobs to a worker that fits now, keep waiting (asks again in 30 min), or cancel (no resume). `workers.run-decide` applies it |
+| J6 Tripo adapter | Planned (follow-up milestone) | Developer-API stages, dry-run cost, idempotency key = job id, spend ledger. Studio (MCP) stays agent-driven |
+| J7 History | **Done** | `job_metrics` table: per finished job its machine, workload (`template`, else type + recipe), config digest (ComfyUI: node classes + numeric inputs, not prompts/seeds/files), wall time from first claim, queue wait, measured peaks, reservation, OOM, per-node seconds. `metrics.estimate` answers from this machine + these settings, then these settings anywhere, then the workload; `metrics.suggest` raises reservations to peak + 15 % (×1.5 after an OOM). Stage-weighted percent: planned |
+| J8 Card v2 | **Done** | Bars, grid, label, elapsed, ETA, latest previews, per-worker RAM/VRAM/GPU/swap with reservations and the processes using the most, job errors (OOM marked), open decision. Rendered in Chromium tests |
+| J9 Distribution | **Partial** | Auto (any worker that fits) or pinned target, chosen in the approval form or a decision; pinned requeue on lease loss. Staging inputs to other machines, laptop rollout (needs this branch on it): planned |
+| Multi-stage workflows | Planned (follow-up milestone) | A run as a DAG of stages (hero image → Tripo shape → texture), each stage its own job type |
 
 Generic adapters: Unity builds and other scripts run as allowlisted `shell` recipes, Blender as `blender_render`,
 file staging as `file_copy`; all get resources, scopes, cancel and run watches. New providers are modules in
@@ -72,17 +74,35 @@ loopback. The ComfyUI server keeps its own memory scope (`comfyui.slice` in the 
 
 ## Reliability
 
-- Host restart: jobs, reservations and watch records are on disk; the daemon keeps polling while Flask is down.
-- Worker restart or lease loss: the job requeues (attempt budget per type); the ComfyUI adapter reattaches to
-  the same prompt id or collects its finished result instead of running it twice.
-- Agent session gone: nothing to reconnect; the host resumes the chat when the run ends.
-- Cancel: Jobs page or the card's Stop; cancellation reaches the worker on its next heartbeat (≤15 s).
+A workload may outlive the process that started it (ComfyUI runs the prompt, a scope keeps running), so a
+job's reservation follows the **workload**, not the claim:
+
+| Event | What happens | Reservation |
+|---|---|---|
+| Host (daemon/Flask) restart | Jobs, holds and watch records are on disk; whichever poller runs picks up | unchanged |
+| Worker process restarts | On its first register (new `worker_run`) its claimed jobs requeue at once, pinned to it; it re-claims them: ComfyUI reattaches to the same prompt id or collects the finished result; a shell/Blender scope still running is stopped before the retry | held throughout |
+| Worker unreachable past its lease | Job requeued but pinned (`held_by`): no other worker may start it. When the worker comes back, its next heartbeat picks the job up where it is | held |
+| Worker gone for 30 min | Its holds are released; pinned jobs may run elsewhere | released |
+| Stop (card, Jobs page, decision) | Job cancelled; the worker's next heartbeat is refused and it stops the workload | held until the worker confirms it stopped |
+| Stop not confirmed (ComfyUI hung, scope will not stop) | The job ends `failed`/`cancelled` but stays held; every worker tick retries the stop (`executor.stop_workload`) and releases only once it succeeds | held |
+| Agent session gone | Nothing to reconnect; the host resumes the chat when the run ends | — |
+
+A run is not finished while one of its jobs is still held, so the chat is never resumed early.
+Validated live (CH-002819, Flux 2 Klein on ComfyUI): kill -9 of worker and host mid-prompt, a frozen worker
+past its lease with a second worker trying to claim, a frozen ComfyUI during Stop, an orphaned scope.
 
 ## Non-goals
 
 - A second queue, a second progress-card system, or agent-side polling loops.
 - Free-form remote shell (unchanged mesh rule).
 - Running Tripo Studio MCP calls without an agent.
+
+## Limits
+
+- Previews are written on the host only (its `/output` is served); a remote worker's previews are not shipped.
+- Percent counts graph nodes (one sampler node is most of the time); the ETA uses measured history first.
+- A recipe without `ram_mb` runs unscoped: a dead worker cannot leave it running in a scope, but its child
+  processes may outlive the worker on some platforms.
 
 ## Open questions
 
