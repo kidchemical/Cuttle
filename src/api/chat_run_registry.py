@@ -655,7 +655,10 @@ def _spared_pids(keep) -> Set[int]:
 
 
 def descendant_snapshot(root_pid, keep=()) -> Dict[int, float]:
-    """``{pid: create_time}`` of ``root_pid``'s descendants, ``keep`` subtrees left out."""
+    """``{pid: create_time}`` of ``root_pid``'s descendants, ``keep`` subtrees left out.
+
+    By ancestry, not a list of the kept work's children taken a moment earlier:
+    a kept loop spawns a ``sleep`` every second."""
     spared = _spared_pids(keep)
     out: Dict[int, float] = {}
     try:
@@ -666,7 +669,10 @@ def descendant_snapshot(root_pid, keep=()) -> Dict[int, float]:
         if pid in spared:
             continue
         try:
-            out[pid] = psutil.Process(pid).create_time()
+            proc = psutil.Process(pid)
+            if any(p.pid in spared for p in proc.parents()):
+                continue
+            out[pid] = proc.create_time()
         except Exception:
             continue
     return out
