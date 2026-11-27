@@ -158,6 +158,11 @@ def _migrate_jobs_columns(conn: sqlite3.Connection) -> None:
         # only when that worker reports the workload ended (see ``release_hold``).
         conn.execute("ALTER TABLE jobs ADD COLUMN held_by TEXT")
         altered = True
+    if "stopped" not in cols:
+        # Ended by ``cancel_job`` (a person or agent stopping it), not by a queue
+        # TTL or exhausted retries: a run stopped that way resumes no one.
+        conn.execute("ALTER TABLE jobs ADD COLUMN stopped INTEGER NOT NULL DEFAULT 0")
+        altered = True
     if "wait_reason" not in cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN wait_reason TEXT")
         altered = True
@@ -257,6 +262,7 @@ def _row_job(row: sqlite3.Row) -> Dict[str, Any]:
         "reserved": _loads(row["reserved_json"], default=None) if "reserved_json" in keys else None,
         "held_by": (row["held_by"] if "held_by" in keys else None) or None,
         "wait_reason": (row["wait_reason"] if "wait_reason" in keys else None) or None,
+        "stopped": bool(row["stopped"]) if "stopped" in keys else False,
         "max_attempts": int(row["max_attempts"] or 2) if "max_attempts" in keys else 2,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -1089,6 +1095,7 @@ class DeviceWorkerStore:
                     """
                     UPDATE jobs SET
                         status = 'cancelled',
+                        stopped = 1,
                         error = ?,
                         claimed_by = NULL,
                         claim_expires = NULL,

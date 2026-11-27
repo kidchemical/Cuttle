@@ -594,6 +594,63 @@ def test_stop_on_the_card_cancels_the_run_without_resuming(worker_db):
     assert not [o for o in ops.listing(2819) if o["kind"] == "notice"]
 
 
+def test_stopping_every_job_from_jobs_is_a_stop_too(worker_db):
+    """Cancelling a run's jobs one by one (Jobs page, ``workers cancel``) ends it
+    like the card's Stop: no resume turn that would start it again."""
+    from api import job_watch as jw
+    from api.chat_ops import store as ops
+    from api.device_workers import runs
+
+    _register(worker_db)
+    planned = runs.plan(SPEC, chat_session_id="CH-002819")
+    p = planned["form"]["options"][0]["params"]
+    sub = runs.submit(p["run_id"], spec_sha256=p["spec_sha256"])
+    for jid in sub["jobs"]:
+        assert worker_db.cancel_job(jid, reason="cancelled from Jobs")["stopped"] is True
+    resolved = jw.poll_unit_watches()
+    assert resolved and resolved[0]["resume"] == "cancelled"
+    assert jw.read_status(p["run_id"])["label"].startswith("Stopped")
+    assert not [o for o in ops.listing(2819) if o["kind"] == "notice"]
+
+
+def test_a_run_with_some_jobs_stopped_resumes_and_says_so(worker_db):
+    from api import job_watch as jw
+    from api.chat_ops import store as ops
+    from api.device_workers import runs
+
+    _register(worker_db)
+    planned = runs.plan(SPEC, chat_session_id="CH-002819")
+    p = planned["form"]["options"][0]["params"]
+    sub = runs.submit(p["run_id"], spec_sha256=p["spec_sha256"])
+    worker_db.cancel_job(sub["jobs"][0], reason="cancelled from Jobs")
+    for job in worker_db.claim_jobs(worker_id="desk", limit=5):
+        worker_db.complete_job(job["id"], "desk", result={"ok": True})
+    assert jw.poll_unit_watches()
+    text = [o for o in ops.listing(2819) if o["kind"] == "notice"][0]["payload"]["text"]
+    assert "1 succeeded, 0 failed, 1 cancelled (1 stopped on purpose" in text and "do not resubmit" in text
+
+
+def test_a_system_cancel_still_resumes(worker_db):
+    """Queue TTL or exhausted retries are outcomes the agent must hear about."""
+    from api import job_watch as jw
+    from api.chat_ops import store as ops
+    from api.device_workers import runs
+
+    _register(worker_db)
+    planned = runs.plan(SPEC, chat_session_id="CH-002819")
+    p = planned["form"]["options"][0]["params"]
+    sub = runs.submit(p["run_id"], spec_sha256=p["spec_sha256"])
+    import sqlite3
+    import time as _time
+
+    with sqlite3.connect(worker_db.db_path) as db:
+        db.execute("UPDATE jobs SET status='cancelled', error='queue TTL expired', completed_at=? WHERE id IN (?, ?)",
+                   (_time.time(), *sub["jobs"]))
+    assert jw.poll_unit_watches()
+    notices = [o for o in ops.listing(2819) if o["kind"] == "notice"]
+    assert len(notices) == 1 and "0 succeeded, 0 failed, 2 cancelled." in notices[0]["payload"]["text"]
+
+
 def test_heartbeats_refresh_the_card_between_polls(worker_db):
     from api import job_watch as jw
     from api.device_workers import runs
@@ -829,8 +886,8 @@ def test_a_run_is_not_finished_while_a_worker_still_holds_a_job(worker_db):
     assert status["counts"]["stopping"] == 1
     worker_db.release_hold(jid, "desk")
     done = jw.poll_unit_watches()
-    assert done and done[0]["state"] == "failed"
-    assert len([o for o in ops.listing(2819) if o["kind"] == "notice"]) == 1
+    assert done and done[0]["state"] == "failed" and done[0]["resume"] == "cancelled"
+    assert not [o for o in ops.listing(2819) if o["kind"] == "notice"]  # stopped on purpose
 
 
 def test_a_worker_back_after_its_lease_ran_out_picks_its_job_back_up(worker_db):

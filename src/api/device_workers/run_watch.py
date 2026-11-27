@@ -285,13 +285,18 @@ def check(record: Dict[str, Any], *, now: Optional[float] = None) -> Optional[Di
         return None
     counts = status["counts"]
     summary = f"{counts['succeeded']} succeeded, {counts['failed']} failed, {counts['cancelled']} cancelled"
+    stopped = sum(1 for j in jobs if j.get("status") == "cancelled" and j.get("stopped"))
+    if stopped:
+        summary += f" ({stopped} stopped on purpose from the card, Jobs or the CLI: do not resubmit them)"
     activity = status.pop("activity", None)
     if activity:
         from api.job_watch import report_activity
 
         report_activity(record["id"], activity)
     return {"state": status["state"], "exit": None, "result": "", "summary": summary,
-            "label": status["label"], "status_extra": status}
+            "label": status["label"], "status_extra": status,
+            # Every job stopped on purpose is a Stop however it was done: no resume.
+            **({"stopped_by_user": True} if jobs and stopped == len(jobs) else {})}
 
 
 def touch(job_id: str) -> None:

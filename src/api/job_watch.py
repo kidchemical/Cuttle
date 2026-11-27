@@ -1138,7 +1138,7 @@ def _resolve_unit_watch(record: Dict[str, Any], outcome: Dict[str, Any]) -> Opti
     claimed = _claim_record(record)
     if claimed is None:
         return None
-    stopped = bool(record.get("stopped_by_user"))
+    stopped = bool(record.get("stopped_by_user") or outcome.get("stopped_by_user"))
     if stopped:
         outcome = {**outcome, "state": "failed", "stopped_by_user": True,
                    "label": "Stopped" + (f" — {record.get('label')}" if record.get("label") else "")}
