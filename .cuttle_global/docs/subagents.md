@@ -121,15 +121,16 @@ reply, and the parent continues from there. While the launcher is still alive
 nothing extra is posted.
 
 That notice comes from the `--wait` CLI itself, so it only helps while the CLI
-survives. A `spawn --wait` started as a background command of your turn
-(`run_in_background`, `&`) is a child of your agent CLI and can die with it.
-The child's turn runs on that CLI's threads, so the child dies too, and nobody
-posts a notice. On 2026-11-26 (CH-002815) the parent turn ended about 10 s after
-a background spawn: the child failed with "the process running it exited" and
-the parent was never woken. Use the background form only for children you wait
-for in the same turn. For a child that should outlive your turn (long builds, or
-any reply you end before the child finishes), launch the spawn detached with
-`systemd-run` as below. That also covers a planned Flask restart. `systemd-run` does
+survives. The child's turn runs on that CLI's threads, so if the CLI dies the
+child dies too, and nobody posts a notice. A `spawn --wait` started as a
+background command of your turn (`run_in_background`) survives only when
+background detach is on for your agent ([headless-turns.md](headless-turns.md)).
+With detach off, the turn ends at its reply and the stopped Claude CLI kills its
+own background shells. On 2026-11-26 this killed a spawn about 10 s after it
+started, together with its child CH-002815 ("the process running it exited").
+The parent was never woken. When detach is off, or when the child should
+survive a planned Flask restart, launch the spawn detached with `systemd-run` as
+below. `systemd-run` does
 not inherit Cuttle's environment. Append `--turn "$CUTTLE_TURN_ID"` to the
 `spawn` / `message` command in the **launching shell**, expanding it before
 crossing the service boundary; alternatively pass
