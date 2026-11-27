@@ -723,6 +723,8 @@ class ClaudeCliTool:
             # task_id -> output file (from the run_in_background tool result);
             # handoff: the abandoned tasks' processes, spared by the reap.
             "outputs": {}, "handoff": [],
+            # tree: the CLI's descendants at end of input, swept once it exits.
+            "tree": {},
         }
         proc = None
         bg_wait = min(_background_wait_seconds(), max(0.0, resolved_timeout - 60.0))
@@ -746,6 +748,10 @@ class ClaudeCliTool:
                     ctl.wait.claim_steer(None)
             if st["open"]:
                 st["open"] = False
+                from api.agent_harness.background_handoff import keep_pids
+                from api.chat_run_registry import descendant_snapshot
+
+                st["tree"] = descendant_snapshot(proc.pid, keep=keep_pids(st["handoff"]))
                 try:
                     proc.stdin.close()
                 except Exception:
@@ -1078,6 +1084,13 @@ class ClaudeCliTool:
             stream.text.flush()
             stop_hb.set()
             await hb
+        if st["tree"]:
+            from api.agent_harness.background_handoff import keep_pids
+            from api.chat_run_registry import sweep_snapshot
+
+            swept = await asyncio.to_thread(sweep_snapshot, st["tree"], keep_pids(st["handoff"]))
+            if swept:
+                print(f"[claude] ended {len(swept)} process(es) the CLI left behind: {swept}", flush=True)
 
         err = run.stderr.decode("utf-8", errors="replace").strip()
         if ctl is not None and ctl.detached:
