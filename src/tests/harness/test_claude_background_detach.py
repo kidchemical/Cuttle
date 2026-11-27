@@ -605,10 +605,35 @@ def test_follow_up_before_bind_is_held_until_the_first_reply_is_saved(tmp_path, 
 
 
 @posix_only
-def test_without_a_background_wait_the_follow_up_merges_into_one_reply(tmp_path, monkeypatch):
-    res, wait, _ = _start(tmp_path, monkeypatch, "finishes", 6110, background=False)
-    assert res["output"] == "started the watcher\n\nCI is green"
-    assert "background_job" not in res
+def test_without_a_background_wait_the_turn_ends_at_its_reply_and_hands_the_work_off(tmp_path, monkeypatch):
+    """Detach off (one bubble per turn) must not mean a held reply (CH-002807-9):
+    the turn ends at the reply, the task keeps running, the chat hears when it ends."""
+    from api.agent_harness import background_handoff as bh
+    from api.chat_ops import store
+
+    launched = []
+    monkeypatch.setattr(bh, "_spawn_watcher", lambda path, sid: launched.append((path, sid)))
+    monkeypatch.setenv("CLAUDE_BACKGROUND_EXIT_GRACE_SEC", "0.5")
+    monkeypatch.setenv("FAKE_TASK_OUT", str(tmp_path / "b7.output"))
+    monkeypatch.setenv("FAKE_TASK_SEC", "4")
+    res, wait, took = _start(tmp_path, monkeypatch, "real_task", 6110, background=False)
+    assert took < 10 and res["success"] is True and "background_job" not in res
+    assert res["output"].startswith("started the blender job")
+    assert "Background work is still running; this chat will be told when it finishes" in res["output"]
+    assert "- blender job" in res["output"] and "Stopped waiting" not in res["output"]
+    assert steer.active_agent(6110) is None
+
+    assert len(launched) == 1 and launched[0][1] == 6110
+    record_path = launched[0][0]
+    task = bh.json.loads(record_path.read_text(encoding="utf-8"))["tasks"][0]
+    assert bh.running(task), "the reap must spare the handed-off task"
+    assert _until(lambda: not bh.running(task), timeout=15)
+    assert bh.check(record_path) is True
+    ops = [o for o in store.listing(6110) if o["kind"] == "notice"]
+    assert len(ops) == 1 and ops[0]["state"] == "pending"
+    text = ops[0]["payload"]["text"]
+    assert "Background work from an earlier turn finished. This is its completion notice" in text
+    assert "`blender job` (task b7)" in text and "blend saved" in text
 
 
 def test_off_switch_env_and_setting(monkeypatch):

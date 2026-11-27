@@ -1,8 +1,10 @@
-"""Hand-off of background work a turn stopped waiting on.
+"""Hand-off of background work a turn does not (or no longer) wait on.
 
 A Claude Code turn that detaches (``api.agent_harness.background_wait``) waits
 at most ``CLAUDE_BACKGROUND_WAIT_SEC`` for its background tasks; at that cap the
-CLI's stdin closes and the CLI is reaped. Claude Code runs each background
+CLI's stdin closes and the CLI is reaped. A turn that does not detach ends at
+its reply and is reaped the same way, having waited on nothing: a finished
+reply is never held for background work. Claude Code runs each background
 shell in its own session with stdout/stderr on a task output file, so that
 work does not need the CLI and keeps running. This module makes sure it is
 neither killed nor forgotten:
@@ -231,8 +233,9 @@ def notice_text(record: Dict[str, Any], finished: List[Dict[str, Any]], *, gave_
         head = (f"Cuttle stopped watching background work from an earlier turn after "
                 f"{int(MAX_WATCH_SEC // 3600)} h; it is still running:")
     else:
-        head = (f"Background work from an earlier turn finished. That turn stopped waiting on it "
-                f"after {waited} min, so this is its completion notice (exit status not available):")
+        # waited 0: the turn ended at its reply and never waited on the work.
+        why = f"That turn stopped waiting on it after {waited} min, so this" if waited else "This"
+        head = f"Background work from an earlier turn finished. {why} is its completion notice (exit status not available):"
     parts = [head]
     for task in finished:
         line = f"- `{task.get('label') or task.get('task_id')}`"

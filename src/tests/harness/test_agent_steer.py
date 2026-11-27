@@ -884,11 +884,39 @@ def _run_fake_claude_background(tmp_path, monkeypatch, mode, chat_id, **kwargs):
     )
 
 
+def _child_cap():
+    """A capped turn (a sub-agent child): the only non-detached turn that idles
+    on background work. Large, so ``CLAUDE_BACKGROUND_WAIT_SEC`` sets the budget."""
+    from api.agent_harness.background_budget import WaitCap
+
+    return WaitCap(9999)
+
+
+@pytestmark_posix
+def test_claude_reply_is_not_held_for_background_work(tmp_path, monkeypatch):
+    """CH-002807-9: a finished reply (there, a question card) sat unsaved for
+    the whole 50-minute budget behind a server that never exits. A turn that
+    does not detach ends at its reply; it never idles with the reply unsaved."""
+    import time
+
+    monkeypatch.setenv("CLAUDE_BACKGROUND_WAIT_SEC", "3000")
+    monkeypatch.setenv("CLAUDE_BACKGROUND_EXIT_GRACE_SEC", "0.5")
+    started = time.monotonic()
+    res = _run_fake_claude_background(tmp_path, monkeypatch, "ignores_eof", 5450)
+    assert time.monotonic() - started < 10
+    assert res["success"] is True
+    assert res["output"].startswith("started the watcher")
+    assert "Stopped waiting" not in res["output"]  # it waited on nothing
+    assert "- watch CI" in res["output"]
+    assert steer.active_agent(5450) is None
+
+
 @pytestmark_posix
 def test_claude_background_task_follow_up_merges_into_reply(tmp_path, monkeypatch):
-    """A root result with a background task pending keeps stdin open; the
-    task's notification turn answers in the same reply instead of dying."""
-    res = _run_fake_claude_background(tmp_path, monkeypatch, "finishes", 5454)
+    """A capped turn's root result with a background task pending keeps stdin
+    open; the task's notification turn answers in the same reply."""
+    res = _run_fake_claude_background(tmp_path, monkeypatch, "finishes", 5454,
+                                      background_wait_cap=_child_cap())
     assert res["success"] is True
     assert res["output"] == "started the watcher\n\nCI is green"
     assert res["usage"]["cost"] == pytest.approx(0.02)
@@ -898,7 +926,8 @@ def test_claude_background_task_follow_up_merges_into_reply(tmp_path, monkeypatc
 @pytestmark_posix
 def test_claude_background_wait_is_capped(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_BACKGROUND_WAIT_SEC", "1")
-    res = _run_fake_claude_background(tmp_path, monkeypatch, "never", 5555)
+    res = _run_fake_claude_background(tmp_path, monkeypatch, "never", 5555,
+                                      background_wait_cap=_child_cap())
     assert res["success"] is True
     assert res["output"].startswith("started the watcher")
     assert "Stopped waiting for background work" in res["output"]
@@ -909,7 +938,8 @@ def test_claude_background_wait_is_capped(tmp_path, monkeypatch):
 def test_claude_background_wait_chain_inside_the_budget_stays_open(tmp_path, monkeypatch):
     """Short waits back to back (0.7s + 0.7s) fit one 5s budget: the chain completes."""
     monkeypatch.setenv("CLAUDE_BACKGROUND_WAIT_SEC", "5")
-    res = _run_fake_claude_background(tmp_path, monkeypatch, "chain", 5757)
+    res = _run_fake_claude_background(tmp_path, monkeypatch, "chain", 5757,
+                                      background_wait_cap=_child_cap())
     assert res["success"] is True
     assert res["output"] == "started the watcher\n\nstep 2\n\nstep 3"
     assert "Stopped waiting" not in res["output"]
@@ -921,7 +951,8 @@ def test_claude_background_wait_is_one_budget_per_turn(tmp_path, monkeypatch):
     budget, so the turn stops at the second wait (CH-002669 sat 78 minutes on
     waiters that never exited because every follow-up restarted a 50-minute cap)."""
     monkeypatch.setenv("CLAUDE_BACKGROUND_WAIT_SEC", "1")
-    res = _run_fake_claude_background(tmp_path, monkeypatch, "chain", 5759)
+    res = _run_fake_claude_background(tmp_path, monkeypatch, "chain", 5759,
+                                      background_wait_cap=_child_cap())
     assert res["success"] is True
     assert res["output"].startswith("started the watcher\n\nstep 2")
     assert "step 3" not in res["output"]
@@ -1000,7 +1031,8 @@ def test_claude_reaped_when_it_ignores_eof_after_wait_limit(tmp_path, monkeypatc
     monkeypatch.setenv("CLAUDE_BACKGROUND_WAIT_SEC", "1")
     monkeypatch.setenv("CLAUDE_BACKGROUND_EXIT_GRACE_SEC", "0.5")
     started = time.monotonic()
-    res = _run_fake_claude_background(tmp_path, monkeypatch, "ignores_eof", 5858)
+    res = _run_fake_claude_background(tmp_path, monkeypatch, "ignores_eof", 5858,
+                                      background_wait_cap=_child_cap())
     assert time.monotonic() - started < 15
     assert res["success"] is True
     assert res["output"].startswith("started the watcher")
@@ -1011,8 +1043,12 @@ def test_claude_reaped_when_it_ignores_eof_after_wait_limit(tmp_path, monkeypatc
 @pytestmark_posix
 def test_claude_background_wait_can_be_disabled(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_BACKGROUND_WAIT_SEC", "0")
-    res = _run_fake_claude_background(tmp_path, monkeypatch, "finishes", 5656)
-    assert res["output"] == "started the watcher"
+    res = _run_fake_claude_background(tmp_path, monkeypatch, "finishes", 5656,
+                                      background_wait_cap=_child_cap())
+    assert res["output"].startswith("started the watcher")
+    assert "CI is green" not in res["output"] and "Stopped waiting" not in res["output"]
+    # This fake CLI exits on EOF and takes its task with it; the reply says so.
+    assert "This ended with the turn" in res["output"] and "- watch CI" in res["output"]
 
 
 def test_claude_is_steerable_by_default(monkeypatch):

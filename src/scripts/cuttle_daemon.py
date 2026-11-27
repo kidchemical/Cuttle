@@ -1077,19 +1077,44 @@ def _flask_health_check() -> bool:
         return False
 
 
+def _host_memory_pressure() -> float:
+    """Percent of recent time tasks stalled on memory (Linux PSI ``some``), else 0.
+
+    The larger of the 10 s and 60 s averages: the short one decays within
+    seconds of a swap storm, while Flask is still catching up.
+    """
+    try:
+        with open("/proc/pressure/memory", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("some "):
+                    fields = dict(part.split("=", 1) for part in line.split()[1:])
+                    return max(float(fields["avg10"]), float(fields["avg60"]))
+    except (OSError, KeyError, ValueError):
+        pass
+    return 0.0
+
+
 def watch_flask_health():
     """Background thread: if Flask stops responding, restart it to recover from freezes.
 
     A restart ends every running agent turn, so one missed check is not enough:
     a busy Flask can miss a single 5 s TLS handshake while still serving. Only
     FAILURES_BEFORE_RESTART consecutive misses count as a freeze.
+
+    While the host itself is short of memory (swap storm), every process is
+    slow and a restart only adds load, so misses are held for up to
+    PRESSURE_HOLD_MAX seconds before they count.
     """
     last_restart = 0.0
     RESTART_COOLDOWN = 45  # Don't restart again within 45 seconds
     CHECK_INTERVAL = 15    # Check every 15 seconds
     RECHECK_INTERVAL = 5   # Re-check sooner after a miss
     FAILURES_BEFORE_RESTART = 3
+    PRESSURE_HOLD_PERCENT = 10.0  # Host memory pressure that explains a slow Flask
+    PRESSURE_HOLD_MAX = 300       # A Flask silent this long is restarted regardless
     failures = 0
+    first_miss = 0.0
+    holding = False
     while daemon_running:
         time.sleep(RECHECK_INTERVAL if failures else CHECK_INTERVAL)
         if not daemon_running:
@@ -1108,15 +1133,25 @@ def watch_flask_health():
             if failures:
                 print(f"[DAEMON] Flask liveness recovered after {failures} missed check(s)")
             failures = 0
+            holding = False
             continue
         if _shutdown_done or not daemon_running:
             return
+        now = time.time()
+        if not failures:
+            first_miss = now
         failures += 1
         if failures < FAILURES_BEFORE_RESTART:
             continue
-        now = time.time()
         if now - last_restart < RESTART_COOLDOWN:
             continue  # Already restarted recently
+        pressure = _host_memory_pressure()
+        if pressure >= PRESSURE_HOLD_PERCENT and now - first_miss < PRESSURE_HOLD_MAX:
+            if not holding:
+                print(f"[DAEMON] Flask slow under host memory pressure ({pressure:.0f}%) — holding restart")
+            holding = True
+            continue
+        holding = False
         print(f"[DAEMON] Flask unresponsive ({failures} consecutive missed checks) — restarting...")
         perform_flask_restart(
             restart_id=f"watchdog-{int(now)}",

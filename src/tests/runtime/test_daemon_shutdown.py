@@ -72,10 +72,13 @@ def test_signal_handler_and_tray_exit_share_shutdown():
     assert "icon.stop()" in src
 
 
-def _run_watchdog(d, checks):
-    """Drive watch_flask_health with scripted health results; return restart count."""
+def _run_watchdog(d, checks, pressure=0.0):
+    """Drive watch_flask_health with scripted health results; return restart count.
+
+    The fake clock advances with each sleep, so hold limits elapse."""
     results = iter(checks)
     restarts = []
+    clock = [1000.0]
 
     class FakeProc:
         def poll(self):
@@ -94,7 +97,9 @@ def _run_watchdog(d, checks):
     d.processes = {"flask": FakeProc()}
     d._flask_health_check = health
     d.perform_flask_restart = lambda **kw: restarts.append(kw)
-    d.time = type("T", (), {"sleep": staticmethod(lambda s: None), "time": staticmethod(lambda: 1000.0)})
+    d._host_memory_pressure = lambda: pressure
+    d.time = type("T", (), {"sleep": staticmethod(lambda s: clock.__setitem__(0, clock[0] + s)),
+                            "time": staticmethod(lambda: clock[0])})
     d.watch_flask_health()
     return restarts
 
@@ -110,3 +115,25 @@ def test_watchdog_restarts_after_consecutive_missed_checks():
     restarts = _run_watchdog(d, [True, False, False, False, True])
     assert len(restarts) == 1
     assert restarts[0]["mode"] == "watchdog"
+
+
+def test_watchdog_holds_restart_while_host_memory_is_starved():
+    """A swap storm slows every process; restarting Flask then only ends turns."""
+    d = _load_daemon()
+    assert _run_watchdog(d, [False] * 20 + [True], pressure=40.0) == []
+
+
+def test_watchdog_memory_pressure_hold_is_bounded():
+    d = _load_daemon()
+    assert len(_run_watchdog(d, [False] * 80, pressure=40.0)) == 1
+
+
+def test_host_memory_pressure_reads_psi(tmp_path, monkeypatch):
+    import builtins
+
+    d = _load_daemon()
+    psi = tmp_path / "memory"
+    psi.write_text("some avg10=6.65 avg60=15.39 avg300=6.00 total=1\nfull avg10=6.32 avg60=15.02 avg300=5.84 total=1\n")
+    real_open = builtins.open
+    monkeypatch.setattr(builtins, "open", lambda p, *a, **k: real_open(psi if p == "/proc/pressure/memory" else p, *a, **k))
+    assert d._host_memory_pressure() == 15.39

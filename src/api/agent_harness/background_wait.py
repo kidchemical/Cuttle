@@ -29,7 +29,8 @@ cancels it; the card's own Stop kills the recorded pid via ``job_watch``.
 
 State is process-lifetime (the runs die with Flask). Off switch: settings
 ``agent_background_detach`` → ``{"claude": false}`` or env
-``CUTTLE_BACKGROUND_DETACH=0`` restores the single-bubble wait.
+``CUTTLE_BACKGROUND_DETACH=0``: the turn then ends at its reply and the
+still-running work is handed off (``background_handoff``), never waited on.
 """
 
 from __future__ import annotations
