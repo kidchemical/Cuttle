@@ -96,15 +96,22 @@ class DeviceWorkerClient:
 
     def job_heartbeat(
         self, job_id: str, *, progress: Optional[Dict[str, Any]] = None
-    ) -> None:
+    ) -> bool:
+        """False when the host no longer has the job claimed by us (cancelled, reclaimed)."""
         body: Dict[str, Any] = {"worker_id": self.worker_id}
         if isinstance(progress, dict) and progress:
             body["progress"] = progress
-        self._request(
-            "POST",
-            f"/api/workers/jobs/{job_id}/heartbeat",
-            json_body=body,
-        )
+        try:
+            self._request(
+                "POST",
+                f"/api/workers/jobs/{job_id}/heartbeat",
+                json_body=body,
+            )
+        except RuntimeError as e:
+            if "HTTP 409" in str(e):
+                return False
+            raise
+        return True
 
     def fetch_agent_turn(self, job_id: str) -> Dict[str, Any]:
         """Payload of an ``agent_turn`` job this worker claimed (api.exec_nodes)."""

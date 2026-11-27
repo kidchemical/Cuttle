@@ -138,6 +138,13 @@ def _migrate_jobs_columns(conn: sqlite3.Connection) -> None:
     if "progress_json" not in cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN progress_json TEXT")
         altered = True
+    if "reserved_json" not in cols:
+        # Resources held while claimed/running (api.device_workers.admission); released by any end state.
+        conn.execute("ALTER TABLE jobs ADD COLUMN reserved_json TEXT")
+        altered = True
+    if "wait_reason" not in cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN wait_reason TEXT")
+        altered = True
     if altered:
         conn.commit()
 
@@ -231,6 +238,8 @@ def _row_job(row: sqlite3.Row) -> Dict[str, Any]:
         "claim_expires": row["claim_expires"],
         "expires_at": row["expires_at"] if "expires_at" in keys else None,
         "attempts": int(row["attempts"] or 0) if "attempts" in keys else 0,
+        "reserved": _loads(row["reserved_json"], default=None) if "reserved_json" in keys else None,
+        "wait_reason": (row["wait_reason"] if "wait_reason" in keys else None) or None,
         "max_attempts": int(row["max_attempts"] or 2) if "max_attempts" in keys else 2,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -651,6 +660,14 @@ class DeviceWorkerStore:
         limit: int = 1,
         lease_seconds: int = 600,
     ) -> List[Dict[str, Any]]:
+        """Claim queued jobs this worker can run, reserving their declared resources.
+
+        One ``BEGIN IMMEDIATE`` transaction covers the read of active
+        reservations and every claim, so the daemon's local loop and Flask
+        (remote workers) can never both admit against the same headroom.
+        """
+        from api.device_workers.admission import admit, requested
+
         wid = (worker_id or "").strip()
         if not wid:
             return []
@@ -662,6 +679,20 @@ class DeviceWorkerStore:
         with _lock:
             conn = _connect(self.db_path)
             try:
+                conn.execute("BEGIN IMMEDIATE")
+                worker = conn.execute(
+                    "SELECT load_json, last_seen FROM workers WHERE worker_id = ?", (wid,)
+                ).fetchone()
+                load = _loads(worker["load_json"]) if worker else {}
+                telemetry_age = now - float(worker["last_seen"]) if worker else float("inf")
+                reservations = [
+                    _loads(r["reserved_json"])
+                    for r in conn.execute(
+                        "SELECT reserved_json FROM jobs WHERE claimed_by = ? "
+                        "AND status IN ('claimed', 'running') AND reserved_json IS NOT NULL",
+                        (wid,),
+                    ).fetchall()
+                ]
                 rows = conn.execute(
                     """
                     SELECT * FROM jobs
@@ -680,6 +711,14 @@ class DeviceWorkerStore:
                     reqs = job.get("requirements") or {}
                     if not _requirements_met(reqs, caps):
                         continue
+                    need = requested(reqs)
+                    reservation, reason = admit(need, load, reservations, telemetry_age=telemetry_age)
+                    if reservation is None:
+                        conn.execute(
+                            "UPDATE jobs SET wait_reason = ? WHERE id = ?",
+                            (f"{wid}: {reason}"[:300], job["id"]),
+                        )
+                        continue
                     cur = conn.execute(
                         """
                         UPDATE jobs SET
@@ -688,19 +727,26 @@ class DeviceWorkerStore:
                             claim_expires = ?,
                             attempts = COALESCE(attempts, 0) + 1,
                             started_at = COALESCE(started_at, ?),
+                            reserved_json = ?,
+                            wait_reason = NULL,
                             updated_at = ?
                         WHERE id = ? AND status = 'queued'
                         """,
-                        (wid, expires, now, now, job["id"]),
+                        (wid, expires, now, _dumps(reservation) if need else None, now, job["id"]),
                     )
                     if cur.rowcount != 1:
                         continue
-                    conn.commit()
+                    if need:
+                        reservations.append(reservation)
                     refreshed = conn.execute(
                         "SELECT * FROM jobs WHERE id = ?", (job["id"],)
                     ).fetchone()
                     claimed.append(_row_job(refreshed))
+                conn.commit()
                 return claimed
+            except BaseException:
+                conn.rollback()
+                raise
             finally:
                 conn.close()
 
@@ -724,6 +770,14 @@ class DeviceWorkerStore:
                 "message": str(progress.get("message") or "")[:500],
                 "updated_at": float(progress.get("updated_at") or now),
             }
+            # Stage-level progress from adapters (api.device_workers.adapters): the
+            # running stage, its step counter (sampler 18/30) and the latest preview.
+            for key, limit in (("stage", 120), ("preview_url", 300)):
+                if progress.get(key):
+                    safe[key] = str(progress[key])[:limit]
+            for key in ("step", "steps"):
+                if isinstance(progress.get(key), (int, float)):
+                    safe[key] = int(progress[key])
             prog_json = _dumps(safe)
         with _lock:
             conn = _connect(self.db_path)
@@ -1187,6 +1241,8 @@ def _requirements_met(reqs: Dict[str, Any], caps: Dict[str, Any]) -> bool:
     if not reqs:
         return True
     for key, needed in reqs.items():
+        if key == "resources":
+            continue  # amounts, not capabilities: api.device_workers.admission decides
         if key == "storage" and isinstance(needed, list):
             storage = caps.get("storage") if isinstance(caps.get("storage"), dict) else {}
             # Also accept top-level storage from worker blob merged into caps

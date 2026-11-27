@@ -75,8 +75,12 @@ def _cpu_ram() -> Dict[str, Any]:
 
         out["cpu_pct"] = float(psutil.cpu_percent(interval=0.15))
         mem = psutil.virtual_memory()
+        swap = psutil.swap_memory()
         out["ram_used_gb"] = round(mem.used / (1024**3), 2)
         out["ram_total_gb"] = round(mem.total / (1024**3), 2)
+        out["ram_available_gb"] = round(mem.available / (1024**3), 2)
+        out["swap_used_gb"] = round(swap.used / (1024**3), 2)
+        out["swap_total_gb"] = round(swap.total / (1024**3), 2)
     except Exception:
         out["cpu_pct"] = None
         out["ram_used_gb"] = None
@@ -84,30 +88,144 @@ def _cpu_ram() -> Dict[str, Any]:
     return out
 
 
-def _gpu_pct() -> Optional[float]:
+def parse_psi(text: str) -> Dict[str, float]:
+    """``/proc/pressure/<res>`` → ``{"some": avg10, "full": avg10}``."""
+    out: Dict[str, float] = {}
+    for line in (text or "").splitlines():
+        parts = line.split()
+        if not parts or parts[0] not in ("some", "full"):
+            continue
+        for field in parts[1:]:
+            if field.startswith("avg10="):
+                try:
+                    out[parts[0]] = float(field[6:])
+                except ValueError:
+                    pass
+    return out
+
+
+def _psi() -> Optional[Dict[str, Dict[str, float]]]:
+    """Linux pressure stall info (memory / io), the earliest sign of thrashing."""
+    root = Path("/proc/pressure")
+    if not root.is_dir():
+        return None
+    out: Dict[str, Dict[str, float]] = {}
+    for res in ("memory", "io"):
+        try:
+            out[res] = parse_psi((root / res).read_text(encoding="utf-8"))
+        except OSError:
+            continue
+    return out or None
+
+
+def parse_nvidia_gpus(text: str) -> List[Dict[str, Any]]:
+    """``nvidia-smi --query-gpu=index,uuid,name,memory.used,memory.total,utilization.gpu``."""
+    gpus: List[Dict[str, Any]] = []
+    for line in (text or "").strip().splitlines():
+        cells = [c.strip() for c in line.split(",")]
+        if len(cells) < 6:
+            continue
+        try:
+            gpus.append({
+                "index": int(cells[0]),
+                "uuid": cells[1],
+                "name": cells[2],
+                "vram_used_mb": int(float(cells[3])),
+                "vram_total_mb": int(float(cells[4])),
+                "util_pct": float(cells[5]) if cells[5].replace(".", "", 1).isdigit() else None,  # "[N/A]"
+            })
+        except ValueError:
+            continue
+    return gpus
+
+
+def parse_nvidia_apps(text: str) -> List[Dict[str, Any]]:
+    """``nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory``."""
+    apps: List[Dict[str, Any]] = []
+    for line in (text or "").strip().splitlines():
+        cells = [c.strip() for c in line.split(",")]
+        if len(cells) < 3:
+            continue
+        try:
+            apps.append({"gpu_uuid": cells[0], "pid": int(cells[1]), "used_mb": int(float(cells[2]))})
+        except ValueError:
+            continue
+    return apps
+
+
+def _nvidia_smi(query: str) -> str:
+    completed = subprocess.run(
+        ["nvidia-smi", query, "--format=csv,noheader,nounits"],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        encoding="utf-8", errors="replace",
+    )
+    return completed.stdout if completed.returncode == 0 else ""
+
+
+def _gpus() -> tuple:
+    """Per-GPU VRAM/utilisation and per-process VRAM; ``([], [])`` without NVIDIA."""
     if not _which("nvidia-smi"):
-        return None
+        return [], []
     try:
-        completed = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=utilization.gpu",
-                "--format=csv,noheader,nounits",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            encoding="utf-8", errors="replace",
-        )
-        if completed.returncode != 0:
-            return None
-        line = (completed.stdout or "").strip().splitlines()
-        if not line:
-            return None
-        return float(line[0].strip())
+        gpus = parse_nvidia_gpus(_nvidia_smi(
+            "--query-gpu=index,uuid,name,memory.used,memory.total,utilization.gpu"))
+        apps = parse_nvidia_apps(_nvidia_smi("--query-compute-apps=gpu_uuid,pid,used_memory")) if gpus else []
+        return gpus, apps
     except Exception:
-        return None
+        return [], []
+
+
+# Process names of apps a person is using interactively; their memory is not the mesh's to take.
+INTERACTIVE_APPS = {"unity": "Unity Editor", "unity.exe": "Unity Editor", "blender": "Blender",
+                    "blender.exe": "Blender"}
+
+
+def classify_service(cmdline: List[str]) -> str:
+    """Name of a long-lived adapter service a process is (``comfyui``), else ``""``."""
+    joined = " ".join(cmdline or []).replace("\\", "/").lower()
+    if "main.py" in joined and "comfyui" in joined:
+        return "comfyui"
+    return ""
+
+
+def _processes(apps: List[Dict[str, Any]], gpus: List[Dict[str, Any]]) -> tuple:
+    """Interactive apps and adapter services with their RAM and VRAM."""
+    try:
+        import psutil
+    except ImportError:
+        return [], {}
+    index_by_uuid = {g["uuid"]: g["index"] for g in gpus}
+    vram_by_pid: Dict[int, Dict[int, int]] = {}
+    for app in apps:
+        idx = index_by_uuid.get(app["gpu_uuid"])
+        if idx is not None:
+            vram_by_pid.setdefault(app["pid"], {})[idx] = app["used_mb"]
+    interactive: Dict[str, float] = {}
+    services: Dict[str, Dict[str, Any]] = {}
+    for proc in psutil.process_iter(["pid", "name", "cmdline", "memory_info"]):
+        info = proc.info
+        name = str(info.get("name") or "").lower()
+        rss_mb = int((info.get("memory_info").rss if info.get("memory_info") else 0) / (1024**2))
+        label = INTERACTIVE_APPS.get(name)
+        args = [str(a).lower() for a in (info.get("cmdline") or [])]
+        # A headless run (blender -b, Unity -batchmode) is a job, not a person's session;
+        # Unity Hub's own `unity serve` helper is not the Editor.
+        if label == "Unity Editor" and "-projectpath" not in args:
+            label = None
+        if label and not {"-b", "--background", "-batchmode"} & set(args):
+            interactive[label] = interactive.get(label, 0) + rss_mb
+            continue
+        service = classify_service(info.get("cmdline") or []) if name.startswith("python") else ""
+        if service:
+            entry = services.setdefault(service, {"pids": [], "rss_mb": 0, "vram_mb": {}})
+            entry["pids"].append(int(info["pid"]))
+            entry["rss_mb"] += rss_mb
+            for idx, mb in vram_by_pid.get(int(info["pid"]), {}).items():
+                entry["vram_mb"][str(idx)] = entry["vram_mb"].get(str(idx), 0) + mb
+    return [{"name": k, "rss_mb": v} for k, v in sorted(interactive.items())], services
 
 
 def _blender_gpu() -> Optional[str]:
@@ -360,7 +478,11 @@ def collect_capabilities(
     storage_extra: Optional[Dict[str, bool]] = None,
 ) -> Dict[str, Any]:
     load = _cpu_ram()
-    load["gpu_pct"] = _gpu_pct()
+    gpus, apps = _gpus()
+    load["gpus"] = [{k: v for k, v in g.items() if k != "uuid"} for g in gpus]
+    load["gpu_pct"] = max((g["util_pct"] or 0.0 for g in gpus), default=None)
+    load["psi"] = _psi()
+    load["interactive"], load["services"] = _processes(apps, gpus)
     caps = {
         "shell": True,
         "filesystem": True,

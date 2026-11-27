@@ -84,6 +84,9 @@ out.elapsedNeg = A.formatWatchElapsedSeconds(-5);
 out.elapsedDone = A.watchElapsedText({ state: 'done', elapsed: '3m 12s' });
 out.elapsedDoneSec = A.watchElapsedText({ state: 'failed', elapsed_sec: 90 });
 out.elapsedEmpty = A.watchElapsedText(null);
+out.etaRunning = A.watchEtaText({ state: 'running', eta_s: 250 });
+out.etaUnknown = A.watchEtaText({ state: 'running', eta_s: null });
+out.etaDone = A.watchEtaText({ state: 'done', eta_s: 250 });
 out.barsEmpty = A.normalizeWatchBars({});
 out.barsSingle = A.normalizeWatchBars({ percent: 150, label: 'L' });
 out.barsMulti = A.normalizeWatchBars({ percent: 10, label: 'L', bars: [
@@ -200,6 +203,8 @@ def test_elapsed_and_bars():
     assert res["elapsedDone"] == "3m 12s"
     assert res["elapsedDoneSec"] == "1m 30s"
     assert res["elapsedEmpty"] == ""
+    assert res["etaRunning"] == "~4m 10s left"
+    assert res["etaUnknown"] == "" and res["etaDone"] == ""
     # No percent = not measured: null, never a default 0 (the bar animates instead).
     assert res["barsEmpty"] == [{"id": "overall", "label": "Overall",
                                  "percent": None, "kind": "primary", "state": ""}]

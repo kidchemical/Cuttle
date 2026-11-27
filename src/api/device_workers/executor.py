@@ -152,6 +152,9 @@ def path_allowed(path: str, prefixes: List[str] | None = None) -> bool:
 
 
 def execute_job(job: Dict[str, Any], auth_token: Optional[str] = None) -> Dict[str, Any]:
+    from api.device_workers import adapters
+    from api.device_workers.admission import requested
+
     raw_type = str(job.get("type") or "").strip()
     jtype = _normalize_job_type(raw_type)
     if jtype not in {
@@ -161,12 +164,17 @@ def execute_job(job: Dict[str, Any], auth_token: Optional[str] = None) -> Dict[s
         "shell",
         "cuttle_self_update",
         "agent_turn",
-    }:
+    } and adapters.get(jtype) is None:
         raise JobExecError(f"unsupported job type: {raw_type or jtype}")
     params = job.get("params") if isinstance(job.get("params"), dict) else {}
     # Thread the job id into params for job-scoped logs
     if job.get("id") and "_job_id" not in params:
         params = {**params, "_job_id": str(job.get("id"))}
+    # Declared resources size the job's memory scope (api.device_workers.isolation).
+    params = {**params, "_resources": requested(job.get("requirements"))}
+    adapter = adapters.get(jtype)
+    if adapter is not None:
+        return adapter.run(params)
     if jtype == "ping":
         return {
             "ok": True,
@@ -244,26 +252,39 @@ def _shell_recipe(params: Dict[str, Any]) -> Dict[str, Any]:
     from api.device_workers.job_policy import resolve_timeouts
     from api.device_workers.long_run import HardTimeoutError, IdleTimeoutError, run_long_process
 
+    from api.device_workers import isolation
+    from api.device_workers.long_run import CancelledError
+
     idle_s, hard_s, prog_mode = resolve_timeouts(job_type="shell", params=params)
     on_prog = params.get("_on_progress")
+    ram_mb = int((params.get("_resources") or {}).get("ram_mb") or 0)
+    run_argv, scope = isolation.scoped_argv(argv, job_id=str(params.get("_job_id") or recipe), ram_mb=ram_mb)
     try:
         completed = run_long_process(
-            argv,
+            run_argv,
             hard_timeout_seconds=hard_s,
             idle_timeout_seconds=idle_s,
             progress_mode=prog_mode,
             on_progress=on_prog if callable(on_prog) else None,
             cwd=str(repo),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            should_stop=params.get("_cancelled"),
         )
     except IdleTimeoutError as e:
         raise JobExecError(f"shell recipe idle timeout: {recipe} ({int(e.idle)}s)") from e
     except HardTimeoutError as e:
         raise JobExecError(f"shell recipe timed out: {recipe} ({int(e.hard)}s)") from e
+    except CancelledError as e:
+        raise JobExecError(f"shell recipe {recipe} {e}") from e
     except OSError as e:
         raise JobExecError(f"shell launch failed: {e}") from e
     out = (completed.stdout or "").strip()
     err = (completed.stderr or "").strip()
+    if completed.returncode != 0 and isolation.oom_killed(scope):
+        raise JobExecError(
+            f"oom: recipe {recipe} went past its {isolation.memory_limit_mb(ram_mb)} MB memory scope "
+            f"(reserved {ram_mb} MB); raise requirements.resources.ram_mb"
+        )
     if completed.returncode != 0:
         raise JobExecError(
             f"recipe {recipe} exit {completed.returncode}: {(err or out)[-800:]}"
@@ -963,6 +984,7 @@ def _blender_render(params: Dict[str, Any]) -> Dict[str, Any]:
                 on_progress=progress_cb,
                 poll_interval=5.0,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                should_stop=params.get("_cancelled"),
             )
         except IdleTimeoutError as e:
             _raise_partial(f"blender idle timeout after {int(e.idle)}s")
@@ -1104,6 +1126,8 @@ def _blender_render(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def validate_job_submission(job_type: str, params: Dict[str, Any]) -> Tuple[bool, str]:
+    from api.device_workers import adapters
+
     jtype = _normalize_job_type(job_type or "")
     canonical = {
         "ping",
@@ -1112,8 +1136,12 @@ def validate_job_submission(job_type: str, params: Dict[str, Any]) -> Tuple[bool
         "shell",
         "cuttle_self_update",
     }
+    adapter = adapters.get(jtype)
+    if adapter is not None:
+        return adapter.validate(params)
     if jtype not in canonical:
-        return False, f"unsupported type (allowed: {', '.join(sorted(canonical))})"
+        allowed = sorted(canonical | set(adapters.names()))
+        return False, f"unsupported type (allowed: {', '.join(allowed)})"
     if jtype == "file_copy":
         if not str(params.get("source") or "").strip():
             return False, "file_copy requires params.source"

@@ -148,6 +148,14 @@
         return '';
     }
 
+    /** "~4m 10s left" from a running status's measured ``eta_s`` (mesh runs); '' when unknown. */
+    function watchEtaText(data) {
+        if (!data || String(data.state || '') !== 'running') return '';
+        const eta = data.eta_s;
+        if (eta == null || eta === '' || !Number.isFinite(Number(eta))) return '';
+        return '~' + formatWatchElapsedSeconds(eta) + ' left';
+    }
+
     function _progress() { return root.CuttleProgress || globalThis.CuttleProgress; }
 
     /** Percent as measured, or null when the source measured nothing (never a default 0). */
@@ -696,6 +704,7 @@
         actionFormWatchStorageKey,
         formatWatchElapsedSeconds,
         watchElapsedText,
+        watchEtaText,
         normalizeWatchBars,
         RESTART_PROGRESS_PCT,
         restartProgressPercent,

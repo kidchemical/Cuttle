@@ -1100,6 +1100,8 @@
             if (elapsed) {
                 parts.push(String((data && data.state) || '') === 'running' ? elapsed + ' elapsed' : elapsed);
             }
+            const eta = CuttleChatActionForms.watchEtaText(data);
+            if (eta) parts.push(eta);
             if (meta) {
                 meta.textContent = parts.join(' · ');
                 meta.hidden = parts.length === 0;

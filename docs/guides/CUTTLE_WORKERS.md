@@ -1,6 +1,6 @@
 # Cuttle Workers — multi-device compute mesh
 
-**Status:** W1–W2 live; **W2.5 platform verbs** shipped (actions + CLI); **W2b** `blender_render` + `workers.blender-shard` shipped; **W2b+** work-steal chunks + per-frame analytics + render EWMA profiles (default `distribution=work_steal`); **W3** heuristics via `workers.plan` / `POST /api/workers/plan` (auto-enqueue off by default).  
+**Status:** W1–W2 live; **W2.5 platform verbs** shipped (actions + CLI); **W2b** `blender_render` + `workers.blender-shard` shipped; **W2b+** work-steal chunks + per-frame analytics + render EWMA profiles (default `distribution=work_steal`); **W3** heuristics via `workers.plan` / `POST /api/workers/plan` (auto-enqueue off by default). **Job Manager** (resource admission, memory scopes, `comfyui_prompt`, approved runs with live cards): [JOB_MANAGER.md](JOB_MANAGER.md).  
 **Related:** [`docs/ROADMAP.md`](../ROADMAP.md), [`.cuttle_global/docs/cuttle-workers.md`](../../.cuttle_global/docs/cuttle-workers.md) (Brain how-to), [`SUPERVISED_COORDINATOR.md`](SUPERVISED_COORDINATOR.md), [`MODULARITY.md`](MODULARITY.md).
 
 ## Product intent (read this first)

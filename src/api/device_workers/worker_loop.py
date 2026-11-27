@@ -114,8 +114,17 @@ def _run_one(
 
     jid = job.get("id")
     stop = threading.Event()
+    # Set when the host refuses a heartbeat: the job was cancelled (Jobs page, a
+    # watch card's Stop) or reclaimed. Executors poll ``_cancelled`` and stop.
+    cancelled = threading.Event()
     progress_lock = threading.Lock()
     latest_progress: dict = {}
+
+    def _beat(progress: Optional[dict] = None) -> None:
+        if heartbeat(jid, progress=progress) is False:
+            if not cancelled.is_set():
+                log.warning("job %s no longer claimed by this worker — stopping it", jid)
+            cancelled.set()
 
     def _on_progress(snap: Any) -> None:
         try:
@@ -126,30 +135,31 @@ def _run_one(
             latest_progress.clear()
             latest_progress.update(payload)
         try:
-            heartbeat(jid, progress=payload)
+            _beat(payload)
         except Exception:
             log.debug("job %s progress heartbeat failed", jid, exc_info=True)
 
     def _pulse() -> None:
-        # Refresh before the lease is halfway gone.
-        interval = max(30.0, min(120.0, float(lease_seconds) * 0.4))
+        # Often enough that a cancel lands within ~15 s; well inside the lease.
+        interval = max(5.0, min(15.0, float(lease_seconds) * 0.4))
         while not stop.wait(interval):
             try:
                 with progress_lock:
                     prog = dict(latest_progress) if latest_progress else None
-                heartbeat(jid, progress=prog)
+                _beat(prog)
             except Exception:
                 log.debug("job %s heartbeat failed", jid, exc_info=True)
 
     # Inject progress callback for executors that support it (not serialized).
     params = dict(job.get("params") or {})
     params["_on_progress"] = _on_progress
+    params["_cancelled"] = cancelled.is_set
     params["_job_id"] = str(jid or "")
     job_exec = dict(job)
     job_exec["params"] = params
 
     try:
-        heartbeat(jid)
+        _beat()
         pulse = threading.Thread(
             target=_pulse, name=f"job-lease-{jid}", daemon=True
         )
@@ -207,6 +217,15 @@ def _run_claimed(job: dict, run: Callable[[], None]) -> None:
         run()
 
 
+def _touched(job_id: str, ok: bool) -> bool:
+    """Host-side store write landed: refresh its run's watch card (api.device_workers.run_watch)."""
+    if ok:
+        from api.device_workers import run_watch
+
+        run_watch.touch(job_id)
+    return ok
+
+
 def run_local_worker_loop(*, should_continue: Callable[[], bool]) -> None:
     """Host-side worker: registers into the local SQLite store and claims jobs."""
     for _ in range(10):
@@ -245,18 +264,18 @@ def run_local_worker_loop(*, should_continue: Callable[[], bool]) -> None:
                 _run_claimed(job, functools.partial(
                     _run_one,
                     job,
-                    complete=lambda jid, result: store.complete_job(jid, wid, result=result),
-                    fail=lambda jid, error, retry, params_update=None, partial_result=None: store.fail_job(
+                    complete=lambda jid, result: _touched(jid, store.complete_job(jid, wid, result=result)),
+                    fail=lambda jid, error, retry, params_update=None, partial_result=None: _touched(jid, store.fail_job(
                         jid,
                         wid,
                         error=error,
                         retry=retry,
                         params_update=params_update,
                         partial_result=partial_result,
-                    ),
-                    heartbeat=lambda jid, progress=None: store.heartbeat_job(
+                    )),
+                    heartbeat=lambda jid, progress=None: _touched(jid, store.heartbeat_job(
                         jid, wid, lease_seconds=lease, progress=progress
-                    ),
+                    )),
                     lease_seconds=lease,
                     auth_token=local_token,
                 ))
