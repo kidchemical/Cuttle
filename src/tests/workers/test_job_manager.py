@@ -375,15 +375,16 @@ def test_tracker_turns_events_into_node_progress_and_timings():
     assert t.progress()["message"] == "waiting for ComfyUI"
     events = _events("p1")
     for e in events[:5]:
-        t.handle(e, {"vram_used_mb": 9000})
+        t.handle(e, {"vram_used_mb": 9000, "service_vram_mb": 4000})
     p = t.progress()
     assert p["message"] == "KSampler 18/30" and p["stage"] == "KSampler" and (p["step"], p["steps"]) == (18, 30)
     assert t.handle(events[5]) is False  # another client's prompt
     for e in events[6:]:
-        t.handle(e, {"vram_used_mb": 9500})
+        t.handle(e, {"vram_used_mb": 9500, "service_vram_mb": 4200})
     assert t.outcome == "success" and t.progress()["units_done"] == 3
     assert [x["label"] for x in t.timings] == ["KSampler", "VAEDecode", "Save hero"]
-    assert t.timings[0]["peak_vram_mb"] == 9500
+    # The job's own VRAM, not the GPU total that includes other apps.
+    assert (t.timings[0]["peak_vram_mb"], t.timings[0]["peak_gpu_used_mb"]) == (4200, 9500)
 
 
 def test_tracker_reports_the_failing_node():

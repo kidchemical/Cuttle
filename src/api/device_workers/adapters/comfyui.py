@@ -91,7 +91,8 @@ class Tracker:
         self.cached: set = set()
         self.node: Optional[str] = None
         self.node_started = 0.0
-        self.node_peak_vram = 0
+        # Per node: ComfyUI's own VRAM (the job's) and the whole GPU (other apps included), kept apart.
+        self.node_peak_vram = self.node_peak_gpu = 0
         self.step: Optional[int] = None
         self.steps: Optional[int] = None
         self.outputs: Dict[str, Any] = {}
@@ -108,7 +109,10 @@ class Tracker:
         entry: Dict[str, Any] = {"node": self.node, "label": self.labels.get(self.node, self.node),
                                  "seconds": round(self.now() - self.node_started, 3)}
         if sample:
-            entry["peak_vram_mb"] = max(self.node_peak_vram, int(sample.get("vram_used_mb") or 0))
+            self.observe(sample)
+            if self.node_peak_vram:
+                entry["peak_vram_mb"] = self.node_peak_vram
+            entry["peak_gpu_used_mb"] = self.node_peak_gpu
             if sample.get("ram_available_mb") is not None:
                 entry["ram_available_mb"] = sample["ram_available_mb"]
         self.timings.append(entry)
@@ -116,7 +120,8 @@ class Tracker:
 
     def observe(self, sample: Optional[Dict[str, Any]]) -> None:
         if sample and self.node is not None:
-            self.node_peak_vram = max(self.node_peak_vram, int(sample.get("vram_used_mb") or 0))
+            self.node_peak_vram = max(self.node_peak_vram, int(sample.get("service_vram_mb") or 0))
+            self.node_peak_gpu = max(self.node_peak_gpu, int(sample.get("vram_used_mb") or 0))
 
     def handle(self, event: Dict[str, Any], sample: Optional[Dict[str, Any]] = None) -> bool:
         """Apply one JSON event; True when it belonged to this prompt."""
@@ -138,7 +143,8 @@ class Tracker:
             else:
                 self.node = str(node)
                 self.node_started = self.now()
-                self.node_peak_vram = int((sample or {}).get("vram_used_mb") or 0)
+                self.node_peak_vram = int((sample or {}).get("service_vram_mb") or 0)
+                self.node_peak_gpu = int((sample or {}).get("vram_used_mb") or 0)
                 self.step = self.steps = None
         elif kind == "progress":
             # After a reattach the prompt's ``executing`` event is long gone; the
