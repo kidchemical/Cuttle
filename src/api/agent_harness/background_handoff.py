@@ -40,7 +40,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional  # Any used by enrich_notice / tasks_continue_line
 
 POLL_SEC = 5.0
 MAX_WATCH_SEC = 72 * 3600.0
@@ -252,6 +252,38 @@ def notice_text(record: Dict[str, Any], finished: List[Dict[str, Any]], *, gave_
     return "\n".join(parts).strip()[:19000]
 
 
+def tasks_continue_line(chat_session_id: Any) -> str:
+    """Next open Tasks item for the chat, or '' (same wording as supervision template nudge)."""
+    try:
+        from api.auth_db import get_auth_db
+        from api.chat_ops.brief import template_nudge
+        from api.gizmos import tasks as gizmo_tasks
+
+        sid = int(chat_session_id)
+        row = get_auth_db().get_chat_session_by_id(sid)
+        if not row:
+            return ""
+        lists = gizmo_tasks.list_tasks(user_id=int(row["user_id"]), session_id=sid)
+        snap = {
+            "tasks": [
+                {"title": t.get("title"), "items": (t.get("payload") or {}).get("items") or []}
+                for t in lists
+            ]
+        }
+        return str(template_nudge(snap) or "").strip()
+    except Exception:
+        return ""
+
+
+def enrich_notice(chat_session_id: Any, text: str) -> str:
+    """Append the next open Tasks item so the wake turn continues without a user nudge."""
+    line = tasks_continue_line(chat_session_id)
+    body = str(text or "").rstrip()
+    if not line:
+        return body[:19000]
+    return (body + "\n\n" + line).strip()[:19000]
+
+
 def post_notice(chat_session_id: int, text: str, label: str) -> Dict[str, Any]:
     """Queue a Cuttle-origin turn on the chat (``api.chat_ops`` outbox, dispatched when idle)."""
     from api.chat_ops import store
@@ -272,7 +304,8 @@ def check(path: Path, *, now: Optional[float] = None) -> bool:
     batch = pending if gave_up else finished
     if batch:
         label = "Background work: stopped watching" if gave_up else "Background work finished"
-        post_notice(record["chat_session_id"], notice_text(record, batch, gave_up=gave_up), label)
+        body = enrich_notice(record["chat_session_id"], notice_text(record, batch, gave_up=gave_up))
+        post_notice(record["chat_session_id"], body, label)
         for task in batch:
             task["notified"] = True
         _save(path, record)

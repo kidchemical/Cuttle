@@ -81,6 +81,15 @@ def try_begin(session_id, query_id: Optional[str] = None) -> bool:
         return True  # no id to gate on (brand-new anonymous chat)
     now = time.time()
     reconcile_zombie_busy(now)  # a dead worker's lock never blocks a new turn
+    # A detached Claude/Antigravity run answering a steer (or task follow-up)
+    # must not be killed by begin_run; composer steers or queues instead.
+    try:
+        from api.agent_harness.background_wait import is_detached_working
+
+        if is_detached_working(session_id):
+            return False
+    except Exception:
+        pass
     with _lock:
         _purge_locked(now)
         for k in keys:
@@ -217,6 +226,13 @@ def is_busy(session_id) -> bool:
     # Self-heal before answering — a wedged lock should not block sends or
     # keep the history spinner spinning after the agent is gone.
     reconcile_zombie_busy(now)
+    try:
+        from api.agent_harness.background_wait import is_detached_working
+
+        if is_detached_working(session_id):
+            return True
+    except Exception:
+        pass
     with _lock:
         _purge_locked(now)
         return any(k in _busy for k in keys)

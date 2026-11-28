@@ -21,7 +21,11 @@ file, the standard watch/progress card), and the CLI keeps running detached:
   lines go to ``api.chat_live_status`` flagged ``followup`` (``status_sink`` is
   the adapter's status queue after the hand-off; ``working`` / ``waiting``
   switch phases), so every device shows the ordinary typing bubble with the
-  live status line until the answer lands as its own bubble.
+  live status line until the answer lands as its own bubble. While working,
+  ``api.chat_delivery.try_begin`` refuses a second turn (composer steers or
+  queues) so a new run cannot kill the CLI mid-answer; ``note_answer`` buffers
+  the latest full root assistant text and ``finish`` salvages it as a follow-up
+  bubble when the process dies before a root ``result``.
 
 The CLI process stays registered in ``api.chat_run_registry`` (Stop / chat
 deletion kill it) and the job id is bound to the chat so ``/api/chat-cancel``
@@ -114,6 +118,8 @@ class BackgroundWait:
         self._phase = "waiting"  # waiting (idle chat, card) | working (typing bubble)
         # The answer's row while working (api.chat_turn_row, slot per job).
         self._row: Optional[Dict[str, Any]] = None
+        # Full root assistant text while working (salvaged on kill before result).
+        self._answer_buf: Optional[str] = None
         # Run-log events before the first reply's query id is known (bind).
         self._log_pending: List[Dict[str, Any]] = []
         # This run's own steer registration (api.agent_harness.steer): a send
@@ -175,7 +181,9 @@ class BackgroundWait:
         """The CLI is producing an answer: publish live status (typing bubble).
 
         Idempotent while already working unless ``force`` (an explicit event
-        such as a steer echo replaces the current line).
+        such as a steer echo replaces the current line). While working,
+        ``api.chat_delivery`` treats the chat as busy so a new turn cannot
+        kill this CLI mid-answer.
         """
         if not self.running:
             return
@@ -188,8 +196,28 @@ class BackgroundWait:
     def waiting(self, label: str) -> None:
         """Only background tasks run: clear live status, show ``label`` on the card."""
         self._phase = "waiting"
+        self._answer_buf = None
         self._clear_live()
         self.progress(label)
+
+    def note_answer(self, text: str) -> None:
+        """Buffer the latest completed root assistant text for kill salvage.
+
+        Receipts still clip to 280 characters separately; this keeps the full
+        text so ``finish`` can post a follow-up bubble when the process dies
+        before a root ``result``.
+        """
+        body = (text or "").strip()
+        if not body or not self.running or self._phase != "working":
+            return
+        with self._lock:
+            self._answer_buf = body
+
+    def _take_answer_buf(self) -> Optional[str]:
+        with self._lock:
+            text = self._answer_buf
+            self._answer_buf = None
+        return (text or "").strip() or None
 
     def status_sink(self) -> "_StatusSink":
         """A status-queue stand-in for the adapter's activity emitter after the hand-off."""
@@ -203,6 +231,8 @@ class BackgroundWait:
         status clears, so a client that polls on the idle transition finds
         the new row.
         """
+        with self._lock:
+            self._answer_buf = None
         try:
             self._persist_followup(text, usage=usage, errors=errors)
         finally:
@@ -267,6 +297,11 @@ class BackgroundWait:
             pass
         self.log("status", "Background run stopped" if (stopped or card_stopped)
                  else f"Background run ended: {label}")
+        # Kill / Stop before a root result: post the buffered answer so the
+        # steer reply is not left as a 280-char receipt excerpt only.
+        salvaged = self._take_answer_buf()
+        if salvaged:
+            self.followup(salvaged)
         if stopped and not card_stopped:
             self._write("failed", "Stopped", final=True)
         elif not card_stopped:
@@ -274,6 +309,7 @@ class BackgroundWait:
             if notice:
                 self.followup(notice)
         self._phase = "waiting"
+        self._answer_buf = None
         self._close_row(status="cancelled" if stopped else "skipped")
         self._clear_live()
         try:
@@ -515,6 +551,12 @@ def detached_wait(chat_session_id: Any, agent_id: Optional[str] = None) -> Optio
         if wait.key == key and wait.running and (agent_id is None or wait.agent_id == agent_id):
             return wait
     return None
+
+
+def is_detached_working(chat_session_id: Any) -> bool:
+    """True while a detached run is producing a follow-up answer (chat is busy)."""
+    wait = detached_wait(chat_session_id)
+    return bool(wait and wait.phase == "working")
 
 
 def steer_detached(chat_session_id: Any, agent_id: Optional[str], text: str) -> Optional[Dict[str, Any]]:

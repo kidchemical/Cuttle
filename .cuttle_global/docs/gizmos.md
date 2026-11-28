@@ -15,10 +15,14 @@ next open items of this chat's own list): run `tasks get <id>` for the items. In
 
 Use Tasks for an agent's multi-step investigation, implementation, or other
 work, even when the user does not ask for a progress display. Skip a quick
-answer or small edit. Tasks show completed steps, not a live job progress bar:
-for a long-running OS job, also use a status-backed watch card as described in
-`action-forms.md`. Do not fabricate percentages for work without a measurable
-progress source.
+answer or small edit. Tasks are the **agent-step progress contract**: creating
+early stamps `origin_turn_id` so Studio's under-bubble work panel shows the
+checklist (with a list-level done/total bar) on that turn; background completion
+notices append the next open item so the wake turn can continue without the
+user asking. Tasks show completed steps, not a live OS job percent bar: for a
+long-running OS job with a measurable status producer, also use a status-backed
+watch card as described in `action-forms.md`. Do not fabricate per-item
+percentages for work without a measurable progress source.
 
 **Mark the item you are on.** When you start an item, patch it with
 `--working <item>`; when it is finished, `--set-done <item>` (which also clears

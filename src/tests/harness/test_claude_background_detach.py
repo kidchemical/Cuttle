@@ -313,19 +313,55 @@ def test_message_sent_while_waiting_steers_into_the_live_run(tmp_path, monkeypat
         "v": 1, "steer_id": receipt["steer_id"], "state": receipt["state"],
         "delivered_at": receipt["delivered_at"], "mode": "detached", "reply": None, "covers": []}
     assert steered_rows == [{"steered": True, "steered_agent": "claude", "steer_idle": True}]
-    assert chat_delivery.is_busy(6103) is False
+    # Working phase holds the chat busy so a second begin_run cannot kill the CLI.
+    assert wait.phase == "working"
+    assert chat_delivery.is_busy(6103) is True
+    assert chat_delivery.try_begin(6103) is False
     # While the run answers, every device sees a typing bubble: live status is
     # active and flagged as a follow-up to the reply already in the transcript.
     live = _live(6103)
     assert live["active"] is True and live["followup"] is True
     assert live["status"] == "Claude Code is answering your message…"
-    assert wait.phase == "working"
     assert _until(lambda: saver.texts() == ["saw: and PINEAPPLE", "CI is green"])
     assert _until(lambda: _status(wait).get("state") == "done")
     # Both answers landed as bubbles; nothing is generating any more.
     assert _live(6103)["active"] is False
     assert not _live(6103).get("followup")
     assert wait.phase == "waiting"
+    assert chat_delivery.is_busy(6103) is False
+
+
+def test_finish_salvages_buffered_answer_when_no_followup_ran():
+    """Kill mid-answer: full buffered text becomes a follow-up bubble (not just the receipt clip)."""
+    from api import chat_delivery
+
+    wait = bw.BackgroundWait("6119", "claude")
+    wait.start(["watch CI"], pid=None)
+    saver = _Saver()
+    wait.bind(saver, {"agent_id": "claude"})
+    wait.working("Claude Code is answering your message…")
+    long = ("No, that was my error. The planned count is 131 non-verbal takes, not 150: "
+            "pain short 40, pain long 24, dying 20, jump 15, out-of-sprint 12, and 10 each "
+            "for the two sprint loops. Only about 50 of those end up in the game.")
+    wait.note_answer(long)
+    assert chat_delivery.is_busy(6119) is True
+    wait.finish("failed", "Stopped")
+    assert saver.texts() == [long]
+    assert wait.phase == "waiting"
+    assert chat_delivery.is_busy(6119) is False
+    assert bw.detached_wait(6119) is None
+
+
+def test_followup_clears_answer_buffer_so_finish_does_not_double_post():
+    wait = bw.BackgroundWait("6121", "claude")
+    wait.start(["watch CI"], pid=None)
+    saver = _Saver()
+    wait.bind(saver, {})
+    wait.working("following up")
+    wait.note_answer("partial draft that should be dropped")
+    wait.followup("final answer")
+    wait.finish("done", "Background work finished")
+    assert saver.texts() == ["final answer"]
 
 
 def test_detached_run_phases_drive_live_status_and_the_card():

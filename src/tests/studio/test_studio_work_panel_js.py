@@ -74,6 +74,9 @@ const both = P.html(m);
 assert.ok(both.includes('class="work-panel"') && both.includes('data-work-panel="1"'), both);
 assert.ok(both.includes('work-panel-cols is-two'), 'two columns when tasks and cards');
 assert.ok(both.includes('data-list-id="a"'));
+assert.ok(both.includes('class="work-list-bar"') && both.includes('aria-valuenow="25"'),
+  'list-level done% bar from 1/4: ' + both);
+assert.ok(both.includes('style="width:25%"'), 'bar width matches pct');
 const glow = both.match(/<li class="chat-widget-task is-in-progress"[^>]*>/g) || [];
 assert.strictEqual(glow.length, 1, 'one in-progress row, one glow class: ' + both);
 assert.ok(/<li class="chat-widget-task is-done"[^>]*><input type="checkbox" checked/.test(both), 'done row ticked');
@@ -112,8 +115,9 @@ const legacy = (item, shared, nested) => {
 };
 const classicRow = { id: 'k1', text: 'Plain', done: false, in_progress: true,
   owner: { kind: 'chat', id: 'CH-1', label: 'Scout', agent: 'codex' } };
-assert.strictEqual(T.taskRowHtml(classicRow, { shared: false, studio: false }), legacy(classicRow, false));
-assert.strictEqual(T.taskRowHtml({ id: 'k2', text: 'Done', done: true }, { shared: true }),
+assert.strictEqual(T.taskRowHtml(classicRow, { shared: false, studio: false, hideable: false }),
+  legacy(classicRow, false));
+assert.strictEqual(T.taskRowHtml({ id: 'k2', text: 'Done', done: true }, { shared: true, hideable: false }),
   legacy({ id: 'k2', text: 'Done', done: true }, true));
 
 // --- short labels: the work panel shows `label`, the dock keeps `text` ----------------
@@ -121,7 +125,7 @@ const labelled = { id: 'l1', text: 'Lua API: breakable <world> object', label: '
 const shortRow = T.taskRowHtml(labelled, { studio: true, short: true });
 assert.ok(shortRow.includes('>Lua API</div>'), shortRow);
 assert.ok(shortRow.includes('data-tooltip="Lua API: breakable &lt;world&gt; object"'), shortRow);
-const dockRow = T.taskRowHtml(labelled, { studio: true });
+const dockRow = T.taskRowHtml(labelled, { studio: true, hideable: false });
 assert.ok(dockRow.includes('>Lua API: breakable &lt;world&gt; object</div>') && !dockRow.includes('data-tooltip='), dockRow);
 assert.ok(T.taskRowHtml({ id: 'l2', text: 'No label' }, { studio: true, short: true }).includes('data-tooltip="No label">No label<'));
 assert.ok(P.html(P.model([list('g', { payload: { items: [labelled] } })], [], turn)).includes('>Lua API</div>'));

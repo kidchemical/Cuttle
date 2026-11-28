@@ -71,6 +71,28 @@ def test_finished_task_posts_one_notice_with_its_output_tail(tmp_path):
     assert "all done" in text and "\x1b[" not in text and str(out) in text
 
 
+def test_enrich_notice_appends_next_open_tasks_item(monkeypatch):
+    monkeypatch.setattr(bh, "tasks_continue_line", lambda sid: (
+        'Supervision: "Voice" still has open items. Continue with the next one: **Install**.'
+        if int(sid) == 7109 else ""))
+    base = "Background work finished.\nContinue the task with this result."
+    out = bh.enrich_notice(7109, base)
+    assert "Continue with the next one: **Install**" in out
+    assert out.startswith("Background work finished")
+    assert bh.enrich_notice(7110, base) == base
+
+
+def test_finished_notice_includes_tasks_continue_when_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(bh, "tasks_continue_line", lambda sid: (
+        'Supervision: "Voice" still has open items. Continue with the next one: **Install**.'))
+    out = tmp_path / "b9.output"
+    out.write_text("ok\n", encoding="utf-8")
+    path = _record(tmp_path, [_dead_proc()], output=str(out), sid=7111)
+    assert bh.check(path) is True
+    text = _notices(7111)[0]["payload"]["text"]
+    assert "Continue with the next one: **Install**" in text
+
+
 def test_running_task_is_not_reported_until_it_ends(tmp_path):
     path = _record(tmp_path, [_self_proc()], sid=7102)
     assert bh.check(path) is False and path.exists()

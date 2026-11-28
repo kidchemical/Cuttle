@@ -794,7 +794,14 @@ class ClaudeCliTool:
                 mid = str(message.get("id") or "")
                 for block in message.get("content") or []:
                     if isinstance(block, dict) and block.get("type") == "text":
-                        _note(steer_registry.note_output_text, mid, block.get("text"))
+                        text = block.get("text")
+                        _note(steer_registry.note_output_text, mid, text)
+                        # Full text for kill salvage (receipt still clips to 280).
+                        if ctl is not None and ctl.detached and ctl.wait is not None:
+                            try:
+                                ctl.wait.note_answer(text)
+                            except Exception:
+                                pass
                         break
 
         def _close_if_unread() -> None:

@@ -375,6 +375,11 @@ async def run_antigravity_turn_acp(
         if text:
             messages.append(text)
             _note(steer_registry.note_output_text, seg_id, text)
+            if ctl is not None and ctl.detached:
+                try:
+                    ctl.wait.note_answer(text)
+                except Exception:
+                    pass
             activity.emit(f"writing: {text_preview(text)}", force=True)
 
     def _finish_connection() -> None:

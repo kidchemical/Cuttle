@@ -49,6 +49,12 @@ Builds, uploads, model downloads, ComfyUI, etc.:
 Short work (Q&A, quick edits, seconds-long commands) needs no watch card.
 Deciding what to run, and how often: [expensive-runs.md](expensive-runs.md).
 
+**Agent steps vs OS jobs.** Multi-step agent work uses a Tasks gizmo early
+([gizmos.md](gizmos.md)): Studio's work panel and the host's background
+completion notices treat that checklist as the continue contract. Watch cards
+are for measurable OS progress (builds, downloads, mesh batches), not a
+substitute for Tasks items.
+
 ### Detached work: unit + `watch-unit` (never the harness's own background watch)
 
 Work you deliberately put outside Flask's lifetime — a build chain started as
