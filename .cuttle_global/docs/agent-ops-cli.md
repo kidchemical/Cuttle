@@ -31,7 +31,8 @@ agent toolkit.
 | Execution nodes (experimental `exec_nodes`; which machine runs a chat's agent) | `python -m api.exec_nodes` (list, show, set, node) | `feature/exec_nodes/docs/execution-nodes.md` (loaded while enabled) |
 | Secret vault (experimental `secret_vault`; use secrets without reading them) | `python -m api.secret_vault` (status, list, request, run) | `feature/secret_vault/docs/secret-vault.md` (loaded while enabled) |
 | Tasks gizmos | `python -m api.gizmos tasks` | `gizmos.md` |
-| Media shared in chats | `python -m api.media_library list [--chat CH-…] [--kind image\|video] [--available] [--json]` | `chat-media.md` |
+| Stage chat media (image / video / audio → `/output/shared/`) | `python -m api.shared_media` (stage, meta, purge) | `chat-media.md` |
+| Media shared in chats | `python -m api.media_library list [--chat CH-…] [--kind image\|video\|audio] [--available] [--json]` | `chat-media.md` |
 | Cuttle QA / promo accounts | `python -m api.fixture_accounts` | Cuttle project `.cuttle/docs/fixture-accounts.md` |
 | Discord reads | `python -m api.discord_cli` | `discord.md` (posts stay on `discord.post`) |
 | External service ops (action types) | `python -m api.service_ops list` | `commands-and-actions.md` |

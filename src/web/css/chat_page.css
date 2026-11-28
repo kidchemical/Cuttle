@@ -6526,8 +6526,8 @@ pre.has-code-copy:hover .code-copy-btn,
     gap: 10px;
     padding: 14px 16px;
     min-height: 56px;
-    background: linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.88));
-    color: #f8fafc;
+    background: color-mix(in srgb, var(--bg-tertiary, #0f3460) 70%, var(--bg-secondary, #16213e));
+    color: var(--text-primary, #f8fafc);
 }
 .cuttle-media-thumb--audio .cuttle-media-play {
     position: static;
@@ -6537,7 +6537,8 @@ pre.has-code-copy:hover .code-copy-btn,
     height: 36px;
     border-radius: 999px;
     font-size: 14px;
-    background: rgba(255, 255, 255, 0.16);
+    background: color-mix(in srgb, var(--accent-color, #667eea) 28%, transparent);
+    color: var(--text-primary, #fff);
     text-shadow: none;
 }
 .cuttle-media-audio-label {

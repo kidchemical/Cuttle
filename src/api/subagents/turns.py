@@ -228,7 +228,7 @@ def _assistant_identity_meta(
 
 
 def _stage_reply_media(result: Dict[str, Any]) -> None:
-    """Local image/video paths in a child reply become ``/output/shared/`` URLs.
+    """Local image/video/audio paths in a child reply become ``/output/shared/`` URLs.
 
     Same step the chat saver runs (``chat_turn_persist``), so the child bubble
     and the result handed to the parent both carry a link that renders.

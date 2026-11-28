@@ -27,7 +27,8 @@ JSON receipt includes `artifact.path`, `artifact.mime`, `artifact.bytes`,
 and usage when provided. `--share` also returns `artifact.url` for signed-in
 Cuttle clients. Embed image URLs with Markdown and link audio URLs. If image
 staging fails, the receipt returns the saved file and `artifact.share_error`.
-Retry sharing the saved image directly through [chat media](chat-media.md).
+Retry sharing the saved file with
+`python -m api.shared_media stage <path> --json` ([chat media](chat-media.md)).
 
 Keys follow existing provider Settings and environment conventions. A caller
 can set a key for just this process using the Cuttle secret vault's `run --env`.

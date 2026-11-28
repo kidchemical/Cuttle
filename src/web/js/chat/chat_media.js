@@ -947,13 +947,17 @@
             if (item.kind === 'audio') {
                 stage.classList.add('is-audio');
                 if (zoomEl) zoomEl.hidden = true;
+                const wrap = ownerDoc.createElement('div');
+                wrap.className = 'cuttle-lightbox-audio';
                 const audio = ownerDoc.createElement('audio');
+                audio.className = 'cuttle-lightbox-audio-el';
                 audio.src = item.src;
                 audio.controls = true;
                 audio.autoplay = true;
                 audio.preload = 'metadata';
                 audio.setAttribute('controlsList', 'nodownload');
-                stage.appendChild(audio);
+                wrap.appendChild(audio);
+                stage.appendChild(wrap);
                 media = audio;
             } else if (item.kind === 'video') {
                 stage.classList.add('is-video');

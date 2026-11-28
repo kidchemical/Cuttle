@@ -14,7 +14,7 @@
 
     const DEFAULT_PREFS = Object.freeze({
         query: '',
-        kind: 'all',        // all | image | video
+        kind: 'all',        // all | image | video | audio
         source: 'all',      // all | mine (uploads + user markdown) | agents
         chat: '',           // chat id ('' = every chat)
         project: '',        // project name ('' = every project, '-' = no project)
@@ -43,7 +43,7 @@
         year: { label: 'Last 12 months', days: 365 },
     };
     const CHOICES = {
-        kind: ['all', 'image', 'video'],
+        kind: ['all', 'image', 'video', 'audio'],
         source: ['all', 'mine', 'agents'],
         range: Object.keys(RANGES),
         sort: Object.keys(SORTS),

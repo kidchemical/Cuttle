@@ -23,6 +23,7 @@ def test_extract_refs_reads_attachments_markdown_and_media_tags():
     body = (
         '![Before and after](/output/shared/cmp-99874da650.png "Left old, right new")\n'
         '<media src="/output/shared/clip-abc12345.mp4" />\n'
+        '![Narration](/output/shared/talk-deadbeef01.mp3)\n'
         "![dup](/output/shared/cmp-99874da650.png)\n"
         "![local](/mnt/disk/temp/never-staged.png)\n"          # not hosted: skipped
         "![poster](/output/shared/clip-abc12345.poster.jpg)\n"  # derived thumb: skipped
@@ -34,6 +35,7 @@ def test_extract_refs_reads_attachments_markdown_and_media_tags():
     assert [(r["url"], r["kind"], r["source"]) for r in refs] == [
         ("/output/shared/cmp-99874da650.png", "image", "agent"),
         ("/output/shared/clip-abc12345.mp4", "video", "agent"),
+        ("/output/shared/talk-deadbeef01.mp3", "audio", "agent"),
         ("https://example.com/cat.webp", "image", "agent"),
     ]
     assert refs[0]["title"] == "Before and after"
@@ -83,7 +85,9 @@ def test_list_media_is_user_scoped_newest_first_with_handles_and_files(world):
     assert by["expired.png"]["available"] is False and by["expired.png"]["chat_archived"] is True
     assert by["live.png"]["chat_title"] == "Game art"
     assert by["live.png"]["shared_at"].endswith("Z")
-    assert data["totals"] == {"items": 4, "images": 3, "videos": 1, "available": 3}
+    assert data["totals"] == {
+        "items": 4, "images": 3, "videos": 1, "audios": 0, "available": 3,
+    }
     assert [(c["id"], c["count"]) for c in data["chats"]] == [(old, 1), (game, 3)]
     assert [it["name"] for it in service.list_media(uid, db=db, chat_id=game)["items"]] == [
         "clip.mp4", "live.png", "ref.png"]

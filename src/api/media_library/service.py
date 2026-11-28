@@ -60,7 +60,7 @@ def file_info_for(output_root: Path):
 
 def list_media(user_id: int, *, db=None, output_root: Optional[Path] = None,
                chat_id: Optional[int] = None) -> Dict[str, Any]:
-    """Every image/video in ``user_id``'s chats, newest first, plus chat summaries."""
+    """Every image/video/audio in ``user_id``'s chats, newest first, plus chat summaries."""
     if db is None:
         from api.auth_db import get_auth_db
 
@@ -73,13 +73,16 @@ def list_media(user_id: int, *, db=None, output_root: Optional[Path] = None,
         rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
     items = index.build_items(rows, file_info_for(output_root or _output_root()))
     images = sum(1 for it in items if it["kind"] == "image")
+    videos = sum(1 for it in items if it["kind"] == "video")
+    audios = sum(1 for it in items if it["kind"] == "audio")
     return {
         "items": items,
         "chats": index.summarize_chats(items),
         "totals": {
             "items": len(items),
             "images": images,
-            "videos": len(items) - images,
+            "videos": videos,
+            "audios": audios,
             "available": sum(1 for it in items if it["available"] is not False),
         },
     }

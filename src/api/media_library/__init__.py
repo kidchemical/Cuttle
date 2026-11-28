@@ -1,4 +1,4 @@
-"""Media App: every image / video shared in the user's chats.
+"""Media App: every image / video / audio shared in the user's chats.
 
 Read-only index over chat history. Nothing is copied or stored: the source of
 truth is each message's markdown / ``<media>`` refs (agents) and

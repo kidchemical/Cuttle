@@ -8,14 +8,23 @@ Electron host start.
 
 Videos also get a mid-frame ``*.poster.jpg`` sidecar (ffmpeg) for chat thumbs.
 Audio opens in the shared lightbox player (same thumb → lightbox path as video).
+
+Agent CLI (preferred over importing this module in a throwaway script)::
+
+    python -m api.shared_media stage /path/to/clip.mp3 --json
+    python -m api.shared_media meta /output/shared/clip-….mp3 --json
+    python -m api.shared_media purge --json
 """
 
 from __future__ import annotations
 
+import argparse
+import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -763,3 +772,66 @@ def api_shared_media_purge():
         return jsonify(result)
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """``python -m api.shared_media`` — stage / meta / purge for agents."""
+    parser = argparse.ArgumentParser(
+        prog="python -m api.shared_media",
+        description="Stage local image/video/audio into /output/shared/ for chat previews.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    stage_p = sub.add_parser("stage", help="Copy a local media file into /output/shared/")
+    stage_p.add_argument("path", help="Filesystem path to the image, video, or audio file")
+    stage_p.add_argument(
+        "--name",
+        "--filename",
+        dest="name",
+        default="",
+        help="Preferred original filename (staging still adds a unique suffix)",
+    )
+    stage_p.add_argument("--json", action="store_true", help="Print the full JSON result")
+
+    meta_p = sub.add_parser("meta", help="Read the staging sidecar for a /output/shared/ URL")
+    meta_p.add_argument("url", help="Hosted URL or staged filename (e.g. /output/shared/clip-….mp3)")
+    meta_p.add_argument("--json", action="store_true", help="Print the full JSON result")
+
+    purge_p = sub.add_parser("purge", help="Delete staged copies older than the TTL")
+    purge_p.add_argument("--ttl-days", type=int, default=None, help="Override CUTTLE_SHARED_MEDIA_TTL_DAYS")
+    purge_p.add_argument("--json", action="store_true", help="Print the full JSON result")
+
+    args = parser.parse_args(argv)
+
+    if args.cmd == "stage":
+        preferred = (args.name or "").strip() or None
+        result = stage_file(args.path, preferred_name=preferred)
+        if args.json or not result.get("success"):
+            print(json.dumps(result, indent=2 if args.json else None))
+        else:
+            print(result["url"])
+            if result.get("kind"):
+                print(f"kind={result['kind']}", file=sys.stderr)
+        return 0 if result.get("success") else 2
+
+    if args.cmd == "meta":
+        result = read_stage_meta(args.url)
+        print(json.dumps(result, indent=2 if args.json else None))
+        return 0 if result.get("success") else 2
+
+    if args.cmd == "purge":
+        result = purge_expired(ttl=args.ttl_days)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"deleted {result.get('deleted', 0)} file(s) (ttl={result.get('ttl_days')}d)")
+            for name in result.get("files") or []:
+                print(f"  {name}")
+        return 0 if result.get("success") else 2
+
+    parser.error(f"unknown command: {args.cmd}")
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
