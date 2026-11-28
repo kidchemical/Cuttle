@@ -387,6 +387,19 @@ def test_tracker_turns_events_into_node_progress_and_timings():
     assert (t.timings[0]["peak_vram_mb"], t.timings[0]["peak_gpu_used_mb"]) == (4200, 9500)
 
 
+def test_previews_are_reported_off_unless_comfyui_sends_them():
+    assert comfyui.previews_off(["main.py", "--listen", "127.0.0.1"])
+    assert comfyui.previews_off(["main.py", "--preview-method", "none"])
+    assert not comfyui.previews_off(["main.py", "--preview-method", "auto"])
+    assert not comfyui.previews_off(["main.py", "--preview-method=taesd"])
+    jobs = [_job("running", id="b", claimed_by="desk", started_at=990.0,
+                 progress={"message": "KSampler 2/30", "preview_note": "no live previews: …"})]
+    s = run_watch.summarize(jobs, now=1000.0, started_ts=990.0)
+    assert s["previews"] == [] and s["preview_note"].startswith("no live previews")
+    jobs[0]["progress"]["preview_url"] = "/output/jobs/b/preview.jpg"
+    assert "preview_note" not in run_watch.summarize(jobs, now=1000.0, started_ts=990.0)
+
+
 def test_tracker_reports_the_failing_node():
     t = comfyui.Tracker("p1", comfyui.stage_labels(PROMPT))
     t.handle({"type": "executing", "data": {"prompt_id": "p1", "node": "7"}})

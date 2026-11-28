@@ -101,6 +101,7 @@ class Tracker:
         self.error = ""
         self.started = False
         self.preview_url = ""
+        self.preview_note = ""
 
     def _close_node(self, sample: Optional[Dict[str, Any]]) -> None:
         if self.node is None:
@@ -189,6 +190,8 @@ class Tracker:
             out["step"], out["steps"] = self.step, self.steps
         if self.preview_url:
             out["preview_url"] = self.preview_url
+        elif self.preview_note:
+            out["preview_note"] = self.preview_note
         return out
 
 
@@ -269,6 +272,24 @@ def _reachable(base: str) -> bool:
         return False
 
 
+def previews_off(argv: List[str]) -> bool:
+    """ComfyUI sends no sampler previews unless started with ``--preview-method`` other than ``none``."""
+    for i, arg in enumerate(argv):
+        value = arg.split("=", 1)[1] if arg.startswith("--preview-method=") else (
+            argv[i + 1] if arg == "--preview-method" and i + 1 < len(argv) else None)
+        if value is not None:
+            return value == "none"
+    return True
+
+
+def _previews_note(base: str) -> str:
+    try:
+        argv = (requests.get(f"{base}/system_stats", timeout=5).json().get("system") or {}).get("argv") or []
+    except (requests.RequestException, ValueError, AttributeError):
+        return ""
+    return "no live previews: ComfyUI was started without --preview-method auto" if previews_off(argv) else ""
+
+
 def _ensure_server(base: str, params: Dict[str, Any]) -> None:
     if _reachable(base):
         return
@@ -343,6 +364,7 @@ def run(params: Dict[str, Any]) -> Dict[str, Any]:
     started = time.time()
 
     _ensure_server(base, params)
+    tracker.preview_note = _previews_note(base)
     ws = connect(base.replace("http", "ws", 1) + f"/ws?clientId={pid}", open_timeout=15, max_size=None)
     try:
         entry, position = _known(base, pid)

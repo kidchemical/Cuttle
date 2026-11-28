@@ -261,6 +261,8 @@
         if (previews.length) {
             html += '<div class="watch-previews">' + previews.slice(-4).map(u =>
                 `<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="Generation preview" loading="lazy"></a>`).join('') + '</div>';
+        } else if (d.preview_note) {
+            html += `<div class="watch-resources">${esc(String(d.preview_note))}</div>`;
         }
         const resources = Array.isArray(d.resources) ? d.resources : [];
         if (resources.length) {

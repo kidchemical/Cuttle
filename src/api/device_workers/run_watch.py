@@ -208,6 +208,9 @@ def summarize(
         "resources": _resources(workers or [], [j for j in jobs if j.get("status") not in TERMINAL or j.get("held_by")]),
         "counts": {**counts, "running": len(active), "stopping": len(stopping), "total": n},
     }
+    notes = [str((j.get("progress") or {}).get("preview_note") or "") for j in active]
+    if not previews and any(notes):
+        status["preview_note"] = next(note for note in notes if note)
     if n > 1:
         status["grid"] = {"unit": "item", "total": n,
                           "groups": sorted(by_worker),
