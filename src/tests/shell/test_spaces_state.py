@@ -143,7 +143,7 @@ def test_space_lifecycle_helpers():
     assert res["plan1"] == {"ok": False, "switchTo": None}  # last space cannot close
     assert res["plan2"] == {"ok": True, "switchTo": "s2"}  # active close switches to neighbor
     assert res["renamed"] is True
-    assert res["renamedEmpty"] is False
+    assert res["renamedEmpty"] is True  # empty name hands the space back to auto-naming
     assert res["names"] == "Space 3"  # case-insensitive collision avoidance
     assert res["colorOk"] == "#8ab4f8"
     assert res["colorBad"] is None
@@ -202,3 +202,64 @@ def test_state_module_parses():
     import subprocess as sp
     proc = sp.run(["node", "--check", str(STATE_JS)], capture_output=True, text=True, encoding="utf-8")
     assert proc.returncode == 0, proc.stderr
+
+
+
+AUTO_HARNESS = """
+const S = require(process.env.STATE_JS);
+const L = S.autoSpaceLabel;
+const st = { active: 's1', spaces: [{ id: 's1', name: 'Space 1', autoName: true, root: null }], groups: [] };
+const added = S.addSpaceToState(st);
+const addedAuto = added.autoName === true;
+const keptAuto = S.renameSpaceInState(st, added.id, 'Fix login', 'Fix login');
+const afterKeep = Object.assign({}, added);
+const named = S.renameSpaceInState(st, added.id, 'Team', 'Fix login');
+const afterName = Object.assign({}, added);
+const emptyOnAuto = S.renameSpaceInState(st, 's1', '');
+const legacy = S.sanitizeLoadedData({ active: 'a', spaces: [
+  { id: 'a', name: 'Space 3' }, { id: 'b', name: 'Work' }, { id: 'c', name: 'Space 4', autoName: false },
+] });
+process.stdout.write(JSON.stringify({
+  addedAuto, keptAuto, afterKeep, named, afterName, emptyOnAuto,
+  legacy: legacy.spaces.map((s) => !!s.autoName),
+  none: L([], 'Space 2'),
+  blank: L([null, '  '], 'Space 2'),
+  first: L([undefined, '  Fix   login ', 'Docs'], 'Space 2'),
+  long: L(['x'.repeat(70)], 'Space 2').length,
+}));
+"""
+
+
+def _run_auto():
+    import os
+    proc = subprocess.run(
+        ["node", "-e", AUTO_HARNESS],
+        capture_output=True, text=True, encoding="utf-8", timeout=30,
+        env={"PATH": os.environ["PATH"], "STATE_JS": str(STATE_JS)},
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+@node_only
+def test_unnamed_space_is_auto_named_until_renamed():
+    res = _run_auto()
+    assert res["addedAuto"] is True
+    # Committing the label the tab already showed keeps following the chats.
+    assert res["keptAuto"] is False
+    assert res["afterKeep"]["autoName"] is True
+    assert res["named"] is True
+    assert res["afterName"]["name"] == "Team"
+    assert "autoName" not in res["afterName"]
+    assert res["emptyOnAuto"] is False
+    # Pre-autoName saves: only default "Space N" names become auto.
+    assert res["legacy"] == [True, False, False]
+
+
+@node_only
+def test_auto_space_label_is_first_chat_title():
+    res = _run_auto()
+    assert res["none"] == "Space 2"
+    assert res["blank"] == "Space 2"
+    assert res["first"] == "Fix login"
+    assert res["long"] == 60
