@@ -879,6 +879,7 @@ def test_a_smaller_gpus_peak_carries_to_a_machine_without_history(worker_db):
     est = metrics.estimate({"type": "comfyui_prompt", "params": KLEIN["jobs"][0]["params"] | {"template": "klein"}},
                            "desk", {"desk": 24576, "lap": 8151})
     assert est["peak_vram_mb"] == 7000 and est["vram_basis"] == "same settings, GPU no larger"
+    assert est["vram_samples"] == 1
 
 
 def test_per_worker_figures_still_refuse_a_machine_that_is_full_or_blind(worker_db):

@@ -77,9 +77,14 @@ def _job_specs(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def _gpu_sizes(workers: List[Dict[str, Any]]) -> Dict[str, int]:
-    """Each worker's largest GPU in MB (0 without GPU telemetry)."""
+    """Each worker's largest GPU in MB (0 without GPU telemetry); see ``metrics._vram_peak``."""
     return {w["worker_id"]: max((int(g.get("vram_total_mb") or 0) for g in (w.get("load") or {}).get("gpus") or []
                                  if isinstance(g, dict)), default=0) for w in workers}
+
+
+def _runs(est: Dict[str, Any]) -> str:
+    n = est.get("vram_samples")
+    return f"{n} run(s), " if n else ""
 
 
 def _gb(mb: Any) -> str:
@@ -119,7 +124,7 @@ def _with_history(jobs: List[Dict[str, Any]], workers: List[Dict[str, Any]],
                        for k in ("ram_mb", "vram_mb") if int(mine.get(k) or 0) > int(declared.get(k) or 0)]
             basis = f"{mine_est['samples']} past run(s): {mine_est['basis']}"
             if mine.get("vram_mb"):
-                basis += f"; VRAM: {mine_est.get('vram_basis')}"
+                basis += f"; VRAM: {_runs(mine_est)}{mine_est.get('vram_basis')}"
             if changes:
                 notes.append(f"{label} on {wid}: {', '.join(changes)} ({basis})")
             elif int(wanted.get("vram_mb") or 0) > int(declared.get("vram_mb") or 0):
