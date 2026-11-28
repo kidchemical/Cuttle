@@ -19,9 +19,8 @@ When you add a backend feature:
 
 Related: [`MODULARITY.md`](MODULARITY.md), [`docs/ROADMAP.md`](../ROADMAP.md), and [extension boundaries](../architecture/extension-boundaries.md).
 
-Tracked (historical references, not verified current status — do not
-implement in the same breath as product features; #3 predates the
-BYO-CLI installer retirement):
+Tracked (historical references: all six issues are closed as of 2026-11-26;
+#3 predates the BYO-CLI installer retirement):
 
 | Issue | Topic |
 |---|---|
@@ -77,7 +76,7 @@ is a logged, nonfatal `try/except`:
 | Agent catalog / defaults / context | `api.agent_harness.routes` (`agent_harness_bp`) | blueprint — `/api/agents`, `/api/agent-defaults/*`, `/api/agent-context[/compact]` |
 | Provider API keys | `api.settings_routes` (`provider_keys_bp`) | blueprint — `/api/{test,save}-api-key`, `/api/load-api-keys`; owned with the settings/provider surface |
 | Flask restart | `api.flask_restart` (`flask_restart_bp`) | blueprint — `/api/flask/restart*` (daemon-mediated) |
-| Shared media staging | `api.shared_media` (`shared_media_bp`) | blueprint — `/api/shared-media/*` |
+| Shared media staging | `api.shared_media` (`shared_media_bp` + `python -m api.shared_media`) | blueprint — `/api/shared-media/*`; agents use the CLI (`chat-media.md`) |
 | Mobile companion events | `api.mobile_companion` (`mobile_companion_bp`) | blueprint — `/api/mobile/*` |
 | User pairing | `api.auth_api` (`pairing_bp`) | blueprint — `/api/pairing/*` |
 | Activity stream | `api.activity_stream` (`activity_bp`, url prefix `/api`) | blueprint — chat activity push stream |

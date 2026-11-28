@@ -6,13 +6,15 @@ Shared global config for **every** project lives in `.cuttle_global/`:
 ```text
 .cuttle_global/
   rules|docs|actions|scripts|skills|agents/   # shared config (every project)
-  personal/                                 # install-local global overlay (gitignored)
+  features/<flag>/                            # guidance that ships with an experimental feature
+                                              # (install-local global overlay: <home>/personal/, not in this tree)
 
 .cuttle/
-  commands/       # Cuttle slash commands (/cleanup-sessions, /README, …)
+  commands/       # Cuttle slash commands (/cleanup-sessions, /scaffold-cuttle)
   rules/          # Cuttle-only always-on rules (Context Compiler, Cuttle chats only)
   actions/        # Cuttle-only allowlisted side effects
-  docs/           # Cuttle-only docs (release, router TODO, dashboards-dev)
+  docs/           # Cuttle-only runbooks (release, experimental features, app notes)
+  docs/history/   # shipped plans and dated audits (records, not current guidance)
   skills/         # Cuttle development guidance, scoped to this project
   scripts/        # Cuttle-only shell helpers
   agents/         # Cuttle project drop-in harness agents (instance drop-ins: .cuttle_global/agents/)

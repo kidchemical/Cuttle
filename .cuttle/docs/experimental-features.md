@@ -2,7 +2,7 @@
 
 How-to for the shipped experimental flag surface and the Achievements feature.
 Design record + full teardown checklist:
-[experimental-features-plan.md](experimental-features-plan.md).
+[history/experimental-features-plan.md](history/experimental-features-plan.md).
 
 Achievements is **opt-in and off by default**. The flag-management API is always available.
 
@@ -26,7 +26,7 @@ open or close stays that way per chat; a live thread opens by itself and nothing
 closes a thread but you. A reply that arrives while its thread is closed shows a
 dot and a one-line preview. Off restores separate rows in time order. Owner:
 `src/web/js/chat/chat_threads.js` (+ pure `chat_thread_model.js`); design record
-[chat-reply-threads-plan.md](chat-reply-threads-plan.md).
+[history/chat-reply-threads-plan.md](history/chat-reply-threads-plan.md).
 
 **Auto-compaction:** flag `auto_compact` (default off). Compacts an agent's
 context between turns at a threshold below the CLI's own (ordinary chats and

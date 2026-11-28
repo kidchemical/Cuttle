@@ -126,7 +126,7 @@ On the host: enable **Execution nodes** in Settings → Experimental, then tell
 Cuttle where projects live on the node:
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m api.exec_nodes node kcslaptop \
+PYTHONPATH=src .venv/bin/python -m api.exec_nodes node my-laptop \
   --default-cwd 'C:\Users\me' --map '/mnt/dev/Cuttle=C:\Users\me\Dev\Cuttle'
 ```
 

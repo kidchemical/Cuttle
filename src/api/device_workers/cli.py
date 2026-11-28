@@ -150,6 +150,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_su.add_argument("--update-source", default="official", choices=["official", "host"],
                       help="official = git remote; host = this Host's served bundle")
 
+    p_rplan = sub.add_parser("run-plan", help="Validate + estimate a run spec and print its approval form")
+    p_rplan.add_argument("--spec", required=True, help="Run spec JSON file (api.device_workers.runs)")
+    p_rplan.add_argument("--chat", default="", help="CH-… to resume when the run ends (default: this chat)")
+
+    p_rsub = sub.add_parser("run-submit", help="Queue an approved run (the workers.run action)")
+    p_rsub.add_argument("--run-id", default="")
+    p_rsub.add_argument("--spec-sha256", default="")
+    p_rsub.add_argument("--target", default="")
+
+    p_rdec = sub.add_parser("run-decide", help="Apply a pick from a blocked run's form (the workers.run-decide action)")
+    p_rdec.add_argument("--run-id", default="")
+    p_rdec.add_argument("--choice", default="", help="move:<worker_id> | wait | cancel")
+
+    p_rstat = sub.add_parser("run-status", help="Current watch status of a run")
+    p_rstat.add_argument("--run-id", default="")
+
+    sub.add_parser("drain-check", help="Jobs still queued, running or holding a reservation (fails unless submissions are paused and none)")
+    sub.add_parser("pause-submissions", help="Refuse new mesh jobs while queued ones drain (before a host upgrade)")
+    sub.add_parser("resume-submissions", help="Accept new mesh jobs again")
+
     p_probe = sub.add_parser("probe", help="Ping a worker and measure mesh RTT")
     p_probe.add_argument("--target", default="")
     p_probe.add_argument("--timeout", type=float, default=20)
@@ -362,6 +382,47 @@ def main(argv: Optional[List[str]] = None) -> int:
             submitted_by=str(args.submitted_by or env("submitted_by") or "platform"),
             update_source=str(args.update_source or env("update_source") or "official"),
         )
+    elif args.cmd == "run-plan":
+        from api.device_workers import runs
+
+        with open(args.spec, encoding="utf-8") as fh:
+            spec = json.load(fh)
+        result = runs.plan(spec, chat_session_id=args.chat or None)
+    elif args.cmd == "run-submit":
+        from api.device_workers import runs
+
+        result = runs.submit(
+            str(args.run_id or env("run_id") or "").strip(),
+            spec_sha256=str(args.spec_sha256 or env("spec_sha256") or ""),
+            target=str(args.target or env("target") or ""),
+        )
+    elif args.cmd == "run-decide":
+        from api.device_workers import runs
+
+        result = runs.decide(str(args.run_id or env("run_id") or "").strip(),
+                             choice=str(args.choice or env("choice") or "").strip())
+    elif args.cmd == "run-status":
+        from api.job_watch import read_status
+
+        run_id = str(args.run_id or env("run_id") or "").strip()
+        status = read_status(run_id) if run_id else None
+        result = {"success": status is not None, "status": status, **({} if status else {"error": "no such run"})}
+    elif args.cmd == "drain-check":
+        from api.device_workers.store import get_store
+
+        store = get_store()
+        store.reclaim_expired()
+        busy = [{k: j.get(k) for k in ("id", "type", "status", "claimed_by", "held_by", "reserved")}
+                for j in store.busy_jobs()]
+        paused = store.submissions_paused()
+        error = (f"{len(busy)} job(s) still queued, running or holding a reservation" if busy
+                 else "" if paused else "submissions are open: run pause-submissions first")
+        result = {"success": not error, "paused": paused, "busy": busy, **({"error": error} if error else {})}
+    elif args.cmd in ("pause-submissions", "resume-submissions"):
+        from api.device_workers.store import get_store
+
+        get_store().pause_submissions(args.cmd == "pause-submissions")
+        result = {"success": True, "paused": get_store().submissions_paused()}
     elif args.cmd == "probe":
         target = str(args.target or env("target") or env("target_worker_id") or env("worker_id") or "").strip()
         if not target:

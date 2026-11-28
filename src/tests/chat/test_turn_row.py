@@ -312,6 +312,7 @@ def test_orphan_row_from_a_dead_turn_heals_on_history_read(authed):
     [asst] = [m for m in msgs if m["role"] == "assistant"]
     assert asst["id"] == row["message_id"] and not asst.get("in_progress")
     assert asst["content"].startswith("**Agent interrupted before completion.**")
+    assert "server process running this turn exited" in asst["content"]  # names the cause
     assert asst["query_id"] == row["query_id"]
     assert db.in_progress_messages(sid) == []
 

@@ -71,6 +71,28 @@ def test_finished_task_posts_one_notice_with_its_output_tail(tmp_path):
     assert "all done" in text and "\x1b[" not in text and str(out) in text
 
 
+def test_enrich_notice_appends_next_open_tasks_item(monkeypatch):
+    monkeypatch.setattr(bh, "tasks_continue_line", lambda sid: (
+        'Supervision: "Voice" still has open items. Continue with the next one: **Install**.'
+        if int(sid) == 7109 else ""))
+    base = "Background work finished.\nContinue the task with this result."
+    out = bh.enrich_notice(7109, base)
+    assert "Continue with the next one: **Install**" in out
+    assert out.startswith("Background work finished")
+    assert bh.enrich_notice(7110, base) == base
+
+
+def test_finished_notice_includes_tasks_continue_when_present(tmp_path, monkeypatch):
+    monkeypatch.setattr(bh, "tasks_continue_line", lambda sid: (
+        'Supervision: "Voice" still has open items. Continue with the next one: **Install**.'))
+    out = tmp_path / "b9.output"
+    out.write_text("ok\n", encoding="utf-8")
+    path = _record(tmp_path, [_dead_proc()], output=str(out), sid=7111)
+    assert bh.check(path) is True
+    text = _notices(7111)[0]["payload"]["text"]
+    assert "Continue with the next one: **Install**" in text
+
+
 def test_running_task_is_not_reported_until_it_ends(tmp_path):
     path = _record(tmp_path, [_self_proc()], sid=7102)
     assert bh.check(path) is False and path.exists()
@@ -164,6 +186,98 @@ def test_kill_process_tree_spares_kept_pids():
     assert _until_gone(other, 5), "unkept descendants are still swept"
     assert _alive(kept), "the kept pid must survive the tree kill"
     # The kept child then finishes on its own (it is no longer ours to signal).
+
+
+@posix_only
+def test_kill_process_tree_spares_kept_pids_of_a_root_that_cleans_up_on_sigterm():
+    """Claude Code stops its background shells when it gets SIGTERM (their
+    output ends "[killed]"; verified on 2.1.302), so hand-off spared nothing.
+    A root with spared work gets no chance to run that shutdown."""
+    from api.chat_run_registry import kill_process_tree
+
+    script = (
+        "import os, signal, subprocess, sys, time\n"
+        "c = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(8)'], start_new_session=True)\n"
+        "def bye(*_):\n"
+        "    os.kill(c.pid, signal.SIGKILL); sys.exit(0)\n"
+        "signal.signal(signal.SIGTERM, bye)\n"
+        "print(c.pid, flush=True)\n"
+        "time.sleep(60)\n"
+    )
+    parent = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, text=True, encoding="utf-8")
+    kept = int(parent.stdout.readline())
+    kill_process_tree(parent, keep=[kept])
+    assert parent.poll() is not None
+    time.sleep(0.3)
+    assert _alive(kept), "the root must not get to take the kept work down with it"
+
+
+def _as_host(body):
+    """Run ``body`` in a separate Python, as Flask would: the test kill guard
+    (rightly) refuses pids that reparented away from pytest, and pytest is not
+    the subreaper the orphans go to."""
+    src = str(Path(__file__).resolve().parents[2])
+    out = subprocess.run([sys.executable, "-c", "import sys; sys.path.insert(0, %r)\n" % src + body],
+                         capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert out.returncode == 0, out.stderr
+    return out.stdout.split()
+
+
+_ORPHANING_ROOT = (
+    "import os, signal, subprocess, sys, time\n"
+    "sh = subprocess.Popen(['bash', '-c', 'set -m; sleep 40 | cat & echo $! $(jobs -p); wait'],\n"
+    "                      start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)\n"
+    "print(sh.stdout.readline().strip(), flush=True)\n"
+    "def bye(*_):\n"
+    "    os.killpg(sh.pid, signal.SIGKILL); sys.exit(0)\n"
+    "signal.signal(signal.SIGTERM, bye)\n"
+    "time.sleep(60)\n"
+)
+
+
+@posix_only
+def test_kill_process_tree_ends_children_its_root_orphans_on_sigterm():
+    """Claude Code stops a tool shell on SIGTERM but not a pipeline that shell
+    put in its own process group; it reparents mid-kill and must still go."""
+    pids = _as_host(
+        "import subprocess\n"
+        "from api.chat_run_registry import kill_process_tree\n"
+        "p = subprocess.Popen([sys.executable, '-c', %r], stdout=subprocess.PIPE, text=True)\n"
+        "pids = p.stdout.readline().split()\n"
+        "kill_process_tree(p)\n"
+        "assert p.poll() is not None\n"
+        "print(*pids)\n" % _ORPHANING_ROOT)
+    assert len(pids) == 2
+    assert all(_until_gone(int(p), 5) for p in pids), "the reparented pipeline is still running"
+
+
+@posix_only
+def test_sweep_snapshot_ends_what_an_exited_root_left_and_spares_kept_work():
+    root = (
+        "import subprocess, sys\n"
+        "quiet = dict(start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+        "a = subprocess.Popen(['sleep', '30'], **quiet)\n"
+        "b = subprocess.Popen(['sleep', '30'], **quiet)\n"
+        "print(a.pid, b.pid, flush=True)\n"
+        "sys.stdin.read()\n"
+    )
+    kept, other, swept, again = _as_host(
+        "import os, subprocess\n"
+        "from api.chat_run_registry import descendant_snapshot, same_process, sweep_snapshot\n"
+        "p = subprocess.Popen([sys.executable, '-c', %r], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)\n"
+        "kept, other = (int(x) for x in p.stdout.readline().split())\n"
+        "born = descendant_snapshot(p.pid, keep=[kept])\n"
+        "assert other in born and kept not in born\n"
+        "p.stdin.close(); p.wait(timeout=5)\n"
+        "assert same_process(other, born[other]), 'orphaned, as an exiting CLI leaves it'\n"
+        "swept = sweep_snapshot({**born, 999999: 1.0}, keep=[kept])\n"
+        "again = sweep_snapshot({kept: born[other] - 100})\n"
+        "print(kept, other, swept == [other], again == [])\n" % root)
+    assert swept == "True", "the orphan is ended, the unknown pid ignored"
+    assert again == "True", "a pid whose create time does not match is left alone"
+    assert _until_gone(int(other), 5)
+    assert _alive(int(kept)), "kept work survives the sweep"
+    subprocess.run(["kill", kept])
 
 
 def test_notice_turn_renders_as_cuttle_with_its_label():

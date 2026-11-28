@@ -1,0 +1,11 @@
+name: workers.run
+title: Run approved mesh batch
+description: >-
+  Queue a mesh run planned by `python -m api.device_workers.cli run-plan` and
+  start its live watch. Params: run_id, spec_sha256 (refuses a spec changed
+  after approval), target (worker_id, empty = any worker as resources free up).
+type: shell
+run: powershell -NoProfile -ExecutionPolicy Bypass -File .cuttle_global\scripts\workers-cli.ps1 run-submit
+run_posix: .venv/bin/python -m api.device_workers.cli run-submit
+workdir: .
+timeout: 60

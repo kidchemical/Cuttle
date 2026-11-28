@@ -220,7 +220,7 @@ def test_agent_adapters_round_trip(tmp_path, monkeypatch):
     ctx["client"].set_cookie("session_token", ctx["token"])
 
     body = ctx["client"].get("/api/settings/agent-adapters", environ_base=LAN).get_json()
-    assert body["steer"] == {"codex": True, "muse": True, "claude": True, "antigravity": True}
+    assert body["steer"] == {"codex": True, "muse": True, "claude": True, "antigravity": True, "cursor": True}
     assert body["allow_project_adapters"] is False
     assert body["steer_env_disabled"] is False
     assert {"claude", "codex"} <= set(body["defaults"])
@@ -262,7 +262,7 @@ def test_agent_adapters_round_trip(tmp_path, monkeypatch):
     assert body["steer_env_disabled"] is True
     assert body["allow_project_adapters_env"] is True
 
-    for bad in ({"steer": {"cursor": True}}, {"steer": {"claude": "yes"}},
+    for bad in ({"steer": {"deepseek": True}}, {"steer": {"claude": "yes"}},
                 {"allow_project_adapters": 1}, {}):
         res = ctx["client"].post("/api/settings/agent-adapters", json=bad, environ_base=LAN)
         assert res.status_code == 400, bad

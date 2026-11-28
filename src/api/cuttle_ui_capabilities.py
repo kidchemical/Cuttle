@@ -49,8 +49,9 @@ Global runbooks (match intent → open before acting; resolve via personal overl
 
 Hard stops: never force-kill web_chat_api or cuttle_daemon from an agent
 Flask hosts. Prefer clickable forms over prose questions.
-You can share images/video in replies via markdown `![alt](/output/shared/…)`
-(or a local path — Cuttle stages on persist), never `file://`; see chat-media.md.
+You can share images/video/audio in replies via markdown `![alt](/output/shared/…)` or `<media>`;
+stage local files with `python -m api.shared_media stage <path>` and use the returned URL (a local
+path in `<media>` is not staged and the player stays dead); never `file://`; see chat-media.md.
 """.strip()
 
 

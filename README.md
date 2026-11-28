@@ -89,7 +89,7 @@ The codebase is set up so an agent can do that well:
 | **Agents** | `/cursor`, `/codex`, `/claude`, `/muse`, `/hermes`, `/deepseek`, `/opencode`, `/antigravity`, and more from a shared harness catalog ([`src/api/agent_harness/agents/`](src/api/agent_harness/agents/)). Star one as the default for new chats. |
 | **Agent router** | Classifies each turn on clean sessions and picks a harness per lane. Falls back only when an agent never ran (quota, auth, missing CLI); a task that ran and failed, or was stopped, is terminal. Starred or sticky agents bypass it. |
 | **IDE** | A Cursor-style editor for registered projects: Monaco tabs, quick open, find in files, source control, a terminal, and an AI chat panel any harness can drive, with `Ctrl+K` inline edits, opt-in Tab completions, and opt-in Keep / Undo review of agent hunks. |
-| **Workspace** | Split any pane horizontally or vertically, drag to resize, and keep a separate layout per space. 13 built-in themes, a custom theme, and YouTube or video wallpapers behind the whole UI. |
+| **Workspace** | Split any pane horizontally or vertically, drag to resize, and keep a separate layout per space. 14 built-in themes, a custom theme, and YouTube or video wallpapers behind the whole UI. |
 | **Sub-agents** | Fan a task out into real child chats across harnesses, then synthesize one reply ([`python -m api.subagents`](.cuttle_global/docs/subagents.md)). |
 | **Cuttle Workers** | A multi-device LAN mesh: file copy, shell recipes, a Blender render farm with work stealing, and self-update for every client. |
 | **Dashboards** | Model Benchmarks (cost vs. pass rate vs. duration), Jev performance tracking, and per-agent cost. |
@@ -239,7 +239,6 @@ flowchart LR
 | `.cuttle_global/` | Shared configuration for all projects ([reference](.cuttle_global/README.md)). |
 | `.cuttle/` | Cuttle repository project configuration ([reference](.cuttle/README.md)). |
 | `.cuttle/personal/` | Install-local project overlay (gitignored). Rule/doc Markdown appends a delta; commands and actions replace by declared name, and skills replace by directory id. See the [overlay contract](docs/architecture/cuttle-home.md#personal-overlays). |
-| `_personal/` | **Deprecated** dogfood skills/docs (gitignored); not part of the product. Do not recreate — install-local material belongs in the Cuttle home. |
 | `/settings_page.html` | API keys and preferences in the UI |
 
 **Your existing `.env` and settings are never overwritten by docs or templates.**
@@ -262,7 +261,7 @@ flowchart LR
 
 ## Development
 
-Contributions are welcome; start with [`CONTRIBUTING.md`](CONTRIBUTING.md). Notable changes are listed in [`CHANGELOG.md`](CHANGELOG.md).
+Contributions are welcome; start with [`CONTRIBUTING.md`](CONTRIBUTING.md). Release notes for each published release are on [GitHub Releases](https://github.com/kidchemical/Cuttle/releases).
 
 Install runtime and development dependencies before testing. POSIX, from the repo root:
 

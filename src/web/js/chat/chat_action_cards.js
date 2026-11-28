@@ -1090,6 +1090,17 @@
                     grid.__gridHtml = html;
                 }
             }
+            const detailsHtml = CuttleChatActionForms.renderWatchDetailsHtml(data, host.escapeHtml);
+            let details = wrap.querySelector('[data-watch-details]');
+            if (!details && detailsHtml) {
+                details = card.ownerDocument.createElement('div');
+                details.setAttribute('data-watch-details', '');
+                wrap.appendChild(details);
+            }
+            if (details && details.__detailsHtml !== detailsHtml) {
+                details.innerHTML = detailsHtml;
+                details.__detailsHtml = detailsHtml;
+            }
             const lab = wrap.querySelector('.cuttle-action-form-progress-label');
             const meta = wrap.querySelector('[data-watch-meta]');
             if (lab) lab.textContent = String((data && (data.label || data.file)) || '');
@@ -1100,6 +1111,8 @@
             if (elapsed) {
                 parts.push(String((data && data.state) || '') === 'running' ? elapsed + ' elapsed' : elapsed);
             }
+            const eta = CuttleChatActionForms.watchEtaText(data);
+            if (eta) parts.push(eta);
             if (meta) {
                 meta.textContent = parts.join(' · ');
                 meta.hidden = parts.length === 0;

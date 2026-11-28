@@ -109,6 +109,25 @@ body[data-page="media"] {
 }
 .media-tile:hover .cuttle-media-thumb img,
 .media-tile:hover .cuttle-media-thumb video { transform: scale(1.03); }
+.media-tile .cuttle-media-thumb--audio {
+    cursor: pointer; min-width: 0; max-width: none;
+}
+.media-tile .cuttle-media-audio-face {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px; padding: 12px;
+    background: color-mix(in srgb, var(--media-panel, var(--bg-tertiary, #15151f)) 85%, #000);
+    color: var(--media-text, var(--text-primary, #f8fafc));
+}
+.media-tile .cuttle-media-thumb--audio .cuttle-media-play {
+    position: static; inset: auto; width: 44px; height: 44px; border-radius: 999px;
+    font-size: 16px;
+    background: color-mix(in srgb, var(--media-accent, var(--accent-color, #667eea)) 30%, transparent);
+    text-shadow: none;
+}
+.media-tile .cuttle-media-audio-label {
+    max-width: 90%; font-size: 12px; font-weight: 600; text-align: center;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .media-tile .cuttle-media-play {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     font-size: 26px; color: #fff; text-shadow: 0 1px 8px rgb(0 0 0 / .55);

@@ -273,6 +273,12 @@ def test_pills_hidden_until_flag_then_popover_pause_and_queue_cancel(browser, st
         expect(pop.locator(".chat-supervision-status")).to_contain_text("every 15m")
         expect(pop.locator(".chat-supervision-head .cuttle-info[data-tooltip]")).to_have_count(1)
         page.screenshot(path=os.environ.get("SUPERVISION_SHOT", "/tmp/supervision_popover.png"))
+        # A short viewport makes the popover scroll; the controls stay docked at its bottom edge.
+        pop.evaluate("e => { e.style.maxHeight = '120px'; e.scrollTop = 0; }")
+        assert pop.evaluate("e => e.scrollHeight > e.clientHeight")
+        pop_box, dock_box = pop.bounding_box(), pop.locator(".chat-supervision-dock").bounding_box()
+        assert abs((dock_box["y"] + dock_box["height"]) - (pop_box["y"] + pop_box["height"] - 1)) < 2
+        pop.evaluate("e => { e.style.maxHeight = ''; }")
         pop.locator("[data-sup-act=pause-menu]").click()
         expect(pop.locator(".chat-supervision-pause-menu")).to_contain_text("Pause for how long?")
         pop.locator("[data-sup-pause='1h']").click()

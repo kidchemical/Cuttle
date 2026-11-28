@@ -214,7 +214,7 @@ Poll URL must be same-origin `/output/…` or `/api/…` (arbitrary URLs are ign
 - Progress bar updates as soon as the card renders.
 - **Continue** locks the buttons and, when `state` is in `done_states`, sends `resume_message` as a new user turn in that same chat.
 - **I'll reply** locks the buttons and does not send a turn.
-- **Stop job** (and the composer Stop button while the job is running) kills the process tree recorded in the status JSON (`pid`, `unity_pid`).
+- **Stop job** (and the composer Stop button while the job is running) kills the process tree recorded in the status JSON (`pid`, `worker_pid`, `pids`).
 
 ### Confirm tag (single action)
 

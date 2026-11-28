@@ -295,7 +295,7 @@
 
         // Type tab counts follow every filter except the type itself.
         const typeless = M.filterItems(state.items, Object.assign({}, p, { kind: 'all' }));
-        const counts = { all: typeless.length, image: 0, video: 0 };
+        const counts = { all: typeless.length, image: 0, video: 0, audio: 0 };
         typeless.forEach((it) => { counts[it.kind] = (counts[it.kind] || 0) + 1; });
         document.querySelectorAll('[data-count]').forEach((el) => { el.textContent = counts[el.dataset.count] || '0'; });
 
@@ -309,7 +309,7 @@
         if (!total) {
             els.grid.hidden = true;
             els.more.hidden = true;
-            showNotice('Nothing yet. Images and videos you attach in chat, and media agents share in their replies, show up here.');
+            showNotice('Nothing yet. Images, videos, and audio you attach in chat, and media agents share in their replies, show up here.');
             return;
         }
         if (!state.shown.length) {

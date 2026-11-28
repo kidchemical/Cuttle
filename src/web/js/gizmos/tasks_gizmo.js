@@ -23,15 +23,34 @@
     function countTasks(items) {
         var done = 0;
         var total = 0;
+        var hidden = 0;
         function walk(nodes) {
             (nodes || []).forEach(function (n) {
                 total += 1;
                 if (n && n.done) done += 1;
+                if (n && n.hidden === true) hidden += 1;
                 walk(n && n.children);
             });
         }
         walk(items);
-        return { done: done, total: total };
+        return { done: done, total: total, hidden: hidden };
+    }
+
+    /** Eye (open) / eye-off for the hide toggle. 20×20 viewBox, currentColor stroke. */
+    function eyeIconSvg(hidden) {
+        if (hidden) {
+            return '<svg class="chat-widget-task-eye-icon" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true">'
+                + '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" '
+                + 'd="M2.5 10s2.8-5 7.5-5 7.5 5 7.5 5-2.8 5-7.5 5-7.5-5-7.5-5z"/>'
+                + '<circle fill="none" stroke="currentColor" stroke-width="1.5" cx="10" cy="10" r="2.2"/>'
+                + '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3.5 3.5l13 13"/>'
+                + '</svg>';
+        }
+        return '<svg class="chat-widget-task-eye-icon" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true">'
+            + '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" '
+            + 'd="M2.5 10s2.8-5 7.5-5 7.5 5 7.5 5-2.8 5-7.5 5-7.5-5-7.5-5z"/>'
+            + '<circle fill="none" stroke="currentColor" stroke-width="1.5" cx="10" cy="10" r="2.2"/>'
+            + '</svg>';
     }
 
     function displayTitle(title, projectName) {
@@ -61,10 +80,12 @@
         var id = esc(item.id || '');
         var text = esc(item.text || '');
         var done = !!item.done;
+        var isHidden = item.hidden === true;
         var studio = !!opts.studio;
         var inProgress = studio && !done && item.in_progress === true;
         var shared = !!opts.shared;
         var disabled = shared ? '' : ' disabled';
+        var canHide = opts.hideable !== false;
         var textHtml = '<div class="chat-widget-task-text">' + text + '</div>';
         var body = textHtml;
         if (opts.short) {
@@ -79,15 +100,23 @@
                 : '';
             body = '<div class="chat-widget-task-line">' + textHtml + owner + '</div>';
         }
+        var hideBtn = canHide
+            ? ('<button type="button" class="chat-widget-task-hide" data-item-hide'
+                + ' aria-pressed="' + (isHidden ? 'true' : 'false') + '"'
+                + ' data-tooltip="' + (isHidden ? 'Show task' : 'Hide task') + '"'
+                + ' aria-label="' + (isHidden ? 'Show task' : 'Hide task') + '">'
+                + eyeIconSvg(isHidden) + '</button>')
+            : '';
         return (
             '<li class="chat-widget-task' + (done ? ' is-done' : '') + (inProgress ? ' is-in-progress' : '')
+            + (isHidden ? ' is-hidden-item' : '')
             + '" data-item-id="' + id + '">' +
             '<input type="checkbox" ' + (done ? 'checked ' : '') + disabled +
             ' aria-label="' + (shared ? 'Toggle task' : 'Agent-managed task') + '"/>' +
             '<div style="flex:1;min-width:0">' +
             body +
             (opts.childrenHtml || '') +
-            '</div></li>'
+            '</div>' + hideBtn + '</li>'
         );
     }
 
@@ -131,6 +160,8 @@
         var widgets = [];
         var revision = 0;
         var expanded = {};
+        /** Per-list: show items marked hidden (UI filter only; payload keeps them). */
+        var showHidden = {};
         var inFlight = false;
         var dirty = false;
         /** Bumps on every refresh start so stale in-flight responses are ignored. */
@@ -177,16 +208,26 @@
             return String(w.session_id || '') !== sid;
         }
 
-        function renderTaskItems(items, shared, studio) {
-            if (!items || !items.length) {
-                return '<li class="chat-widget-task"><span class="chat-widget-task-text">(empty)</span></li>';
+        function renderTaskItems(items, shared, studio, revealHidden) {
+            var visible = (items || []).filter(function (item) {
+                return revealHidden || item.hidden !== true;
+            });
+            if (!visible.length) {
+                return items && items.length
+                    ? ''
+                    : '<li class="chat-widget-task"><span class="chat-widget-task-text">(empty)</span></li>';
             }
-            return items.map(function (item) {
+            return visible.map(function (item) {
                 var kids = item.children || [];
-                var nested = kids.length
-                    ? '<ul class="chat-widget-task-list">' + renderTaskItems(kids, shared, studio) + '</ul>'
+                var nestedKids = kids.filter(function (k) {
+                    return revealHidden || k.hidden !== true;
+                });
+                var nested = nestedKids.length
+                    ? '<ul class="chat-widget-task-list">' + renderTaskItems(kids, shared, studio, revealHidden) + '</ul>'
                     : '';
-                return taskRowHtml(item, { shared: shared, studio: studio, ownerHtml: ownerHtml, childrenHtml: nested });
+                return taskRowHtml(item, {
+                    shared: shared, studio: studio, ownerHtml: ownerHtml, childrenHtml: nested, hideable: true,
+                });
             }).join('');
         }
 
@@ -273,7 +314,13 @@
                     (desc
                         ? '<p class="chat-widget-desc">' + esc(desc) + '</p>'
                         : '') +
-                    '<ul class="chat-widget-task-list">' + renderTaskItems(items, shared, studio) + '</ul>' +
+                    '<ul class="chat-widget-task-list">' + renderTaskItems(items, shared, studio, !!showHidden[w.id]) + '</ul>' +
+                    (counts.hidden
+                        ? ('<button type="button" class="chat-widget-show-hidden" data-widget-show-hidden'
+                            + ' aria-pressed="' + (showHidden[w.id] ? 'true' : 'false') + '">'
+                            + (showHidden[w.id] ? 'Hide hidden' : 'Show hidden')
+                            + ' (' + counts.hidden + ')</button>')
+                        : '') +
                     '</div></div>'
                 );
             }).join('');
@@ -380,7 +427,8 @@
             }).catch(function () { refresh(); });
         }
 
-        function patchItem(widgetId, itemId, done) {
+        function patchItem(widgetId, itemId, body) {
+            var payload = Object.assign({ session_id: sessionParam() }, body || {});
             return fetchFn(
                 '/api/gizmos/tasks/' + encodeURIComponent(widgetId) +
                 '/items/' + encodeURIComponent(itemId),
@@ -388,7 +436,7 @@
                     method: 'PATCH',
                     credentials: 'same-origin',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ done: !!done, session_id: sessionParam() }),
+                    body: JSON.stringify(payload),
                 }
             ).then(function (r) { return r.json(); }).then(function (data) {
                 if (data && data.gizmo) {
@@ -459,6 +507,19 @@
                     patchWidget(wid, { status: 'archived', op: 'patch', patch: {} });
                     return;
                 }
+                if (t.closest('[data-widget-show-hidden]')) {
+                    showHidden[wid] = !showHidden[wid];
+                    render(wid);
+                    return;
+                }
+                var hideBtn = t.closest('[data-item-hide]');
+                if (hideBtn) {
+                    var hideRow = hideBtn.closest('[data-item-id]');
+                    if (!hideRow) return;
+                    var wantHidden = hideBtn.getAttribute('aria-pressed') !== 'true';
+                    patchItem(wid, hideRow.getAttribute('data-item-id'), { hidden: wantHidden });
+                    return;
+                }
             });
             el.addEventListener('change', function (ev) {
                 var t = ev.target;
@@ -473,7 +534,7 @@
                 patchItem(
                     card.getAttribute('data-widget-id'),
                     row.getAttribute('data-item-id'),
-                    !!t.checked
+                    { done: !!t.checked }
                 );
             });
         }

@@ -14,6 +14,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import unquote
 
 from api.shared_media import (
+    AUDIO_EXTS,
     IMAGE_EXTS,
     POSTER_SUFFIX,
     VIDEO_EXTS,
@@ -37,18 +38,22 @@ def _path_of(url: str) -> str:
 
 
 def kind_of(url: str, mime: str = "") -> Optional[str]:
-    """``image`` / ``video`` for a media URL (or attachment mime), else None."""
+    """``image`` / ``video`` / ``audio`` for a media URL (or attachment mime), else None."""
     m = str(mime or "").lower()
     if m.startswith("image/"):
         return "image"
     if m.startswith("video/"):
         return "video"
+    if m.startswith("audio/"):
+        return "audio"
     path = _path_of(url).lower()
     if path.endswith(POSTER_SUFFIX):
         return None  # derived thumb of a video, never shared on its own
     ext = PurePosixPath(path).suffix
     if ext in IMAGE_EXTS:
         return "image"
+    if ext in AUDIO_EXTS:
+        return "audio"
     if ext in VIDEO_EXTS:
         return "video"
     return None
@@ -85,7 +90,7 @@ def is_in_progress(metadata: Any) -> bool:
 
 
 def extract_refs(role: str, content: str, metadata: Any = None) -> List[Dict[str, Any]]:
-    """Every image/video one message shares, in order, each URL once.
+    """Every image/video/audio one message shares, in order, each URL once.
 
     Returns ``{url, kind, name, title, source}`` dicts. ``title`` is the
     markdown alt / title text (the lightbox caption), ``source`` one of the

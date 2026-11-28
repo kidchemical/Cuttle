@@ -43,7 +43,13 @@ M.setDone(t, 'a', true);
 assert.deepStrictEqual([t[0].done, t[0].children[0].done, t[0].children[1].done], [true, true, true]);
 M.setDone(t, 'a2', false);
 assert.deepStrictEqual([t[0].done, t[0].children[0].done, t[0].children[1].done], [false, true, false]);
-assert.deepStrictEqual(M.count(t), { done: 1, total: 4, pct: 25 });
+assert.deepStrictEqual(M.count(t), { done: 1, total: 4, hidden: 0, pct: 25 });
+assert.strictEqual(M.setHidden(t, 'a1', true), true);
+assert.strictEqual(t[0].children[0].hidden, true);
+assert.deepStrictEqual(M.count(t), { done: 1, total: 4, hidden: 1, pct: 25 });
+assert.strictEqual(M.setHidden(t, 'a1', false), true);
+assert.strictEqual(t[0].children[0].hidden, undefined);
+assert.deepStrictEqual(M.normalizeItems([{ id: 'h', text: 'H', done: false, hidden: true, children: [] }])[0].hidden, true);
 
 // Blank rows are dropped on save; comparison ignores them.
 const draft = tree();

@@ -161,40 +161,120 @@
         } catch (_) {}
     }
 
+    function normPathKey(p) {
+        return String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+    }
+
+    function dirtyChangeCount(r) {
+        if (!r || typeof r !== 'object') return 0;
+        const n = Number(r.pending_file_count);
+        if (Number.isFinite(n) && n > 0) return n;
+        const t = r.totals && Number(r.totals.files);
+        if (Number.isFinite(t) && t > 0) return t;
+        return Array.isArray(r.files) ? r.files.length : 0;
+    }
+
+    function isRepoDirty(r) {
+        return !!(r && (r.clean === false || dirtyChangeCount(r) > 0));
+    }
+
+    // Per-project repo dirty-state cache fed by pending_changes_panel.js so
+    // the composer chip and Repository selector know which sibling repo has
+    // active edits without adding git-status overhead to /api/git/repos.
+    const repoStateCache = new Map();
+
+    function mergeCachedRepoState(projectPath, repos) {
+        const cached = repoStateCache.get(normPathKey(projectPath));
+        if (!cached || !cached.size) return repos || [];
+        return (repos || []).map((r) => {
+            if (!r || !r.repo_root) return r;
+            const st = cached.get(normPathKey(r.repo_root));
+            if (!st) return r;
+            return Object.assign({}, r, {
+                clean: r.clean !== undefined ? r.clean : st.clean,
+                pending_file_count: r.pending_file_count !== undefined
+                    ? r.pending_file_count
+                    : st.pending_file_count,
+            });
+        });
+    }
+
+    function syncRepoStates(projectPath, repos, onChange) {
+        if (!projectPath || !Array.isArray(repos)) return;
+        const key = normPathKey(projectPath);
+        const byRoot = new Map();
+        repos.forEach((r) => {
+            if (!r || !r.repo_root) return;
+            byRoot.set(normPathKey(r.repo_root), {
+                clean: !!r.clean,
+                pending_file_count: dirtyChangeCount(r),
+            });
+        });
+        repoStateCache.set(key, byRoot);
+        if (!repos.length) return;
+        const prev = branchCache.path === projectPath
+            ? branchCache.branch
+            : readPersistedBranch(projectPath);
+        const next = activeRepoBranchLabel(repos, readActiveRepo(projectPath));
+        branchCache = { path: projectPath, branch: next, at: Date.now() };
+        writePersistedBranch(projectPath, next);
+        if (next !== prev && typeof onChange === 'function') onChange();
+    }
+
     // Pure: /api/git/repos list + remembered pick → Repository selector state.
-    // `show` only when 2+ repos; `selected` is the remembered repo when it is
-    // still detected, else the first (the server's default work tree).
+    // `show` only when 2+ repos; dirty repos sort to the top so active work is
+    // first. `selected` is the remembered repo when still detected, else first.
     function repoChoice(repos, persisted) {
         const list = (repos || []).filter((r) => r && r.repo_root);
-        const options = list.map((r) => ({
-            value: String(r.repo_root),
-            label: String(r.label || r.repo_root) + (r.branch ? '  (' + r.branch + ')' : ''),
-        }));
+        const sorted = list
+            .map((r, idx) => ({ r, idx, dirty: isRepoDirty(r) }))
+            .sort((a, b) => (a.dirty === b.dirty ? a.idx - b.idx : (a.dirty ? -1 : 1)))
+            .map((x) => x.r);
+        const options = sorted.map((r) => {
+            const parts = [];
+            if (r.branch) parts.push(String(r.branch));
+            const n = dirtyChangeCount(r);
+            if (n > 0) parts.push(n + ' change' + (n === 1 ? '' : 's'));
+            else if (r.clean === false) parts.push('changes');
+            return {
+                value: String(r.repo_root),
+                label: String(r.label || r.repo_root) + (parts.length ? '  (' + parts.join(' · ') + ')' : ''),
+            };
+        });
         const want = String(persisted || '');
         const selected = options.some((o) => o.value === want)
             ? want
             : (options.length ? options[0].value : '');
-        return { show: options.length > 1, options, selected };
+        return { show: options.length > 1, options, selected, count: options.length };
     }
 
-    // Pure: chip branch label — the active repo's branch when the project has
-    // several repos and one is picked, else the merged label.
+    // Pure: chip branch label — the pinned repo's branch when one is picked,
+    // else the sole dirty repo's branch, else the shared branch or "N repos".
     function activeRepoBranchLabel(repos, persisted) {
         const list = repos || [];
-        if (list.length > 1 && persisted) {
+        if (!list.length) return '';
+        if (list.length === 1) return String((list[0] && list[0].branch) || '').trim();
+        if (persisted) {
             const hit = list.find((r) => r && String(r.repo_root) === String(persisted));
             if (hit) return String(hit.branch || '').trim();
+        }
+        const dirty = list.filter(isRepoDirty);
+        if (dirty.length === 1) {
+            const br = String(dirty[0].branch || '').trim();
+            if (br) return br;
         }
         return distinctBranchLabel(list);
     }
 
     function distinctBranchLabel(repos) {
-        const branches = (repos || [])
+        const list = repos || [];
+        const branches = list
             .map((r) => String((r && r.branch) || '').trim())
             .filter(Boolean);
         if (!branches.length) return '';
         const distinct = branches.filter((b, i) => branches.indexOf(b) === i);
-        return distinct[0] + (distinct.length > 1 ? ' +' + (distinct.length - 1) : '');
+        if (distinct.length === 1) return distinct[0];
+        return list.length + ' repos';
     }
 
     async function refreshBranch(path, onChange, force) {
@@ -217,7 +297,8 @@
             const data = await resp.json().catch(() => null);
             const repos = (data && data.success && Array.isArray(data.repos)) ? data.repos : [];
             const projPath = (data && data.project && data.project.path) || path;
-            const branch = activeRepoBranchLabel(repos, readActiveRepo(projPath));
+            const mergedRepos = mergeCachedRepoState(projPath, repos);
+            const branch = activeRepoBranchLabel(mergedRepos, readActiveRepo(projPath));
             branchCache = { path, branch, at: Date.now() };
             writePersistedBranch(path, branch);
             if (branch !== prev && typeof onChange === 'function') onChange();
@@ -434,7 +515,7 @@
 
         // Fill the Repository selector; hide it unless the project path holds
         // 2+ repos. Resolves to the active repo root ('' = project default).
-        async function loadRepos(sel, projectId) {
+        async function loadRepos(sel, projectId, preferredRepoRoot) {
             if (!sel) return '';
             sel._projectPath = '';
             let repos = [];
@@ -453,9 +534,16 @@
             } catch (_) {
                 repos = [];
             }
-            const choice = repoChoice(repos, readActiveRepo(sel._projectPath));
+            const merged = mergeCachedRepoState(sel._projectPath, repos);
+            const choice = repoChoice(merged, preferredRepoRoot || readActiveRepo(sel._projectPath));
             const field = sel.closest ? sel.closest('.chip-config-field') : null;
-            if (field) field.style.display = choice.show ? '' : 'none';
+            if (field) {
+                field.style.display = choice.show ? '' : 'none';
+                const lbl = field.querySelector('.chip-config-field-label');
+                if (lbl) lbl.textContent = choice.show
+                    ? ('Repository (' + choice.count + ' detected)')
+                    : 'Repository';
+            }
             if (!choice.show) {
                 sel._repoRoot = '';
                 return '';
@@ -511,6 +599,7 @@
                 }
                 toast(data.message || ('Switched to ' + name), 'success');
                 if (typeof h.refreshBranch === 'function') h.refreshBranch();
+                if (typeof h.onBranchSwitched === 'function') h.onBranchSwitched();
             } catch (err) {
                 toast((err && err.message) || 'Branch switch failed', 'error');
                 if (sel) sel.disabled = false;
@@ -611,7 +700,9 @@
         }
         if (typeof document !== 'undefined') checkCanRegister();
 
-        function openProject() {
+        function openProject(opts) {
+            const initialRepoRoot = (opts && opts.repoRoot) ? String(opts.repoRoot) : '';
+            let pendingRepoRoot = initialRepoRoot;
             const defaultsMode = h.pickerMode === 'defaults';
             const projects = h.getProjects ? (h.getProjects() || []) : [];
             const current = h.getCurrentProject ? h.getCurrentProject() : null;
@@ -689,7 +780,9 @@
                         if (local) {
                             setVisible(newBranchInput, false);
                             setVisible(createBtn, false);
-                            loadRepos(repoSel, projSel.value)
+                            const prefer = pendingRepoRoot;
+                            pendingRepoRoot = '';
+                            loadRepos(repoSel, projSel.value, prefer)
                                 .then((root_) => loadBranches(branchSel, projSel.value, root_));
                         } else {
                             loadWorktrees(wtSel, projSel.value, h.getChatCheckout ? h.getChatCheckout() : '')
@@ -939,7 +1032,7 @@
 
     const api = {
         create, stickyAgentEntries, agentSettingOptions, withClearChoice, branchFor, refreshBranch,
-        repoChoice, activeRepoBranchLabel, projectNameFromPath,
+        repoChoice, activeRepoBranchLabel, syncRepoStates, projectNameFromPath,
     };
 
     const ns = (root.CuttleChipConfig = root.CuttleChipConfig || {});

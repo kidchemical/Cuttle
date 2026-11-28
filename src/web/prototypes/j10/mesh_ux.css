@@ -1,0 +1,146 @@
+/* J10 prototype: only the pieces Cuttle has no component for yet. Everything
+   else is chat_page.css (cuttle-action-form, progress-bar-item, radio-item, watch-*). */
+body { background: var(--bg-primary); color: var(--text-primary); font-family: var(--font-sans); margin: 0; }
+.proto { max-width: 1120px; margin: 0 auto; padding: var(--space-6); }
+.proto-section { margin-bottom: var(--space-8); }
+.proto-h { font-size: 1.05rem; margin: 0 0 var(--space-3); }
+.proto-h span { font-weight: 400; font-size: 0.8rem; color: var(--text-tertiary); margin-left: var(--space-2); }
+.proto-note { font-size: 12px; color: var(--text-tertiary); max-width: 760px; line-height: 1.45; }
+.proto-card { max-width: 720px; }
+.proto-danger { color: #f87171; }
+
+/* Status pills: today inline in mesh_page.html; J10 moves them to shared CSS. */
+.status-pill { font-size: 10px; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.02em; }
+.status-pill.running { background: rgba(56, 189, 248, 0.18); color: #38bdf8; }
+
+/* Dashboard */
+.mesh-summary { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
+.mesh-summary-item { font-size: 12px; padding: 6px 10px; border-radius: var(--radius-pill); background: var(--section-bg); border: 1px solid var(--border-color); color: var(--text-secondary); }
+.mesh-summary-item b { color: var(--text-primary); }
+.mesh-summary-hint { border-color: color-mix(in srgb, var(--accent-color) 45%, var(--border-color)); }
+.mesh-machines { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: var(--space-3); }
+.mesh-machine { padding: var(--space-3) var(--space-4); border-radius: var(--radius-lg); background: var(--bg-secondary); border: 1px solid var(--border-color); box-shadow: var(--edge-highlight), var(--shadow-1); display: flex; flex-direction: column; gap: var(--space-2); }
+.mesh-machine.is-off { opacity: 0.62; }
+.mesh-machine-head { display: flex; align-items: center; gap: var(--space-2); }
+.mesh-machine-name { font-weight: 650; flex: 1; }
+.mesh-you { font-weight: 400; font-size: 11px; color: var(--text-tertiary); margin-left: 6px; }
+.mesh-dot { width: 8px; height: 8px; border-radius: 50%; }
+.mesh-dot.is-ok { background: #4ade80; box-shadow: 0 0 6px #4ade80; }
+.mesh-dot.is-busy { background: #facc15; }
+.mesh-dot.is-off { background: #64748b; }
+.mesh-avail { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; padding: 2px 7px; border-radius: 4px; }
+.mesh-avail.is-ok { background: rgba(74, 222, 128, 0.16); color: #4ade80; }
+.mesh-avail.is-busy { background: rgba(250, 204, 21, 0.16); color: #facc15; }
+.mesh-avail.is-off { background: rgba(148, 163, 184, 0.2); color: #94a3b8; }
+.mesh-meters { display: grid; gap: 5px; }
+.mesh-meter { display: grid; grid-template-columns: 38px minmax(56px, 1fr) auto; align-items: center; gap: var(--space-2); font-size: 11px; }
+.mesh-meter span { color: var(--text-tertiary); }
+.mesh-meter em { font-style: normal; color: var(--text-secondary); font-variant-numeric: tabular-nums; text-align: right; }
+/* --u used, --h reserved-but-unused (never overlaps used), --k host-reserve line. */
+.mesh-meter i { position: relative; height: 7px; border-radius: var(--radius-pill); background-color: rgba(255, 255, 255, 0.07); overflow: hidden;
+  background-image: linear-gradient(90deg, var(--accent-color) 0 var(--u), transparent var(--u)),
+    repeating-linear-gradient(135deg, color-mix(in srgb, var(--accent-color) 55%, transparent) 0 2px, transparent 2px 4px);
+  background-size: 100% 100%, calc(var(--u) + var(--h, 0%)) 100%; background-repeat: no-repeat; }
+.mesh-meter i::after { content: ""; position: absolute; top: 0; bottom: 0; left: var(--k, 200%); width: 2px; background: #f59e0b; opacity: 0.8; }
+.mesh-meter.is-hot i { background-image: linear-gradient(90deg, var(--accent-color) 0 var(--k), #f59e0b var(--k) var(--u), transparent var(--u)); }
+.mesh-load { margin: 0; padding: var(--space-2) 0 0; border-top: 1px solid var(--border-color); display: grid; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.mesh-load-group { border-left: 3px solid #64748b; padding-left: 8px; }
+.mesh-load-group h4 { margin: 0 0 2px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-tertiary); font-weight: 600; }
+.mesh-load-group p { margin: 0; }
+.mesh-load-group.is-interactive { border-color: #facc15; }
+.mesh-load-group.is-interactive h4 { color: #facc15; }
+.mesh-load-group.is-agent { border-color: #38bdf8; }
+.mesh-load-group.is-infra { border-color: #64748b; }
+.mesh-load-group .is-queued { color: var(--text-tertiary); }
+.mesh-load b { color: var(--text-primary); font-weight: 600; }
+.mesh-machine-foot { font-size: 11px; color: var(--text-tertiary); margin-top: auto; }
+.mesh-machine-foot a { color: var(--accent-color); text-decoration: none; }
+.mesh-off-note { font-size: 12px; color: var(--text-secondary); margin: 0; }
+
+/* Approval form: target choices are radio-items grown into comparison cards. */
+.sched-choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2); margin-bottom: var(--space-3); }
+.sched-choice { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: var(--radius-md); border: 1px solid var(--border-color); background: rgba(255, 255, 255, 0.03); cursor: pointer; position: relative; }
+.sched-choice input { position: absolute; top: 11px; right: 10px; }
+.sched-choice.is-picked { border-color: var(--accent-color); background: color-mix(in srgb, var(--accent-color) 10%, transparent); box-shadow: var(--focus-ring); }
+.sched-name { font-weight: 650; font-size: 13px; padding-right: 20px; }
+.sched-name em { font-style: normal; font-weight: 500; font-size: 10px; color: var(--accent-color); text-transform: uppercase; margin-left: 4px; }
+.sched-stat { font-size: 11px; color: var(--text-secondary); }
+.sched-stat b { color: var(--text-primary); font-size: 13px; }
+.sched-stat.is-warn { color: #facc15; }
+.sched-pref { gap: var(--space-4); }
+.sched-why { margin: var(--space-2) 0; font-size: 12px; }
+.sched-why summary, .job-procs summary, .job-diag summary { cursor: pointer; color: var(--text-secondary); }
+.sched-table { border-collapse: collapse; margin-top: 6px; font-size: 12px; }
+.sched-table th, .sched-table td { padding: 4px 14px 4px 0; text-align: left; border-bottom: 1px solid var(--border-color); }
+.sched-table th { color: var(--text-tertiary); font-weight: 600; font-size: 10px; text-transform: uppercase; }
+.sched-remember { font-size: 12px; margin-top: var(--space-2); }
+
+/* Job card */
+.job-head { display: flex; align-items: center; gap: var(--space-2); margin-bottom: 6px; }
+.job-head .cuttle-action-form-title { margin: 0; flex: 1; }
+.job-time { font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.job-stages { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: var(--space-2); font-size: 11px; }
+.job-stages span { padding: 2px 8px; border-radius: var(--radius-pill); border: 1px solid var(--border-color); color: var(--text-tertiary); }
+.job-stages .is-done { color: #4ade80; border-color: rgba(74, 222, 128, 0.35); }
+.job-stages .is-done::before { content: "✓ "; }
+.job-stages .is-now { color: #38bdf8; border-color: #38bdf8; background: rgba(56, 189, 248, 0.1); }
+.job-procs, .job-diag { font-size: 12px; margin: 6px 0; }
+.job-procs ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; color: var(--text-secondary); }
+.job-procs-sum { color: var(--text-tertiary); margin-left: 6px; }
+.proc-kind { display: inline-block; min-width: 76px; font-size: 10px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.03em; }
+.proc-kind.is-work { color: #38bdf8; }
+.proc-kind.is-support { color: #a78bfa; }
+.proc-kind.is-watch { color: #94a3b8; }
+.job-diag pre { margin: 6px 0 0; padding: 8px 10px; border-radius: var(--radius-sm); background: rgba(0, 0, 0, 0.25); font-family: var(--font-mono); font-size: 11px; white-space: pre-wrap; color: var(--text-secondary); }
+.job-notice { font-size: 11px; color: var(--text-tertiary); border-left: 2px solid var(--border-color); padding-left: 8px; margin: 8px 0 0; }
+
+.proto-banner { font-size: 11px; color: #facc15; border: 1px dashed rgba(250, 204, 21, 0.4); border-radius: var(--radius-sm); padding: 4px 10px; display: inline-block; margin: 0 0 var(--space-4); }
+.mesh-dot.is-full { background: #f97316; }
+.mesh-avail.is-full { background: rgba(249, 115, 22, 0.16); color: #fb923c; }
+.mesh-fresh.is-live::before { content: "● "; color: #4ade80; }
+.mesh-fresh.is-dead { color: #f87171; }
+.mesh-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 11px; color: var(--text-tertiary); margin-top: var(--space-3); align-items: center; }
+.mesh-legend i { display: inline-block; width: 14px; height: 7px; border-radius: 3px; margin-right: 5px; vertical-align: 0; }
+.mesh-legend .lg-used { background: var(--accent-color); }
+.mesh-legend .lg-held { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--accent-color) 55%, transparent) 0 2px, transparent 2px 4px); }
+.mesh-legend .lg-free { background: rgba(255, 255, 255, 0.07); }
+.mesh-legend .lg-line { width: 2px; background: #f59e0b; }
+.sched-conf { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+.sched-conf.is-high { color: #4ade80; }
+.sched-conf.is-med { color: #facc15; }
+.sched-conf.is-low { color: #fb923c; }
+.sched-remember { display: grid; gap: 2px; }
+.sched-actions .cuttle-button, .job-actions .cuttle-button { width: auto; flex: 0 0 auto; padding: 8px 14px; }
+.proto-cards { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); align-items: start; }
+.proto-cards .proto-card { max-width: none; margin: 0; }
+.status-pill.cancelling { background: rgba(249, 115, 22, 0.18); color: #fb923c; }
+.job-cancel { margin: 8px 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 12px; color: var(--text-tertiary); }
+.job-cancel li::before { content: "○"; display: inline-block; width: 18px; }
+.job-cancel li.is-done { color: var(--text-secondary); }
+.job-cancel li.is-done::before { content: "✓"; color: #4ade80; }
+.job-cancel li.is-now { color: #fb923c; }
+.job-cancel li.is-now::before { content: "◐"; }
+.job-cancel em { font-style: normal; color: var(--text-tertiary); margin-left: 6px; font-variant-numeric: tabular-nums; }
+.job-hist { font-size: 12px; margin: 6px 0; }
+.job-hist summary { cursor: pointer; color: var(--text-secondary); }
+.job-spark { display: grid; grid-template-columns: 38px 1fr 90px; align-items: center; gap: var(--space-2); margin-top: 4px; font-size: 11px; color: var(--text-tertiary); }
+.job-spark svg { width: 100%; height: 24px; }
+.job-spark em { font-style: normal; text-align: right; color: var(--text-secondary); }
+.sp-use { fill: none; stroke: var(--accent-color); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.sp-res { stroke: #f59e0b; stroke-dasharray: 3 3; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.job-hist-note { margin: 4px 0 0; font-size: 11px; color: var(--text-tertiary); }
+.prefs .check-item { font-size: 13px; margin: 4px 0; }
+.prefs-table { width: 100%; }
+.sched-when { font-size: 11px; font-weight: 600; }
+.sched-when.is-now { color: #4ade80; }
+.sched-when.is-later { color: #38bdf8; }
+.sched-change { margin: 6px 0 0; font-size: 12px; color: var(--text-secondary); }
+.sched-snapshot { margin-top: 10px; font-size: 11px; color: var(--text-tertiary); }
+.mesh-health { font-size: 11px; color: var(--text-secondary); }
+.mesh-na, .mesh-meter.is-na em { color: var(--text-tertiary); font-style: italic; }
+.mesh-meter.is-na i { background: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.06) 0 4px, transparent 4px 8px); }
+.proc-kind.is-svc { color: #64748b; }
+.job-spark-axis { display: grid; grid-template-columns: 38px 1fr 1fr 1fr 90px; font-size: 10px; color: var(--text-tertiary); margin-left: var(--space-2); }
+.job-spark-axis span:nth-child(3) { text-align: center; }
+.job-spark-axis span:nth-child(4) { text-align: right; }
+.mesh-meter em, .mesh-you { white-space: nowrap; }

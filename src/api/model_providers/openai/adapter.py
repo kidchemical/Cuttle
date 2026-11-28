@@ -1,4 +1,4 @@
-"""OpenAI model discovery and text request translation (Chat / Responses)."""
+"""OpenAI model discovery and request translation."""
 from __future__ import annotations
 
 from api.model_providers.capabilities import temperature_value
@@ -6,7 +6,7 @@ from api.model_providers.capabilities import temperature_value
 import os
 import base64
 
-from ..types import ProviderManifest, TextRequest, SpeechResult, text_result
+from ..types import ImageGenerationResult, ProviderManifest, SpeechResult, TextRequest, text_result
 
 
 def client(manifest: ProviderManifest, timeout: float, key=None):
@@ -94,6 +94,20 @@ class Adapter:
         if not data:
             raise RuntimeError("TTS returned empty audio")
         return SpeechResult(bytes(data))
+
+    def generate_image(self, manifest, request):
+        with client(manifest, request.timeout) as sdk:
+            response = sdk.images.generate(model=request.model, prompt=request.prompt,
+                                           size=request.size, quality=request.quality,
+                                           n=1, output_format="png")
+        encoded = response.data[0].b64_json if response.data else None
+        if not encoded:
+            raise RuntimeError("Image API returned no image")
+        image = base64.b64decode(encoded, validate=True)
+        if not image.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise RuntimeError("Image API returned an invalid PNG")
+        usage = response.usage.model_dump(exclude_none=True) if response.usage else {}
+        return ImageGenerationResult(image, usage=usage)
 
     def transcribe(self, manifest, request):
         kwargs = dict(model=request.model, file=(request.filename, request.audio, request.mime))

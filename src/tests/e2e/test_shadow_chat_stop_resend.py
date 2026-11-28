@@ -316,6 +316,9 @@ EXPECTED_ROUTE_DENIES = frozenset({
     # Linked-account OAuth status (auth.js header probe): private provider
     # state, so the shadow keeps it a real 403.
     ("GET", "/api/auth/oauth/status"),
+    # Project-picker owner probe (chat_chip_config.js "Add project" gate):
+    # shadow tests never register projects, so it stays a real 403.
+    ("GET", "/api/projects/app/access"),
 })
 
 # Modern page preferences, empty-queue probes and VFX remain denied by the private shadow. Enumerate

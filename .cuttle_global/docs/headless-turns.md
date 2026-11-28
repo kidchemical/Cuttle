@@ -16,6 +16,17 @@ Cuttle harness agents (Cursor `agent -p`, etc.) are **one-shot** CLI runs per tu
   background shells that are still running keep going: Cuttle tells the chat when each
   one ends (a Cuttle notice turn with its output tail), so you pick the result up then.
   In-CLI tasks with no process of their own (Claude `Task` agents) end with the turn.
+  This wait needs **background detach** on for the agent (on by default; off via
+  setting `agent_background_detach` → `{"claude": false}` or `CUTTLE_BACKGROUND_DETACH=0`).
+  With detach off, the turn ends at its reply and the CLI is stopped about 3 s later;
+  background shells still running keep going and Cuttle tells the chat when each one ends,
+  as at the cap. (The CLI is killed without its shutdown handler: on SIGTERM Claude Code
+  stops its own background shells, output ending `[killed]`, CH-002815.) The next turn's
+  CLI reports those shells as "didn't finish before the previous session ended"; they did
+  not stop, so trust Cuttle's notice, not that line.
+  Check with `PYTHONPATH=src .venv/bin/python -c "from api.agent_harness.background_wait import detach_enabled; print(detach_enabled('claude'))"`;
+  when it prints `False`, launch anything that must outlive the reply detached (`systemd-run`,
+  [subagents.md](subagents.md)).
   Do not start background work you do not intend to wait for (dev servers).
   A background task reports by itself when it exits: never add a second task
   (`sleep` / `pgrep` loop, `Monitor`) to wait for it, since a waiter that never
@@ -37,6 +48,12 @@ Builds, uploads, model downloads, ComfyUI, etc.:
 
 Short work (Q&A, quick edits, seconds-long commands) needs no watch card.
 Deciding what to run, and how often: [expensive-runs.md](expensive-runs.md).
+
+**Agent steps vs OS jobs.** Multi-step agent work uses a Tasks gizmo early
+([gizmos.md](gizmos.md)): Studio's work panel and the host's background
+completion notices treat that checklist as the continue contract. Watch cards
+are for measurable OS progress (builds, downloads, mesh batches), not a
+substitute for Tasks items.
 
 ### Detached work: unit + `watch-unit` (never the harness's own background watch)
 

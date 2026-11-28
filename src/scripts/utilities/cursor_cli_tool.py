@@ -737,8 +737,14 @@ def _run_cursor_agent_stream_segment(
     model: Optional[str] = None,
     mode: Optional[str] = None,
     sandbox: Optional[str] = None,
+    steer: Any = None,
 ) -> Dict[str, Any]:
-    """Run one `agent -p` stream-json segment. Returns a result dict (never raises for timeout)."""
+    """Run one `agent -p` stream-json segment. Returns a result dict (never raises for timeout).
+
+    ``steer`` (``api.agent_harness.agents.cursor.segment_steer.CursorSteer``)
+    ends the segment early (``steer_cut``) at a safe boundary so the caller
+    can resume it with a mid-turn follow-up.
+    """
     import threading as _threading
     import queue as _queue
 
@@ -774,6 +780,7 @@ def _run_cursor_agent_stream_segment(
         "usage": None,
         "create_plan": None,
         "ask_question": None,
+        "steer_cut": False,
     }
 
     if cancelled():
@@ -817,6 +824,9 @@ def _run_cursor_agent_stream_segment(
     err_thread = _threading.Thread(target=_read_stderr, daemon=True)
     out_thread.start()
     err_thread.start()
+    if steer is not None:
+        # An empty line wakes the reader so an idle segment notices the steer.
+        steer.begin_segment(prompt, wake=lambda: lines_q.put(""))
 
     started = time.time()
     deadline = started + timeout
@@ -836,6 +846,7 @@ def _run_cursor_agent_stream_segment(
     session_id: Optional[str] = None
     timed_out = False
     was_cancelled = False
+    steer_cut = False
     reported_model: Optional[str] = None
     request_id: Optional[str] = None
     usage: Optional[Dict[str, Any]] = None
@@ -913,6 +924,18 @@ def _run_cursor_agent_stream_segment(
             continue
         if raw_line is None:
             break
+        if steer is not None and steer.should_cut():
+            steer_cut = True
+            emit("Sending your follow-up to Cursor Agent…")
+            try:
+                from api.chat_run_registry import _kill_proc
+                _kill_proc(proc)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            break
         line = (raw_line or "").strip()
         if not line:
             continue
@@ -923,6 +946,8 @@ def _run_cursor_agent_stream_segment(
 
         et = evt.get("type")
         sub = evt.get("subtype")
+        if steer is not None:
+            steer.on_event(et, sub, evt)
 
         # Per-call usage can appear on several event types; track peak context.
         if isinstance(evt.get("usage"), dict) and et != "result":
@@ -973,6 +998,8 @@ def _run_cursor_agent_stream_segment(
             if not piece:
                 continue
             delta_buf = _merge_cursor_assistant_delta(delta_buf, piece)
+            if steer is not None:
+                steer.output_text(delta_buf)
             preview = delta_buf.replace("\n", " ").strip()[-120:]
             if preview:
                 last_activity = "writing"
@@ -1096,6 +1123,7 @@ def _run_cursor_agent_stream_segment(
             "session_id": session_id,
             "timed_out": timed_out,
             "cancelled": was_cancelled or cancelled(),
+            "steer_cut": steer_cut,
             "errored": errored,
             "err": "".join(stderr_chunks).strip(),
             "returncode": proc.returncode,
@@ -1121,6 +1149,7 @@ def _cursor_agent_oneline_prompt(
     mode: Optional[str] = None,
     sandbox: Optional[str] = None,
     run_meta_out: Optional[Dict[str, Any]] = None,
+    steer: Any = None,
 ) -> Optional[str]:
     """Run a one-shot prompt via Cursor Agent CLI (`agent -p`); None if CLI missing.
 
@@ -1138,6 +1167,10 @@ def _cursor_agent_oneline_prompt(
 
     If ``run_meta_out`` is a dict, it is updated with requested/reported model,
     request_id, usage, and cwd for query logs / UI badges.
+
+    ``steer`` (a ``CursorSteer``) carries mid-turn follow-ups: each runs as one
+    more ``--resume`` segment of this turn and does not count against
+    ``max_segments``.
     """
     agent_argv = _resolve_cursor_agent_argv()
     if not agent_argv:
@@ -1414,8 +1447,22 @@ def _cursor_agent_oneline_prompt(
                     pass
             return assembled
 
+        segment_idx = -1
+        steer_segment = False
+
+        def _steer_next(*, final: bool) -> Optional[str]:
+            if steer is None or not live_resume:
+                return None
+            return steer.finish_or_take() if final else steer.take_pending()
+
         try:
-            for segment_idx in range(max_segments):
+            while True:
+                # Steer segments continue the same budget slot.
+                if not steer_segment:
+                    segment_idx += 1
+                if segment_idx >= max_segments:
+                    break
+                steer_segment = False
                 if _cancelled():
                     return "[CANCELLED] Cursor Agent run was cancelled (chat deleted or stopped)."
 
@@ -1435,6 +1482,7 @@ def _cursor_agent_oneline_prompt(
                     model=_opt_model,
                     mode=_opt_mode,
                     sandbox=_opt_sandbox,
+                    steer=steer,
                 )
                 if seg.get("proc") is not None:
                     segment_procs.append(seg["proc"])
@@ -1470,10 +1518,19 @@ def _cursor_agent_oneline_prompt(
                 if seg.get("cancelled"):
                     return "[CANCELLED] Cursor Agent run was cancelled (chat deleted or stopped)."
 
+                if seg.get("steer_cut"):
+                    steer_prompt = _steer_next(final=False)
+                    if steer_prompt:
+                        segment_prompt = steer_prompt
+                        steer_segment = True
+                        continue
+                    segment_prompt = _CURSOR_CONTINUE_PROMPT
+                    continue
+
                 if seg.get("timed_out"):
                     if live_resume and segment_idx + 1 < max_segments:
                         _emit("Continuing long agent run…")
-                        segment_prompt = _CURSOR_CONTINUE_PROMPT
+                        segment_prompt = _steer_next(final=False) or _CURSOR_CONTINUE_PROMPT
                         continue
                     out = _assemble_and_bridge(all_turns, last_delta, last_final)
                     if out:
@@ -1511,7 +1568,14 @@ def _cursor_agent_oneline_prompt(
                 ):
                     finish_nudges += 1
                     _emit("Agent stopped before answering — asking it to finish…")
-                    segment_prompt = _CURSOR_FINISH_PROMPT
+                    segment_prompt = _steer_next(final=False) or _CURSOR_FINISH_PROMPT
+                    continue
+                # A follow-up sent while this segment was finishing runs now,
+                # in the same turn; otherwise steering closes and later sends queue.
+                steer_prompt = _steer_next(final=True)
+                if steer_prompt:
+                    segment_prompt = steer_prompt
+                    steer_segment = True
                     continue
                 if out:
                     return _wrap(

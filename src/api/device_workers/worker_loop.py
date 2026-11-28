@@ -6,6 +6,7 @@ import functools
 import logging
 import threading
 import time
+import uuid
 from typing import Any, Callable, Optional
 
 from api.device_workers.capabilities import (
@@ -29,8 +30,13 @@ def _ads() -> dict:
     return collect_capabilities(interactive_priority=interactive_priority())
 
 
+# One id per worker process (a hot reload keeps it, a restart does not). The host
+# requeues what a previous process had claimed as soon as it sees a new one.
+_WORKER_RUN = uuid.uuid4().hex
+
+
 def _meta_from_ads(ads: dict) -> dict:
-    meta = {}
+    meta = {"worker_run": _WORKER_RUN}
     ver = str(ads.get("cuttle_version") or "").strip()
     rev = str(ads.get("cuttle_git_rev") or "").strip()
     boot = str(ads.get("boot_git_rev") or "").strip()
@@ -102,8 +108,13 @@ def _run_one(
     heartbeat,
     lease_seconds: int = 600,
     auth_token: Optional[str] = None,
+    telemetry: Optional[Callable[[], Any]] = None,
 ) -> None:
     """Execute one job while refreshing the claim lease in the background.
+
+    ``telemetry`` re-registers the worker's load (RAM, VRAM, processes) on the
+    same pulse, so admission, plans and the run card see this machine as it is
+    while the job runs, not as it was when the job was claimed.
 
     Long jobs (Cycles, Unity/compile shell) exceed the default lease (10m).
     Heartbeats carry optional progress so soft idle timeouts and Jobs UI can
@@ -114,8 +125,17 @@ def _run_one(
 
     jid = job.get("id")
     stop = threading.Event()
+    # Set when the host refuses a heartbeat: the job was cancelled (Jobs page, a
+    # watch card's Stop) or reclaimed. Executors poll ``_cancelled`` and stop.
+    cancelled = threading.Event()
     progress_lock = threading.Lock()
     latest_progress: dict = {}
+
+    def _beat(progress: Optional[dict] = None) -> None:
+        if heartbeat(jid, progress=progress) is False:
+            if not cancelled.is_set():
+                log.warning("job %s no longer claimed by this worker — stopping it", jid)
+            cancelled.set()
 
     def _on_progress(snap: Any) -> None:
         try:
@@ -126,30 +146,36 @@ def _run_one(
             latest_progress.clear()
             latest_progress.update(payload)
         try:
-            heartbeat(jid, progress=payload)
+            _beat(payload)
         except Exception:
             log.debug("job %s progress heartbeat failed", jid, exc_info=True)
 
     def _pulse() -> None:
-        # Refresh before the lease is halfway gone.
-        interval = max(30.0, min(120.0, float(lease_seconds) * 0.4))
+        # Often enough that a cancel lands within ~15 s; well inside the lease.
+        interval = max(5.0, min(15.0, float(lease_seconds) * 0.4))
         while not stop.wait(interval):
             try:
                 with progress_lock:
                     prog = dict(latest_progress) if latest_progress else None
-                heartbeat(jid, progress=prog)
+                _beat(prog)
             except Exception:
                 log.debug("job %s heartbeat failed", jid, exc_info=True)
+            if telemetry is not None:
+                try:
+                    telemetry()
+                except Exception:
+                    log.debug("job %s telemetry refresh failed", jid, exc_info=True)
 
     # Inject progress callback for executors that support it (not serialized).
     params = dict(job.get("params") or {})
     params["_on_progress"] = _on_progress
+    params["_cancelled"] = cancelled.is_set
     params["_job_id"] = str(jid or "")
     job_exec = dict(job)
     job_exec["params"] = params
 
     try:
-        heartbeat(jid)
+        _beat()
         pulse = threading.Thread(
             target=_pulse, name=f"job-lease-{jid}", daemon=True
         )
@@ -161,6 +187,10 @@ def _run_one(
             pulse.join(timeout=5)
         complete(jid, result)
         log.info("job %s succeeded type=%s", jid, job.get("type"))
+    except executor_mod.WorkloadStillRunning as e:
+        stop.set()
+        fail(jid, error=str(e), retry=e.retry, keep_hold=True)
+        log.warning("job %s ended but its workload may still run; keeping its reservation: %s", jid, e)
     except executor_mod.PartialRetryError as e:
         stop.set()
         fail(
@@ -179,6 +209,27 @@ def _run_one(
         stop.set()
         fail(jid, error=str(e), retry=True)
         log.warning("job %s retryable fail: %s", jid, e)
+
+
+def _release_ended(jobs: list, release: Callable[[str], Any]) -> None:
+    """Stop the workloads of ended jobs this worker still holds, then release each hold."""
+    from api.device_workers import executor as executor_mod
+
+    for job in jobs:
+        jid = str(job.get("id") or "")
+        try:
+            stopped = executor_mod.stop_workload(job)
+        except Exception:
+            log.warning("stopping ended job %s failed; keeping its reservation", jid, exc_info=True)
+            continue
+        if not stopped:
+            log.warning("ended job %s is still running here; keeping its reservation", jid)
+            continue
+        try:
+            release(jid)
+            log.info("released reservation of ended job %s", jid)
+        except Exception:
+            log.warning("release of job %s failed; retrying next tick", jid, exc_info=True)
 
 
 def _claim_caps(ads: dict) -> dict:
@@ -205,6 +256,15 @@ def _run_claimed(job: dict, run: Callable[[], None]) -> None:
         exec_node.start(str(job.get("id") or ""), run)
     else:
         run()
+
+
+def _touched(job_id: str, ok: bool) -> bool:
+    """Host-side store write landed: refresh its run's watch card (api.device_workers.run_watch)."""
+    if ok:
+        from api.device_workers import run_watch
+
+        run_watch.touch(job_id)
+    return ok
 
 
 def run_local_worker_loop(*, should_continue: Callable[[], bool]) -> None:
@@ -234,6 +294,7 @@ def run_local_worker_loop(*, should_continue: Callable[[], bool]) -> None:
             _maybe_reload_stale_code()
             ads = _ads()
             _local_register(store, ads)
+            _release_ended(store.held_after_end(wid), lambda jid: _touched(jid, store.release_hold(jid, wid)))
             caps = _claim_caps(ads)
             jobs = store.claim_jobs(
                 worker_id=wid,
@@ -245,20 +306,23 @@ def run_local_worker_loop(*, should_continue: Callable[[], bool]) -> None:
                 _run_claimed(job, functools.partial(
                     _run_one,
                     job,
-                    complete=lambda jid, result: store.complete_job(jid, wid, result=result),
-                    fail=lambda jid, error, retry, params_update=None, partial_result=None: store.fail_job(
-                        jid,
-                        wid,
-                        error=error,
-                        retry=retry,
-                        params_update=params_update,
-                        partial_result=partial_result,
-                    ),
-                    heartbeat=lambda jid, progress=None: store.heartbeat_job(
+                    complete=lambda jid, result: _touched(jid, store.complete_job(jid, wid, result=result)),
+                    fail=lambda jid, error, retry, params_update=None, partial_result=None, keep_hold=False: _touched(
+                        jid, store.fail_job(
+                            jid,
+                            wid,
+                            error=error,
+                            retry=retry,
+                            params_update=params_update,
+                            partial_result=partial_result,
+                            keep_hold=keep_hold,
+                        )),
+                    heartbeat=lambda jid, progress=None: _touched(jid, store.heartbeat_job(
                         jid, wid, lease_seconds=lease, progress=progress
-                    ),
+                    )),
                     lease_seconds=lease,
                     auth_token=local_token,
+                    telemetry=lambda: _local_register(store, _ads()),
                 ))
         except Exception as e:
             log.warning("local worker tick error: %s", e)
@@ -268,6 +332,20 @@ def run_local_worker_loop(*, should_continue: Callable[[], bool]) -> None:
             if not should_continue():
                 return
             time.sleep(1)
+
+
+def _register_payload(wid: str, ads: dict) -> dict:
+    return {
+        "worker_id": wid,
+        "hostname": ads.get("hostname"),
+        "os": ads.get("os"),
+        "capabilities": ads.get("capabilities"),
+        "storage": ads.get("storage"),
+        "load": ads.get("load"),
+        "interactive_priority": ads.get("interactive_priority"),
+        "ac_power": ads.get("ac_power"),
+        "meta": _meta_from_ads(ads),
+    }
 
 
 def run_remote_worker_loop(
@@ -297,38 +375,30 @@ def run_remote_worker_loop(
         try:
             _maybe_reload_stale_code()
             ads = _ads()
-            payload = {
-                "worker_id": client.worker_id,
-                "hostname": ads.get("hostname"),
-                "os": ads.get("os"),
-                "capabilities": ads.get("capabilities"),
-                "storage": ads.get("storage"),
-                "load": ads.get("load"),
-                "interactive_priority": ads.get("interactive_priority"),
-                "ac_power": ads.get("ac_power"),
-                "meta": _meta_from_ads(ads),
-            }
-            client.register(payload)
+            client.register(_register_payload(client.worker_id, ads))
             caps = _claim_caps(ads)
             jobs = client.claim(limit=1, capabilities=caps)
+            _release_ended(client.release, client.release_job)
             lease = lease_seconds()
             for job in jobs:
                 _run_claimed(job, functools.partial(
                     _run_one,
                     job,
                     complete=lambda jid, result: client.complete(jid, result),
-                    fail=lambda jid, error, retry, params_update=None, partial_result=None: client.fail(
+                    fail=lambda jid, error, retry, params_update=None, partial_result=None, keep_hold=False: client.fail(
                         jid,
                         error=error,
                         retry=retry,
                         params_update=params_update,
                         partial_result=partial_result,
+                        keep_hold=keep_hold,
                     ),
                     heartbeat=lambda jid, progress=None: client.job_heartbeat(
                         jid, progress=progress
                     ),
                     lease_seconds=lease,
                     auth_token=remote_token,
+                    telemetry=lambda: client.register(_register_payload(client.worker_id, _ads())),
                 ))
         except Exception as e:
             log.warning("remote worker tick error: %s", e)

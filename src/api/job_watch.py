@@ -379,6 +379,10 @@ def cancel_job(job_id: str) -> Dict[str, Any]:
         killed = kill_status_pids(pids)
     disarmed = ""
     stopped_unit = ""
+    if data.get("mesh_jobs") and state == "running":
+        from api.device_workers import run_watch
+
+        killed += run_watch.cancel(data)
     if data.get("unit_watch") and state == "running":
         # Stop means stop: the job's chat is not resumed for a job the user (or a
         # supervisor) ended on purpose. Without this mark the exit looks like a
@@ -981,8 +985,12 @@ def register_unit_watch(
     title: str = "",
     allow_inactive: bool = False,
     activity: Optional[Dict[str, Any]] = None,
+    mesh_jobs: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Record "resume this chat when ``unit`` (or ``pid``) exits" and return its card.
+
+    ``mesh_jobs`` watches a mesh run instead (``api.device_workers.run_watch``):
+    the card follows its jobs and the chat resumes once all of them have ended.
 
     The record outlives Flask and the agent's turn; ``poll_unit_watches`` (run by
     Flask's chat-ops pump and by the daemon) resolves it. Raises ``ValueError`` on anything that would make a
@@ -999,7 +1007,8 @@ def register_unit_watch(
         pid = int(pid or 0)
     except (TypeError, ValueError):
         raise ValueError("pid must be a number") from None
-    if not unit and pid <= 0:
+    mesh_jobs = [str(j) for j in (mesh_jobs or []) if str(j).strip()]
+    if not unit and pid <= 0 and not mesh_jobs:
         raise ValueError("pass --unit <systemd user unit> or --pid <n>")
     if unit and not re.fullmatch(r"[A-Za-z0-9@:_.-]{1,128}", unit):
         raise ValueError(f"invalid unit name {unit!r}")
@@ -1026,6 +1035,9 @@ def register_unit_watch(
     resume_message = str(resume_message or "").strip() or default_resume_message(job_id, unit=unit, pid=pid)
     if len(resume_message) > 18000:
         raise ValueError("resume message must be under 18000 characters")
+    if mesh_jobs:
+        label = str(label or "").strip() or f"Queued: {len(mesh_jobs)} mesh job(s)"
+        title = str(title or "").strip() or f"Mesh run — {job_id}"
     label = str(label or "").strip() or (f"Running: {unit}" if unit else f"Running: pid {pid}")
     title = str(title or "").strip() or (f"Detached job — {unit}" if unit else f"Detached job — pid {pid}")
     watch_pid = pid or int(state.get("pid") or 0)
@@ -1043,6 +1055,7 @@ def register_unit_watch(
         "unknown_polls": 0,
         "origin_query_id": os.environ.get("CUTTLE_AGENT_RUN_ID", ""),
         "watch_token": uuid.uuid4().hex,
+        **({"mesh_jobs": mesh_jobs} if mesh_jobs else {}),
     }
     write_status(
         job_id,
@@ -1057,6 +1070,7 @@ def register_unit_watch(
             "pid": watch_pid,
             "chat_session_id": str(int(sid)),
             "unit_watch": True,
+            **({"mesh_jobs": mesh_jobs} if mesh_jobs else {}),
         },
     )
     # An explicit id may be reused for a new run. Do not attach its old activity,
@@ -1085,7 +1099,9 @@ def unit_resume_text(record: Dict[str, Any], outcome: Dict[str, Any]) -> str:
     unit, pid = record.get("unit") or "", record.get("pid") or 0
     what = f"systemd unit `{unit}`" if unit else f"process {pid}"
     exit_code = outcome.get("exit")
-    if outcome.get("state") == "unknown":
+    if record.get("mesh_jobs") and outcome.get("summary"):
+        head = f"Mesh run `{record['id']}` has finished: {outcome['summary']}."
+    elif outcome.get("state") == "unknown":
         head = (f"Cuttle can no longer tell whether {what} is running "
                 f"({outcome.get('detail') or 'status unavailable'}).")
     elif outcome.get("state") == "gave_up":
@@ -1122,17 +1138,22 @@ def _resolve_unit_watch(record: Dict[str, Any], outcome: Dict[str, Any]) -> Opti
     claimed = _claim_record(record)
     if claimed is None:
         return None
-    stopped = bool(record.get("stopped_by_user"))
+    stopped = bool(record.get("stopped_by_user") or outcome.get("stopped_by_user"))
     if stopped:
+        # A mesh run's record label is the submit-time "Queued: …" placeholder; its outcome has the counts.
+        base = outcome.get("label") if record.get("mesh_jobs") else record.get("label")
         outcome = {**outcome, "state": "failed", "stopped_by_user": True,
-                   "label": "Stopped" + (f" — {record.get('label')}" if record.get("label") else "")}
+                   "label": "Stopped" + (f" — {base}" if base else "")}
     state = outcome.get("state")
     card_state = "done" if state == "done" else "failed"
     label = outcome.get("label") or ""
     try:
         previous = read_status(record["id"]) or {}
         write_status(record["id"], state=card_state, percent=100 if card_state == "done" else None,
-                     label=label, extra={"started_at": previous.get("started_at"),
+                     label=label, extra={**{k: v for k, v in (outcome.get("status_extra") or {}).items()
+                                            if k not in ("state", "percent", "label")},
+                                         **({"mesh_jobs": record["mesh_jobs"]} if record.get("mesh_jobs") else {}),
+                                         "started_at": previous.get("started_at"),
                                          "started_ts": record.get("created_ts"),
                                          "chat_session_id": str(record["chat_session_id"]),
                                          "unit": record.get("unit") or "", "pid": 0,
@@ -1184,6 +1205,11 @@ def _rewrite_pending(record: Dict[str, Any]) -> None:
 def check_unit_watch(record: Dict[str, Any], *, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
     """One pass over one record: its resolution, or None while the job still runs."""
     now = time.time() if now is None else now
+    if record.get("mesh_jobs"):
+        from api.device_workers import run_watch
+
+        outcome = run_watch.check(record, now=now)
+        return None if outcome is None else _resolve_unit_watch(record, outcome)
     unit, pid = record.get("unit") or "", int(record.get("pid") or 0)
     if unit:
         state = unit_state(unit)

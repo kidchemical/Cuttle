@@ -303,6 +303,16 @@
             scheduleSpaceActivityPoll(true);
         }
 
+        /** User-gesture close (× / middle-click): confirm first, a stray click
+         *  on the × otherwise drops the space and its pane layout. */
+        function requestCloseSpace(id) {
+            if (!CuttleSpaces.planSpaceClose(spacesState, id).ok) return;
+            const space = spacesState.spaces.find((s) => s.id === id);
+            const label = space ? '“' + spaceLabel(space) + '”' : 'this space';
+            if (typeof win.confirm === 'function' && !win.confirm('Close ' + label + '?')) return;
+            closeSpace(id);
+        }
+
         /** Saved-workspace payload: every space + group, with the active space's
          *  live layout folded in (its stored `root` is stale while it is live). */
         function exportSnapshot() {
@@ -334,9 +344,28 @@
             return true;
         }
 
-        function renameSpace(id, name) {
-            if (!CuttleSpaces.renameSpaceInState(spacesState, id, name)) return;
+        function renameSpace(id, name, shownLabel) {
+            if (!CuttleSpaces.renameSpaceInState(spacesState, id, name, shownLabel)) return;
             persistSpacesState();
+        }
+
+        // Chat titles by bare session id, refreshed from every sessions snapshot,
+        // so auto-named spaces can show what is open in them.
+        const chatTitleByBare = new Map();
+
+        function noteChatTitles(sessions) {
+            (Array.isArray(sessions) ? sessions : []).forEach((s) => {
+                const title = s && String(s.title || s.session_name || '').trim();
+                if (s && s.id != null && title) chatTitleByBare.set(CuttleSpaces.bareSid(s.id), title);
+            });
+        }
+
+        /** Tab label: the user's name, else the titles of the space's chats. */
+        function spaceLabel(space) {
+            if (!space) return '';
+            if (!space.autoName) return space.name;
+            const titles = spaceChatIds(space).map((sid) => chatTitleByBare.get(CuttleSpaces.bareSid(sid)));
+            return CuttleSpaces.autoSpaceLabel(titles, space.name);
         }
 
         // A press on the strip that blurs an open rename must not rebuild the tabs
@@ -354,13 +383,15 @@
             input.type = 'text';
             input.className = 'shell-space-rename';
             input.maxLength = 60;
-            input.value = space.name;
+            const shownLabel = spaceLabel(space);
+            input.value = shownLabel;
+            input.placeholder = 'Name from open chats';
             input.setAttribute('aria-label', 'Space name');
             let done = false;
             const finish = (commit) => {
                 if (done) return;
                 done = true;
-                if (commit) renameSpace(id, input.value);
+                if (commit) renameSpace(id, input.value, shownLabel);
                 if (stripPressed) renderAfterPress = true;
                 else renderSpaceTabs();
                 // The rename pinned the fullscreen titlebar; re-arm its auto-hide.
@@ -411,7 +442,7 @@
                     ? (CuttleSpaces.sanitizeColor(group.color) || CuttleSpaces.DEFAULT_COLOR)
                     : CuttleSpaces.sanitizeColor(s.color);
                 const active = s.id === spacesState.active;
-                const name = escapeHtml(s.name).replace(/"/g, '&quot;');
+                const name = escapeHtml(spaceLabel(s)).replace(/"/g, '&quot;');
                 html += '<div class="shell-space-tab' + (active ? ' is-active' : '') + (accent ? ' has-accent' : '') + '" role="tab" tabindex="0"'
                     + ' aria-selected="' + (active ? 'true' : 'false') + '"'
                     + ' data-space-id="' + escapeHtml(s.id) + '"'
@@ -420,6 +451,7 @@
                     + ' title="' + name + ' — drag to reorder, double-click to rename">'
                     + '<span class="shell-space-activity" aria-hidden="true" hidden></span>'
                     + '<span class="shell-space-name">' + name + '</span>'
+                    + '<span class="shell-space-count" hidden></span>'
                     + '<button type="button" class="shell-space-close" tabindex="-1" aria-label="Close space ' + name + '">×</button>'
                     + '</div>';
             });
@@ -611,7 +643,7 @@
                 }
             }
             if (typeof win.showToast === 'function') {
-                win.showToast('Moved pane to ' + (target.name || 'space'), 'success');
+                win.showToast('Moved pane to ' + (spaceLabel(target) || 'space'), 'success');
             }
             return true;
         }
@@ -630,7 +662,7 @@
             persistSpacesState();
             renderSpaceTabs();
             if (typeof win.showToast === 'function') {
-                win.showToast('Moved pane to ' + (dst.name || 'space'), 'success');
+                win.showToast('Moved pane to ' + (spaceLabel(dst) || 'space'), 'success');
             }
             return true;
         }
@@ -659,7 +691,7 @@
             setFocusedColumnDirect(idxT);
             broadcastPaneFocus();
             if (typeof win.showToast === 'function') {
-                win.showToast('Swapped panes with ' + (src.name || 'space'), 'success');
+                win.showToast('Swapped panes with ' + (spaceLabel(src) || 'space'), 'success');
             }
             return true;
         }
@@ -903,8 +935,28 @@
                     dot.setAttribute('aria-hidden', 'true');
                     tab.insertBefore(dot, tab.firstChild);
                 }
+                // Auto-named tabs follow their chats' titles; patch in place.
+                const tabLabel = space ? spaceLabel(space) : '';
+                const nameEl = tab.querySelector('.shell-space-name');
+                const relabel = !!nameEl && nameEl.textContent !== tabLabel;
+                if (relabel) {
+                    nameEl.textContent = tabLabel;
+                    tab.querySelector('.shell-space-close')?.setAttribute('aria-label', 'Close space ' + tabLabel);
+                }
+                // Chat count badge, only once a space holds more than one chat.
+                const countEl = tab.querySelector('.shell-space-count');
+                const chats = space ? new Set(spaceChatIds(space).map((sid) => CuttleSpaces.bareSid(sid))).size : 0;
+                if (countEl) {
+                    const text = chats > 1 ? String(chats) : '';
+                    if (countEl.textContent !== text) {
+                        countEl.textContent = text;
+                        countEl.hidden = !text;
+                        if (text) countEl.setAttribute('aria-label', text + ' chats');
+                        else countEl.removeAttribute('aria-label');
+                    }
+                }
                 const prev = dot.dataset.kind || '';
-                if (prev !== kind || dot.hidden === !!kind) {
+                if (relabel || prev !== kind || dot.hidden === !!kind) {
                     dot.dataset.kind = kind;
                     dot.className = 'shell-space-activity' + (kind ? ' is-' + kind : '');
                     if (kind) {
@@ -917,8 +969,7 @@
                         dot.removeAttribute('title');
                         dot.removeAttribute('aria-label');
                     }
-                    const spaceName = space ? space.name : '';
-                    tab.title = spaceName + ' — drag to reorder, double-click to rename'
+                    tab.title = tabLabel + ' — drag to reorder, double-click to rename'
                         + (kind ? ' · ' + (CuttleSpaces.LABEL[kind] || kind) : '');
                 }
             });
@@ -1145,6 +1196,7 @@
             try {
                 let rows = null;
                 const sessions = await fetchSpaceSessionsList();
+                noteChatTitles(sessions);
                 if (sessions) {
                     const byBare = new Map();
                     sessions.forEach((s) => {
@@ -1201,6 +1253,7 @@
                 return rows;
             },
             publish: sessions => {
+                noteChatTitles(sessions);
                 broadcastToFrames({type: 'cuttle-sessions-snapshot', sessions});
                 const rows = sessions.map(s => ({id: s.id,
                     running: !!(s.generating || s.awaiting_action), attention: s.attention,
@@ -1974,7 +2027,7 @@
                 if (!id) return;
                 if (e.target.closest('.shell-space-close')) {
                     e.stopPropagation();
-                    closeSpace(id);
+                    requestCloseSpace(id);
                     return;
                 }
                 switchSpace(id);
@@ -1989,7 +2042,7 @@
                 const id = tabId(e);
                 if (id && e.button === 1) {
                     e.preventDefault();
-                    closeSpace(id);
+                    requestCloseSpace(id);
                 }
             });
             hostEl.addEventListener('keydown', (e) => {
@@ -2038,6 +2091,7 @@
                 if (source) {
                     try { CuttleSpaces.notePushSnapshot(source, sessions, owned); } catch (_) {}
                 }
+                noteChatTitles(sessions);
                 refreshSpaceActivityLocalState();
                 syncSpaceActivityTabs();
             },

@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>J10 prototype — mesh UX</title>
+<!-- Static prototype: real Cuttle stylesheets, sample data. Hardware is the live inventory
+     (RTX 3090 / 32 GB host; laptop GPU as reported by the user, not yet in worker telemetry);
+     loads, jobs and timings are fixtures. All four views render one job + machine model. -->
+<link rel="stylesheet" href="../../css/ui_boot.css">
+<link rel="stylesheet" href="../../css/chat_page.css">
+<link rel="stylesheet" href="mesh_ux.css">
+</head>
+<body class="dark-mode">
+<main class="proto">
+<p class="proto-banner">Prototype · sample loads and jobs (fixtures) on the real machine inventory</p>
+
+<section class="proto-section" id="dashboard">
+  <h2 class="proto-h">1 · Mesh dashboard <span>Mesh page, top of the page</span></h2>
+
+  <div class="mesh-summary">
+    <div class="mesh-summary-item"><b>2</b> of 3 machines online</div>
+    <div class="mesh-summary-item"><b>1</b> job running · <b>2</b> queued for KCsTOWER</div>
+    <div class="mesh-summary-item"><b>9.0 GB</b> RAM · <b>7.0 GB</b> VRAM reserved</div>
+    <div class="mesh-summary-item mesh-summary-hint">Next heavy job: <b>KCsLaptop</b> after its current job (~2 m), or this PC now if you choose Fastest</div>
+  </div>
+
+  <div class="mesh-machines">
+    <article class="mesh-machine">
+      <header class="mesh-machine-head">
+        <span class="mesh-dot is-busy"></span>
+        <div class="mesh-machine-name">KCsMainFrame <span class="mesh-you">this PC · host</span></div>
+        <span class="mesh-avail is-busy" title="Accepts light jobs; heavy ones go elsewhere while you use these apps">Interactive</span>
+      </header>
+      <div class="mesh-meters">
+        <div class="mesh-meter"><span>CPU</span><i style="--u:58%"></i><em>58% · 16 threads</em></div>
+        <div class="mesh-meter"><span>RAM</span><i style="--u:76%;--h:0%;--k:85%"></i><em>24.2 used · 7.6 free / 32 GB</em></div>
+        <div class="mesh-meter"><span>GPU</span><i style="--u:35%"></i><em>35% · RTX 3090</em></div>
+        <div class="mesh-meter"><span>VRAM</span><i style="--u:49%;--h:0%;--k:85%"></i><em>11.8 used · 12.2 free / 24 GB</em></div>
+        <div class="mesh-meter"><span>Swap</span><i style="--u:9%"></i><em>1.4 / 16 GB</em></div>
+        <div class="mesh-meter"><span>Disk</span><i style="--u:22%"></i><em>88 MB/s</em></div>
+        <div class="mesh-meter"><span>Net</span><i style="--u:4%"></i><em>↓ 3 ↑ 1 MB/s</em></div>
+      </div>
+      <div class="mesh-load">
+        <div class="mesh-load-group is-interactive"><h4>You are using</h4><p><b>Unity Editor</b> · 9.6 GB RAM, 3.1 GB VRAM</p></div>
+        <div class="mesh-load-group is-agent"><h4>Agent work</h4><p><b>3 agent turns</b> CH-002824 · CH-002825 · CH-002829</p></div>
+        <div class="mesh-load-group is-infra"><h4>Machine services</h4><p>ComfyUI server :8188 (8.7 GB models, counted once) · host worker · 2 hand-off watchers</p></div>
+      </div>
+      <div class="mesh-health">GPU 64 °C · 212 W · desktop, mains power</div>
+      <footer class="mesh-machine-foot"><span class="mesh-fresh is-live">updated 2 s ago</span> · Cuttle 655201d2 · heavy jobs spared while Unity is focused · <a href="#">change</a></footer>
+    </article>
+
+    <article class="mesh-machine">
+      <header class="mesh-machine-head">
+        <span class="mesh-dot is-full"></span>
+        <div class="mesh-machine-name">KCsLaptop <span class="mesh-you">Client · LAN 4 ms</span></div>
+        <span class="mesh-avail is-full" title="No headroom for another GPU job until the current one ends">Busy · free in ~2 m</span>
+      </header>
+      <div class="mesh-meters">
+        <div class="mesh-meter"><span>CPU</span><i style="--u:41%"></i><em>41% · 16 threads</em></div>
+        <div class="mesh-meter"><span>RAM</span><i style="--u:34%;--h:8%;--k:85%"></i><em>10.9 used · 2.6 held · 18.1 free / 32 GB</em></div>
+        <div class="mesh-meter"><span>GPU</span><i style="--u:93%"></i><em>93% · RTX 5050 Laptop</em></div>
+        <div class="mesh-meter"><span>VRAM</span><i style="--u:85%;--h:3%;--k:95%"></i><em>6.8 used · 0.2 held · 1.0 free / 8 GB</em></div>
+        <div class="mesh-meter"><span>Swap</span><i style="--u:0%"></i><em>0 / 8 GB</em></div>
+        <div class="mesh-meter is-na"><span>Disk</span><i></i><em>not reported</em></div>
+        <div class="mesh-meter"><span>Net</span><i style="--u:18%"></i><em>↓ 22 ↑ 2 MB/s</em></div>
+      </div>
+      <div class="mesh-load">
+        <div class="mesh-load-group is-agent"><h4>Agent work</h4><p><b>wolf turntable</b> ComfyUI · 58% · ETA 1 m 55 s · CH-002819</p></div>
+        <div class="mesh-load-group is-infra"><h4>Machine services</h4><p>ComfyUI server :8188 (shared by jobs, counted once) · client daemon</p></div>
+      </div>
+      <div class="mesh-health">GPU 79 °C · on AC · <span class="mesh-na">fan speed not reported</span></div>
+      <footer class="mesh-machine-foot"><span class="mesh-fresh is-live">updated 1 s ago</span> · Cuttle 655201d2 ✓</footer>
+    </article>
+
+    <article class="mesh-machine is-off">
+      <header class="mesh-machine-head">
+        <span class="mesh-dot is-off"></span>
+        <div class="mesh-machine-name">KCsTOWER <span class="mesh-you">Client</span></div>
+        <span class="mesh-avail is-off">Offline</span>
+      </header>
+      <p class="mesh-off-note">No telemetry shown: the last report is 63 days old. 32 GB RAM. 2 queued blender_render jobs are pinned to it and wait; they are not moved without asking.</p>
+      <footer class="mesh-machine-foot"><span class="mesh-fresh is-dead">last report 25 Sep</span> · <a href="#">Wake on LAN</a> · <a href="#">Remove</a></footer>
+    </article>
+  </div>
+  <div class="mesh-legend">
+    <span><i class="lg-used"></i>in use</span><span><i class="lg-held"></i>reserved, not yet used</span><span><i class="lg-free"></i>free</span>
+    <span><i class="lg-line"></i>host-reserve line (amber past it)</span>
+    <span>Reservations are counted once: a job's reservation covers what it already uses; only the unused part is hatched.</span>
+  </div>
+  <p class="proto-note">Availability means "can take another workload now": Available · Interactive (light work only) · Busy (no headroom; shows queue) ·
+    Offline · Update needed. Telemetry older than 30 s turns grey with "delayed", and older than 2 min hides the meters. A metric the worker does not report shows "not reported", never 0%.</p>
+</section>
+
+<section class="proto-section" id="approval">
+  <h2 class="proto-h">2 · Execution approval form <span>chat card; shown when no saved rule covers the job · same snapshot as the dashboard</span></h2>
+  <div class="cuttle-action-form proto-card">
+    <div class="cuttle-action-form-title">Run on the mesh: fox turntable (ComfyUI, 48 frames)</div>
+    <div class="cuttle-action-form-desc">Needs 9 GB RAM + 7 GB VRAM. Cuttle suggests <b>KCsLaptop after its current job</b>: done in ~6 minutes
+      and Unity stays smooth. This PC would finish in ~3 minutes, but shares the GPU with Unity while it runs.</div>
+
+    <div class="sched-choices" data-choices>
+      <label class="sched-choice is-picked"><input type="radio" name="t" value="Queue on KCsLaptop" checked>
+        <span class="sched-name">KCsLaptop <em>suggested</em></span>
+        <span class="sched-when is-later">After current job · ~1 m 55 s</span>
+        <span class="sched-stat"><b>done in ~6 m 10 s</b> p90 7 m 15 s</span>
+        <span class="sched-stat">wait 1 m 55 + copy 6 s + run 4 m 10</span>
+        <span class="sched-conf is-med">6 past runs · medium confidence</span>
+        <span class="sched-stat">7 of 8 GB VRAM once wolf turntable frees it</span>
+        <span class="sched-stat">Unity: no effect</span>
+      </label>
+      <label class="sched-choice"><input type="radio" name="t" value="Run on this PC now">
+        <span class="sched-name">KCsMainFrame <em>this PC</em></span>
+        <span class="sched-when is-now">Available now</span>
+        <span class="sched-stat"><b>done in ~2 m 50 s</b> p90 3 m 20 s</span>
+        <span class="sched-stat">no wait · inputs already here</span>
+        <span class="sched-conf is-high">11 past runs · high confidence</span>
+        <span class="sched-stat">7 of 8.2 GB VRAM you allow (12.2 free − 4 GB kept for you)</span>
+        <span class="sched-stat is-warn">Unity: GPU shared ~3 min, editor frame rate drops ~30%</span>
+      </label>
+      <label class="sched-choice"><input type="radio" name="t" value="Split across both">
+        <span class="sched-name">Split across both</span>
+        <span class="sched-when is-later">This PC now, laptop after ~1 m 55 s</span>
+        <span class="sched-stat"><b>done in ~2 m 40 s</b> p90 3 m 30 s</span>
+        <span class="sched-stat">frames 1–30 here, 31–48 laptop · +15 s to coordinate</span>
+        <span class="sched-conf is-low">no split history · low confidence</span>
+        <span class="sched-stat">only ~10 s faster than this PC alone</span>
+        <span class="sched-stat is-warn">Unity: GPU shared ~2 min · if the laptop can't take its frames they run here; finished frames are kept</span>
+      </label>
+    </div>
+
+    <div class="form-field">
+      <div class="form-label">Optimise for</div>
+      <div class="cuttle-action-form-options sched-pref">
+        <label class="radio-item"><input type="radio" name="p"><span>Fastest finish</span></label>
+        <label class="radio-item"><input type="radio" name="p" checked><span>Balanced</span></label>
+        <label class="radio-item"><input type="radio" name="p"><span>Least disruption</span></label>
+      </div>
+      <div class="form-help">Balanced: up to ~5 extra minutes to keep Unity smooth. Fastest would pick this PC now; Least disruption also picks the laptop.</div>
+    </div>
+
+    <details class="sched-why" open>
+      <summary>Why, and what would change it</summary>
+      <table class="sched-table">
+        <tr><th></th><th>Laptop</th><th>This PC</th><th>Split</th></tr>
+        <tr><td>Capacity</td><td>after current job</td><td>now</td><td>now + later</td></tr>
+        <tr><td>Wait · copy · run</td><td>1 m 55 · 6 s · 4 m 10</td><td>0 · 0 · 2 m 50</td><td>0 · 6 s · 2 m 25 +15 s</td></tr>
+        <tr><td>Done in (p50 · p90)</td><td>6 m 10 · 7 m 15</td><td>2 m 50 · 3 m 20</td><td>2 m 40 · 3 m 30</td></tr>
+        <tr><td>Interactive impact</td><td>none</td><td>Unity GPU shared 3 m</td><td>Unity GPU shared 2 m</td></tr>
+      </table>
+      <p class="sched-change">Switches to this PC if Unity is idle for 2 minutes or you pick Fastest. If the laptop's current job overruns, this card updates its estimate before anything is queued.</p>
+    </details>
+
+    <div class="sched-remember">
+      <label class="check-item"><input type="checkbox"><span>Remember "Balanced" for ComfyUI jobs</span></label>
+      <label class="check-item"><input type="checkbox"><span>Run matching ComfyUI jobs without asking (you still get the job card and can undo)</span></label>
+    </div>
+    <div class="cuttle-action-form-actions sched-actions">
+      <button class="cuttle-button cuttle-button--primary" data-run-label>Queue on KCsLaptop</button>
+      <button class="cuttle-button">Keep queued, ask me later</button>
+      <button class="cuttle-button">Discard request</button>
+    </div>
+    <div class="sched-snapshot">Mesh state at 14:04:33 (same as the dashboard). Capacity is reserved when you click, in one step with admission; if it changed, the card re-plans instead of over-committing.</div>
+  </div>
+</section>
+
+<section class="proto-section" id="job">
+  <h2 class="proto-h">3 · Job monitoring card <span>chat card; the same component on the Jobs page</span></h2>
+  <div class="proto-cards">
+  <div class="cuttle-action-form proto-card">
+    <div class="job-head">
+      <span class="status-pill running">running</span>
+      <div class="cuttle-action-form-title">wolf turntable · KCsLaptop</div>
+      <span class="job-time">2 m 31 s · ETA 1 m 55 s</span>
+    </div>
+    <div class="job-stages">
+      <span class="is-done">Copy inputs</span><span class="is-done">Load model</span><span class="is-now">Sample</span><span>Decode</span><span>Return files</span>
+    </div>
+    <div class="cuttle-action-form-progress">
+      <div class="cuttle-action-form-progress-bars">
+        <div class="progress-bar-item progress-bar-item--primary">
+          <div class="progress-bar-head"><span class="progress-bar-name">Whole job</span><span class="progress-bar-detail">stage 3 of 5, weighted by past runs</span></div>
+          <div class="progress-row"><div class="progress-track"><div class="progress-bar" style="width:58%"></div></div><span class="progress-value">58%</span></div>
+        </div>
+        <div class="progress-bar-item progress-bar-item--worker">
+          <div class="progress-bar-head"><span class="progress-bar-name">Sample · frame 30 of 48</span><span class="progress-bar-detail">13.2 s / frame</span></div>
+          <div class="progress-row"><div class="progress-track"><div class="progress-bar" style="width:62%"></div></div><span class="progress-value">62%</span></div>
+        </div>
+        <div class="progress-bar-item progress-bar-item--secondary">
+          <div class="progress-bar-head"><span class="progress-bar-name">KSampler · step 14 of 20 (this frame)</span><span class="progress-bar-detail">1.9 it/s</span></div>
+          <div class="progress-row"><div class="progress-track"><div class="progress-bar" style="width:70%"></div></div><span class="progress-value">70%</span></div>
+        </div>
+      </div>
+      <div class="watch-previews"><img src="../../../img/cuttle-mascot_square.png" alt=""><img src="../../../img/cuttle-mascot_square.png" alt=""><img src="../../../img/cuttle-mascot_square.png" alt=""></div>
+      <div class="watch-resources">
+        <div class="watch-resource">Reserved 9 GB RAM, 7 GB VRAM · using 6.4 GB RAM, 6.8 GB VRAM</div>
+      </div>
+    </div>
+
+    <details class="job-hist">
+      <summary>Resource history <span class="job-procs-sum">peak VRAM 6.9 of 7.0 reserved · peak RAM 8.1 of 9.0</span></summary>
+      <div class="job-spark"><span>VRAM</span><svg viewBox="0 0 150 24" preserveAspectRatio="none"><line x1="0" y1="2" x2="150" y2="2" class="sp-res"/><polyline class="sp-use" points="0,22 12,20 24,9 36,4 60,3 90,3 120,3 150,3"/></svg><em>6.8 / 7.0 GB</em></div>
+      <div class="job-spark"><span>RAM</span><svg viewBox="0 0 150 24" preserveAspectRatio="none"><line x1="0" y1="2" x2="150" y2="2" class="sp-res"/><polyline class="sp-use" points="0,20 12,12 24,6 36,7 60,9 90,8 120,9 150,9"/></svg><em>6.4 / 9.0 GB</em></div>
+      <div class="job-spark"><span>GPU</span><svg viewBox="0 0 150 24" preserveAspectRatio="none"><polyline class="sp-use" points="0,22 12,22 24,10 36,3 60,2 90,3 120,2 150,2"/></svg><em>93%</em></div>
+      <div class="job-spark-axis"><span></span><span>14:02:11</span><span>14:03:20</span><span>14:04:33</span><span></span></div>
+      <p class="job-hist-note">Saved with the job when it ends; the next estimate for this workflow uses it.</p>
+    </details>
+    <details class="job-procs" open>
+      <summary>Processes · 4 <span class="job-procs-sum">1 workload · 1 supporting · 1 watcher · uses 1 machine service · nothing stale or orphaned</span></summary>
+      <ul>
+        <li><span class="proc-kind is-work">workload</span> comfyui prompt 7f3a · KCsLaptop · 6.8 GB VRAM</li>
+        <li><span class="proc-kind is-svc">uses service</span> ComfyUI server :8188 · belongs to KCsLaptop, shared, not ended with the job</li>
+        <li><span class="proc-kind is-support">supporting</span> input sync · finished</li>
+        <li><span class="proc-kind is-watch">watcher</span> chat hand-off · resumes CH-002819 once</li>
+      </ul>
+    </details>
+    <details class="job-diag">
+      <summary>Diagnostics</summary>
+      <pre>job 9c41e2 · admitted 14:02:11 (ram 9000 MB, vram 7000 MB, gpu 0) · Balanced, score 0.82
+lease renewed 14:04:40 · attempt 1 of 3</pre>
+    </details>
+    <div class="job-notice">2 stale "finished" notices for this job were merged into this card.</div>
+    <div class="cuttle-action-form-actions job-actions">
+      <button class="cuttle-button">Open outputs</button>
+      <button class="cuttle-button" title="Stops this run; frames 1–30 are kept, 31–48 run on this PC">Stop and rerun the rest here</button>
+      <button class="cuttle-button proto-danger">Cancel job</button>
+    </div>
+  </div>
+
+  <div class="cuttle-action-form proto-card is-cancelling">
+    <div class="job-head">
+      <span class="status-pill cancelling">cancelling</span>
+      <div class="cuttle-action-form-title">wolf turntable · KCsLaptop</div>
+      <span class="job-time">cancel asked 14:05:02</span>
+    </div>
+    <ol class="job-cancel">
+      <li class="is-done">Stop requested <em>14:05:02</em></li>
+      <li class="is-done">Worker acknowledged <em>14:05:03</em></li>
+      <li class="is-now">Workload stopping: ComfyUI interrupt sent, VRAM still 6.8 GB</li>
+      <li>Reservation released (9 GB RAM, 7 GB VRAM)</li>
+    </ol>
+    <div class="form-help">Stays "cancelling" until the worker confirms the workload stopped; only then is the reservation freed and the job shown as cancelled. Frames 1–30 are kept.</div>
+  </div>
+  </div>
+  <p class="proto-note">Agents get this card from the run itself and never start their own wait loop. Duplicate submits of the same job attach to this card instead of starting a second run.</p>
+</section>
+
+<section class="proto-section" id="prefs">
+  <h2 class="proto-h">4 · Scheduling preferences <span>Settings → Mesh; the approval form's checkboxes write here</span></h2>
+  <div class="cuttle-action-form proto-card prefs">
+    <div class="form-field">
+      <div class="form-label">Default strategy</div>
+      <div class="cuttle-action-form-options sched-pref">
+        <label class="radio-item"><input type="radio" name="d"><span>Fastest finish</span></label>
+        <label class="radio-item"><input type="radio" name="d" checked><span>Balanced</span></label>
+        <label class="radio-item"><input type="radio" name="d"><span>Least disruption</span></label>
+      </div>
+    </div>
+    <div class="form-field">
+      <div class="form-label">Protect interactive work</div>
+      <label class="check-item"><input type="checkbox" checked><span>Prefer other machines while Unity, Blender, ComfyUI UI or a game has focus on this PC</span></label>
+      <label class="check-item"><input type="checkbox" checked><span>Keep 6 GB RAM and 4 GB VRAM free on this PC for me</span></label>
+    </div>
+    <div class="form-field">
+      <div class="form-label">Run without asking</div>
+      <table class="sched-table prefs-table">
+        <tr><th>Job kind</th><th>Ask first?</th><th>Strategy</th></tr>
+        <tr><td>ComfyUI generation</td><td>No · card only</td><td>Balanced</td></tr>
+        <tr><td>Blender render</td><td>No · card only</td><td>Fastest</td></tr>
+        <tr><td>Tests and builds</td><td>No · card only</td><td>Least disruption</td></tr>
+        <tr><td>Paid API jobs (Tripo, cloud)</td><td><b>Always ask</b></td><td>—</td></tr>
+        <tr><td>New kinds, or needing over 80% of free VRAM, RAM or CPU on its machine</td><td><b>Always ask</b></td><td>—</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+</main>
+<script>
+  // Prototype only: the primary button follows the chosen target.
+  document.querySelectorAll('[data-choices] input').forEach(function (r) {
+    r.addEventListener('change', function () {
+      document.querySelectorAll('[data-choices] .sched-choice').forEach(function (c) { c.classList.toggle('is-picked', c.contains(r)); });
+      document.querySelector('[data-run-label]').textContent = r.value;
+    });
+  });
+</script>
+</body>
+</html>

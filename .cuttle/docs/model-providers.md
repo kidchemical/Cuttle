@@ -76,9 +76,10 @@ A model-list **401** is API authentication, independent of a CLI login or paid
 CLI subscription. Replace the saved API key under Providers → API Keys, test it,
 and refresh models. Account visibility still does not promise inference quota.
 
-Image/video generation and project adapter drop-ins remain future work. Provider
-folders and typed operation contracts allow additions without duplicating
-credentials and discovery. Adding a provider:
+Agents can generate audio and images using the same provider credentials. See
+the [media generation runbook](../../.cuttle_global/docs/media-generation.md).
+Provider folders and typed operation contracts share credentials and discovery.
+Adding a provider:
 `src/api/model_providers/ADDING_A_PROVIDER.md`.
 
 This is a repair of the established Background helpers workflow, so it ships

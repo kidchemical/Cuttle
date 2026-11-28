@@ -84,6 +84,21 @@ out.elapsedNeg = A.formatWatchElapsedSeconds(-5);
 out.elapsedDone = A.watchElapsedText({ state: 'done', elapsed: '3m 12s' });
 out.elapsedDoneSec = A.watchElapsedText({ state: 'failed', elapsed_sec: 90 });
 out.elapsedEmpty = A.watchElapsedText(null);
+out.etaRunning = A.watchEtaText({ state: 'running', eta_s: 250 });
+out.etaUnknown = A.watchEtaText({ state: 'running', eta_s: null });
+out.etaDone = A.watchEtaText({ state: 'done', eta_s: 250 });
+out.previewOk = A.safePreviewUrl('/output/jobs/abc/preview.jpg?t=12');
+out.previewBad = [A.safePreviewUrl('javascript:alert(1)'), A.safePreviewUrl('/output/../db/x'),
+  A.safePreviewUrl('https://evil/x.png')];
+out.details = A.renderWatchDetailsHtml({ state: 'running',
+  previews: [{ url: '/output/jobs/abc/preview.jpg?t=12' }, { url: 'javascript:x' }],
+  resources: [{ worker: 'desk', ram_total_gb: 31, ram_available_gb: 12.5, vram_used_mb: 9216, vram_total_mb: 24576,
+    gpu_pct: 97, reserved_ram_mb: 9000, reserved_vram_mb: 7168,
+    apps: [{ name: 'Unity Editor', rss_mb: 6144, vram_mb: 0, kind: 'interactive' },
+           { name: 'blender', rss_mb: 3072, vram_mb: 2048, kind: 'headless' }] }],
+  errors: [{ label: 'nacre', error: 'oom: went past its scope', oom: true }],
+  decision: { form: true } }, (x) => String(x).replace(/</g, '&lt;'));
+out.detailsEmpty = A.renderWatchDetailsHtml({ state: 'running' }, (x) => String(x));
 out.barsEmpty = A.normalizeWatchBars({});
 out.barsSingle = A.normalizeWatchBars({ percent: 150, label: 'L' });
 out.barsMulti = A.normalizeWatchBars({ percent: 10, label: 'L', bars: [
@@ -200,6 +215,17 @@ def test_elapsed_and_bars():
     assert res["elapsedDone"] == "3m 12s"
     assert res["elapsedDoneSec"] == "1m 30s"
     assert res["elapsedEmpty"] == ""
+    assert res["etaRunning"] == "~4m 10s left"
+    assert res["etaUnknown"] == "" and res["etaDone"] == ""
+    assert res["previewOk"] == "/output/jobs/abc/preview.jpg?t=12"
+    assert res["previewBad"] == ["", "", ""]
+    details = res["details"]
+    assert details.count("<img") == 1 and "javascript" not in details
+    assert "RAM 18.5/31 GB" in details and "VRAM 9.0/24.0 GB" in details and "GPU 97%" in details
+    assert "reserved 8.8 GB RAM / 7.0 GB VRAM" in details
+    assert "Unity Editor 6.0 GB" in details and "blender 3.0 GB (headless)" in details
+    assert "is-oom" in details and "oom:" not in details and "pick what to do" in details
+    assert res["detailsEmpty"] == ""
     # No percent = not measured: null, never a default 0 (the bar animates instead).
     assert res["barsEmpty"] == [{"id": "overall", "label": "Overall",
                                  "percent": None, "kind": "primary", "state": ""}]

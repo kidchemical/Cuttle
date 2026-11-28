@@ -208,6 +208,10 @@ def project_inventory(project_path: Optional[str]) -> Dict[str, List[str]]:
             ("rules", "rules", ("*.md",)),
         ):
             for name in _list_names(cuttle / sub, patterns):
+                # The scaffold's commands/README.md is a note, not a command
+                # (api.project_commands skips it the same way).
+                if key == "commands" and name.upper() == "README.MD":
+                    continue
                 if name not in inv[key]:
                     inv[key].append(name)
     from api.experimental.context_bundles import inventory

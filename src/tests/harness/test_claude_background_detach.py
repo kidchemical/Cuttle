@@ -85,6 +85,20 @@ if mode == "real_task":
     result("started the blender job")
     time.sleep(30)  # ignores EOF while its task runs
     sys.exit(0)
+if mode == "monitor":
+    # Like a Monitor whose command backgrounds a pipeline: under job control the
+    # pipeline gets its own process group, which the CLI's exit does not stop.
+    import signal, subprocess
+    sh = subprocess.Popen(["bash", "-c", "set -m; sleep 45 | cat & echo $! $(jobs -p) > %s; wait"
+                           % os.environ["FAKE_MON_PIDS"]], start_new_session=True,
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    while not os.path.getsize(os.environ["FAKE_MON_PIDS"]):
+        time.sleep(0.05)
+    result("watching the log")
+    while q.get(timeout=30) is not None:
+        pass
+    os.killpg(sh.pid, signal.SIGKILL)
+    sys.exit(0)
 bg([{"task_id": "b1", "task_type": "local_bash", "description": "watch CI"}])
 result("started the watcher")
 if mode == "finishes":
@@ -299,19 +313,55 @@ def test_message_sent_while_waiting_steers_into_the_live_run(tmp_path, monkeypat
         "v": 1, "steer_id": receipt["steer_id"], "state": receipt["state"],
         "delivered_at": receipt["delivered_at"], "mode": "detached", "reply": None, "covers": []}
     assert steered_rows == [{"steered": True, "steered_agent": "claude", "steer_idle": True}]
-    assert chat_delivery.is_busy(6103) is False
+    # Working phase holds the chat busy so a second begin_run cannot kill the CLI.
+    assert wait.phase == "working"
+    assert chat_delivery.is_busy(6103) is True
+    assert chat_delivery.try_begin(6103) is False
     # While the run answers, every device sees a typing bubble: live status is
     # active and flagged as a follow-up to the reply already in the transcript.
     live = _live(6103)
     assert live["active"] is True and live["followup"] is True
     assert live["status"] == "Claude Code is answering your message…"
-    assert wait.phase == "working"
     assert _until(lambda: saver.texts() == ["saw: and PINEAPPLE", "CI is green"])
     assert _until(lambda: _status(wait).get("state") == "done")
     # Both answers landed as bubbles; nothing is generating any more.
     assert _live(6103)["active"] is False
     assert not _live(6103).get("followup")
     assert wait.phase == "waiting"
+    assert chat_delivery.is_busy(6103) is False
+
+
+def test_finish_salvages_buffered_answer_when_no_followup_ran():
+    """Kill mid-answer: full buffered text becomes a follow-up bubble (not just the receipt clip)."""
+    from api import chat_delivery
+
+    wait = bw.BackgroundWait("6119", "claude")
+    wait.start(["watch CI"], pid=None)
+    saver = _Saver()
+    wait.bind(saver, {"agent_id": "claude"})
+    wait.working("Claude Code is answering your message…")
+    long = ("No, that was my error. The planned count is 131 non-verbal takes, not 150: "
+            "pain short 40, pain long 24, dying 20, jump 15, out-of-sprint 12, and 10 each "
+            "for the two sprint loops. Only about 50 of those end up in the game.")
+    wait.note_answer(long)
+    assert chat_delivery.is_busy(6119) is True
+    wait.finish("failed", "Stopped")
+    assert saver.texts() == [long]
+    assert wait.phase == "waiting"
+    assert chat_delivery.is_busy(6119) is False
+    assert bw.detached_wait(6119) is None
+
+
+def test_followup_clears_answer_buffer_so_finish_does_not_double_post():
+    wait = bw.BackgroundWait("6121", "claude")
+    wait.start(["watch CI"], pid=None)
+    saver = _Saver()
+    wait.bind(saver, {})
+    wait.working("following up")
+    wait.note_answer("partial draft that should be dropped")
+    wait.followup("final answer")
+    wait.finish("done", "Background work finished")
+    assert saver.texts() == ["final answer"]
 
 
 def test_detached_run_phases_drive_live_status_and_the_card():
@@ -605,10 +655,54 @@ def test_follow_up_before_bind_is_held_until_the_first_reply_is_saved(tmp_path, 
 
 
 @posix_only
-def test_without_a_background_wait_the_follow_up_merges_into_one_reply(tmp_path, monkeypatch):
-    res, wait, _ = _start(tmp_path, monkeypatch, "finishes", 6110, background=False)
-    assert res["output"] == "started the watcher\n\nCI is green"
-    assert "background_job" not in res
+def test_without_a_background_wait_the_turn_ends_at_its_reply_and_hands_the_work_off(tmp_path, monkeypatch):
+    """Detach off (one bubble per turn) must not mean a held reply (CH-002807-9):
+    the turn ends at the reply, the task keeps running, the chat hears when it ends."""
+    from api.agent_harness import background_handoff as bh
+    from api.chat_ops import store
+
+    launched = []
+    monkeypatch.setattr(bh, "_spawn_watcher", lambda path, sid: launched.append((path, sid)))
+    monkeypatch.setenv("CLAUDE_BACKGROUND_EXIT_GRACE_SEC", "0.5")
+    monkeypatch.setenv("FAKE_TASK_OUT", str(tmp_path / "b7.output"))
+    monkeypatch.setenv("FAKE_TASK_SEC", "4")
+    res, wait, took = _start(tmp_path, monkeypatch, "real_task", 6110, background=False)
+    assert took < 10 and res["success"] is True and "background_job" not in res
+    assert res["output"].startswith("started the blender job")
+    assert "Background work is still running; this chat will be told when it finishes" in res["output"]
+    assert "- blender job" in res["output"] and "Stopped waiting" not in res["output"]
+    assert steer.active_agent(6110) is None
+
+    assert len(launched) == 1 and launched[0][1] == 6110
+    record_path = launched[0][0]
+    task = bh.json.loads(record_path.read_text(encoding="utf-8"))["tasks"][0]
+    assert bh.running(task), "the reap must spare the handed-off task"
+    assert _until(lambda: not bh.running(task), timeout=15)
+    assert bh.check(record_path) is True
+    ops = [o for o in store.listing(6110) if o["kind"] == "notice"]
+    assert len(ops) == 1 and ops[0]["state"] == "pending"
+    text = ops[0]["payload"]["text"]
+    assert "Background work from an earlier turn finished. This is its completion notice" in text
+    assert "`blender job` (task b7)" in text and "blend saved" in text
+
+
+@posix_only
+def test_processes_the_cli_orphans_when_it_exits_are_ended(tmp_path, monkeypatch):
+    """CH-002819: a Monitor's ``tail -f | grep &`` outlived the CLI by 14 h,
+    reparented to systemd and still shown under the chat."""
+    import ctypes
+
+    # The pipeline reparents to the nearest subreaper; pytest standing in for
+    # systemd --user keeps it a pytest descendant, which the test kill guard needs.
+    assert ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) == 0  # PR_SET_CHILD_SUBREAPER
+    pids_file = tmp_path / "mon.pids"
+    pids_file.write_text("", encoding="utf-8")
+    monkeypatch.setenv("FAKE_MON_PIDS", str(pids_file))
+    res, _wait, took = _start(tmp_path, monkeypatch, "monitor", 6111, background=False)
+    assert res["success"] is True and res["output"].startswith("watching the log")
+    pids = [int(x) for x in pids_file.read_text(encoding="utf-8").split()]
+    assert len(pids) == 2
+    assert _until(lambda: all(_gone(p) for p in pids), timeout=5), "the orphaned pipeline must not outlive the turn"
 
 
 def test_off_switch_env_and_setting(monkeypatch):

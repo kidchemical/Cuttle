@@ -81,6 +81,22 @@
     color: var(--studio-ink-faint);
 }
 
+:root.cuttle-studio .work-list-bar {
+    height: 3px;
+    margin: 0 0 var(--studio-space-3);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--studio-ink-faint) 28%, transparent);
+    overflow: hidden;
+}
+
+:root.cuttle-studio .work-list-bar > span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--studio-accent, var(--studio-ink));
+    transition: width 0.2s ease;
+}
+
 :root.cuttle-studio .work-panel .work-task-list {
     list-style: none;
     margin: 0;

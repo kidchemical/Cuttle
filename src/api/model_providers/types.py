@@ -111,6 +111,22 @@ class SpeechResult:
 
 
 @dataclass(frozen=True)
+class ImageGenerationRequest:
+    prompt: str
+    model: str
+    size: str = "1024x1024"
+    quality: str = "medium"
+    timeout: float = 180
+
+
+@dataclass(frozen=True)
+class ImageGenerationResult:
+    image: bytes = field(repr=False)
+    mime: str = "image/png"
+    usage: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class TranscriptionRequest:
     audio: bytes = field(repr=False)
     model: str

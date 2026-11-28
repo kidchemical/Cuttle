@@ -59,7 +59,16 @@ their processes exit. Re-enabling updates aggregate limits on the next attachmen
 Attachment occurs synchronously after process creation at
 `agent_process.attach_to_chat_run`, before the caller continues. Processes may
 execute before attachment, so this is best-effort resource management. It does
-not guarantee host stability or identify every OOM termination in chat replies.
+not guarantee host stability.
+
+A process killed at the ceiling takes its whole scope with it, CLI included
+(`OOMPolicy=kill`). The dead scope stays behind as a failed unit
+(`CollectMode=inactive`) so the failed turn can read `Result=oom-kill`: the
+kernel (`run_agent_web_command`) asks `resource_scope.oom_notice(chat)` and
+leads the reply with "Stopped by the agent memory limit", then resets the unit.
+Results nobody read (Flask restarted first) are cleared on the next process's
+first attachment. A kill by the host's global OOM killer, outside these
+ceilings, is not identified.
 No host service or existing turn is stopped to apply settings.
 
 The single registration hook is the removal/replacement boundary; no transcript

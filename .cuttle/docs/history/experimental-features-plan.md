@@ -9,7 +9,7 @@ Two connected subsystems:
 
 Status: **shipped design record / history** (Python + client + Electron + tests).
 Operational guidance lives in
-[`experimental-features.md`](experimental-features.md); treat feature-specific
+[`experimental-features.md`](../experimental-features.md); treat feature-specific
 details here as point-in-time. It replaces the original plan's "decision
 requested" section with the decisions actually taken.
 

@@ -85,6 +85,9 @@ These are **not** user-interface surfaces. An agent reading a Discord channel is
 
 Retained Discord agent-ops live under `src/api/discord_ops/` (token + confirmed REST post) and `src/api/discord_cli/` (read-only). Public contracts: `python -m api.discord_cli`, action id `discord.post`. `project_actions.py` remains a thin dispatcher so action identifiers stay stable.
 
+For a possible external desktop driver and local CLI integration, see the
+[desktop control evaluation](../../.cuttle/docs/desktop-control.md).
+
 ## What Cuttle is not
 
 Cuttle is not fundamentally a Discord bot. Discord read/post are optional agent operations. External chat platforms are future optional surface adapters, not core execution.

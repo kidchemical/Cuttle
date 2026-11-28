@@ -56,20 +56,41 @@ const ctrl = A.create({});
 out.api = Object.keys(ctrl).sort();
 out.branchEmpty = A.branchFor('no-such-path');
 
-// repoChoice: Repository selector only for 2+ repos; remembered pick wins
-// while still detected, else the first (server default) work tree.
+// repoChoice: Repository selector only for 2+ repos; dirty repos sort first;
+// remembered pick wins while still detected, else the first work tree.
 const two = [
-  { repo_root: '/p/A', label: 'A', branch: 'master' },
-  { repo_root: '/p/B', label: 'B', branch: 'dev' },
+  { repo_root: '/p/A', label: 'A', branch: 'master', clean: true, pending_file_count: 0 },
+  { repo_root: '/p/B', label: 'B', branch: 'dev', clean: true, pending_file_count: 0 },
+];
+const twoOneDirty = [
+  { repo_root: '/p/A', label: 'A', branch: 'main', clean: true, pending_file_count: 0 },
+  { repo_root: '/p/B', label: 'B', branch: 'master', clean: false, pending_file_count: 4 },
+];
+const twoBothDirty = [
+  { repo_root: '/p/A', label: 'A', branch: 'main', clean: false, pending_file_count: 1 },
+  { repo_root: '/p/B', label: 'B', branch: 'master', clean: false, pending_file_count: 4 },
+];
+const twoSameBranch = [
+  { repo_root: '/p/A', label: 'A', branch: 'main', clean: true },
+  { repo_root: '/p/B', label: 'B', branch: 'main', clean: true },
 ];
 out.repoOne = A.repoChoice([two[0]], '');
 out.repoTwo = A.repoChoice(two, '/p/B');
 out.repoStale = A.repoChoice(two, '/p/gone');
 out.repoNone = A.repoChoice([], '');
-// Chip label: the picked repo's branch, else the merged label.
+out.repoDirtyFirst = A.repoChoice(twoOneDirty, '');
+// Chip label: pinned repo wins, else sole dirty repo, else shared branch or "N repos".
 out.labelPicked = A.activeRepoBranchLabel(two, '/p/B');
+out.labelPickedOverridesDirty = A.activeRepoBranchLabel(twoOneDirty, '/p/A');
 out.labelMerged = A.activeRepoBranchLabel(two, '');
+out.labelSoleDirty = A.activeRepoBranchLabel(twoOneDirty, '');
+out.labelBothDirty = A.activeRepoBranchLabel(twoBothDirty, '');
+out.labelSameBranch = A.activeRepoBranchLabel(twoSameBranch, '');
 out.labelSingle = A.activeRepoBranchLabel([two[1]], '/p/A');
+let syncChanges = 0;
+A.syncRepoStates('/p', twoOneDirty, () => { syncChanges += 1; });
+out.syncBranch = A.branchFor('/p');
+out.syncChanges = syncChanges;
 out.clearChoice = A.withClearChoice([{ value: '7', label: 'Demo' }]);
 // projectNameFromPath: Add project's default name = the folder's last segment.
 out.names = ['/home/u/Dev/Cuttle/', 'C:\\\\Dev\\\\Game', 'Proj', '/', 'D:\\\\', '~/', ''].map(A.projectNameFromPath);
@@ -112,15 +133,25 @@ def test_helper_outputs():
     assert [e["id"] for e in out["entries"]] == ["cursor", "codex"]
     assert out["entries"][0]["prefix"] == "/cursor "
     assert out["repoOne"]["show"] is False
-    assert out["repoNone"] == {"show": False, "options": [], "selected": ""}
+    assert out["repoNone"] == {"show": False, "options": [], "selected": "", "count": 0}
     assert out["repoTwo"]["show"] is True
+    assert out["repoTwo"]["count"] == 2
     assert out["repoTwo"]["selected"] == "/p/B"
     assert [o["value"] for o in out["repoTwo"]["options"]] == ["/p/A", "/p/B"]
     assert out["repoTwo"]["options"][1]["label"] == "B  (dev)"
     assert out["repoStale"]["selected"] == "/p/A"
+    assert [o["value"] for o in out["repoDirtyFirst"]["options"]] == ["/p/B", "/p/A"]
+    assert out["repoDirtyFirst"]["selected"] == "/p/B"
+    assert out["repoDirtyFirst"]["options"][0]["label"] == "B  (master · 4 changes)"
     assert out["labelPicked"] == "dev"
-    assert out["labelMerged"] == "master +1"
+    assert out["labelPickedOverridesDirty"] == "main"
+    assert out["labelMerged"] == "2 repos"
+    assert out["labelSoleDirty"] == "master"
+    assert out["labelBothDirty"] == "2 repos"
+    assert out["labelSameBranch"] == "main"
     assert out["labelSingle"] == "dev"
+    assert out["syncBranch"] == "master"
+    assert out["syncChanges"] == 1
     assert out["clearChoice"][0] == {"value": "", "label": "None — use starred default"}
     assert out["clearChoice"][1]["value"] == "7"
 

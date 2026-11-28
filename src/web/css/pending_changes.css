@@ -605,12 +605,42 @@
 }
 
 .pending-changes-branch {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-family: inherit;
     font-size: 0.68rem;
     color: var(--text-secondary);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    padding: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 70%;
+    cursor: default;
+}
+
+.pending-changes-branch.is-clickable {
+    padding: 2px 6px;
+    cursor: pointer;
+    transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.pending-changes-branch.is-clickable:hover,
+.pending-changes-branch.is-clickable:focus-visible {
+    color: var(--text-primary);
+    background: color-mix(in srgb, var(--accent-color, #3b82f6) 12%, transparent);
+    border-color: color-mix(in srgb, var(--accent-color, #3b82f6) 40%, var(--border-color));
+    outline: none;
+}
+
+.pending-changes-branch-caret {
+    font-size: 0.6rem;
+    opacity: 0.7;
+    margin-left: 1px;
+    flex-shrink: 0;
 }
 
 .pending-changes-branch-project + .pending-changes-branch-name::before {

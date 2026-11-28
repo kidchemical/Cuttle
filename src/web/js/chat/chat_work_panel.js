@@ -166,25 +166,34 @@
     }
 
     function itemHtml(item) {
-        const kids = Array.isArray(item.children) ? item.children : [];
+        if (item && item.hidden === true) return '';
+        const kids = (Array.isArray(item.children) ? item.children : []).filter((k) => k && k.hidden !== true);
         const nested = kids.length
             ? '<ul class="chat-widget-task-list">' + kids.map(itemHtml).join('') + '</ul>'
             : '';
+        // Work panel is a compact checklist; hide/unhide lives in the Tasks dock.
         return tasksLib().taskRowHtml(item, {
             studio: true,
             short: true,
             shared: false,
+            hideable: false,
             ownerHtml: ownerHtml,
             childrenHtml: nested,
         });
     }
 
     function listHtml(task) {
-        const count = task.counts.done + '/' + task.counts.total;
+        const done = Number(task.counts && task.counts.done) || 0;
+        const total = Number(task.counts && task.counts.total) || 0;
+        const count = done + '/' + total;
+        const pct = total > 0 ? Math.round((100 * done) / total) : 0;
+        const rows = (task.items || []).map(itemHtml).filter(Boolean).join('');
         return '<section class="work-list" data-list-id="' + esc(task.id) + '" aria-label="' + esc(task.title) + '">'
             + '<header class="work-list-head"><span class="work-list-title">' + esc(task.title) + '</span>'
             + '<span class="work-list-count">' + esc(count) + '</span></header>'
-            + '<ul class="chat-widget-task-list work-task-list">' + task.items.map(itemHtml).join('') + '</ul>'
+            + '<div class="work-list-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'
+            + pct + '" aria-label="' + esc(count + ' done') + '"><span style="width:' + pct + '%"></span></div>'
+            + '<ul class="chat-widget-task-list work-task-list">' + rows + '</ul>'
             + '</section>';
     }
 

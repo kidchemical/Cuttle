@@ -7,7 +7,7 @@ execute: prompt
 
 # Cleanup idle chat sessions
 
-Follow the project skill **cuttle-cleanup-sessions**
+Follow the global skill **cuttle-cleanup-sessions**
 (`.cuttle_global/skills/cuttle-cleanup-sessions/SKILL.md`).
 
 ## Do this
@@ -23,4 +23,5 @@ Follow the project skill **cuttle-cleanup-sessions**
 3. Unless the user already said to delete now, show the dry-run summary, then delete with the same `--hours` (omit `--dry-run`). Keep starred unless they ask otherwise (`--include-starred`).
 4. Reply with counts: matched / deleted / starred skipped.
 
-Do not restart Flask. Do not hard-delete DB rows.
+A real run also removes the deleted chats' upload folders; add `--skip-uploads`
+if the user wants to keep the files. Do not restart Flask. Do not hard-delete DB rows.
