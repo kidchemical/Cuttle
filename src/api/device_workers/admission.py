@@ -134,7 +134,10 @@ def admit(
     vram_mb = int(need.get("vram_mb") or 0)
     gpu_slots = int(need.get("gpu_slots") or 0)
     if vram_mb or gpu_slots:
-        gpus = [g for g in (load.get("gpus") or []) if isinstance(g, dict)]
+        # A GPU without both memory readings is unknown, never "0 MB used".
+        gpus = [g for g in (load.get("gpus") or []) if isinstance(g, dict)
+                and isinstance(g.get("vram_used_mb"), (int, float))
+                and isinstance(g.get("vram_total_mb"), (int, float))]
         if not gpus:
             return None, "worker reports no GPU telemetry"
         best: Optional[Tuple[int, int]] = None

@@ -85,6 +85,11 @@ def test_admission_takes_the_smaller_of_budget_and_live_headroom():
     res, why = admission.admit(need, _load(), [], telemetry_age=600)
     assert res is None and "telemetry" in why
     assert admission.admit({}, {}, [], telemetry_age=1e9) == ({}, "")
+    # A GPU line with no memory reading is unknown, not an empty GPU.
+    blind = _load()
+    blind["gpus"] = [{k: v for k, v in g.items() if k != "vram_used_mb"} for g in blind["gpus"]]
+    res, why = admission.admit(need, blind, [], telemetry_age=5)
+    assert res is None and why == "worker reports no GPU telemetry"
 
 
 def test_memory_a_service_already_holds_counts_as_free_for_its_own_jobs():
