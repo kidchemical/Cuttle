@@ -1,5 +1,5 @@
 """
-Shared chat media staging for markdown images / video in Cuttle bubbles.
+Shared chat media staging for markdown images / video / audio in Cuttle bubbles.
 
 Agents (and auto-rewrite) copy files into ``<home>/output/shared/`` so LAN/phone
 clients can preview via ``/output/shared/<id>.ext``. Staged copies expire after
@@ -7,6 +7,7 @@ clients can preview via ``/output/shared/<id>.ext``. Staged copies expire after
 Electron host start.
 
 Videos also get a mid-frame ``*.poster.jpg`` sidecar (ffmpeg) for chat thumbs.
+Audio opens in the shared lightbox player (same thumb → lightbox path as video).
 """
 
 from __future__ import annotations
@@ -28,7 +29,11 @@ shared_media_bp = Blueprint("shared_media", __name__)
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
 VIDEO_EXTS = {".mp4", ".webm", ".mov", ".m4v", ".ogg", ".ogv"}
-MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS
+# Clear audio-only containers. ``.ogg`` / ``.webm`` stay in VIDEO_EXTS (existing
+# thumbs + video element still play audio-only files); use ``type="audio"`` on
+# ``<media>`` when the agent wants the audio thumb/lightbox path for those.
+AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".aac", ".opus", ".oga"}
+MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS | AUDIO_EXTS
 
 # Markdown image + <media src="..."/> local-path rewrite
 _MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
@@ -69,6 +74,8 @@ def media_kind(path_or_name: str) -> Optional[str]:
     ext = Path(path_or_name).suffix.lower()
     if ext in IMAGE_EXTS:
         return "image"
+    if ext in AUDIO_EXTS:
+        return "audio"
     if ext in VIDEO_EXTS:
         return "video"
     # poster sidecars are images for serving, but named *.poster.jpg
@@ -693,7 +700,7 @@ def rewrite_local_media_refs(
 @shared_media_bp.route("/api/shared-media/stage", methods=["POST"])
 @owner_required
 def api_shared_media_stage():
-    """Copy a local image/video into /output/shared/ for chat previews (LAN-safe)."""
+    """Copy a local image/video/audio into /output/shared/ for chat previews (LAN-safe)."""
     try:
         data = request.get_json(silent=True) or {}
         raw_path = (data.get("path") or data.get("src") or "").strip()

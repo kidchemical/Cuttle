@@ -644,36 +644,19 @@
             ).trim();
             if (!src) return '';
             const placeholder = '{{CUTTLE_MEDIA_' + mediaBlocks.length + '}}';
-            let inner = '';
-            if (type === 'audio') {
-                inner =
-                    '<audio controls src="' +
-                    d.escapeHtmlInline(src) +
-                    '"></audio>';
-                mediaBlocks.push(
-                    '<div class="ui-card media-wrap">' +
-                    (title ? '<div class="ui-title">' + d.escapeHtmlInline(title) + '</div>' : '') +
-                    (description && description !== title
-                        ? '<div class="cuttle-media-caption cuttle-media-caption--block">' +
-                          d.escapeHtmlInline(description) +
-                          '</div>'
-                        : '') +
-                    inner +
-                    '</div>'
-                );
-            } else {
-                const kind = type === 'video' ? 'video' : d.mediaKindFromUrl(src);
-                mediaBlocks.push(
-                    '<div class="ui-card media-wrap">' +
-                    (title ? '<div class="ui-title">' + d.escapeHtmlInline(title) + '</div>' : '') +
-                    d.buildMediaThumbHtml(src, {
-                        title: title,
-                        kind: kind,
-                        description: description,
-                    }) +
-                    '</div>'
-                );
-            }
+            const kind = type === 'audio' || type === 'video'
+                ? type
+                : (d.mediaKindFromUrl ? d.mediaKindFromUrl(src) : 'image');
+            mediaBlocks.push(
+                '<div class="ui-card media-wrap">' +
+                (title ? '<div class="ui-title">' + d.escapeHtmlInline(title) + '</div>' : '') +
+                d.buildMediaThumbHtml(src, {
+                    title: title,
+                    kind: kind,
+                    description: description,
+                }) +
+                '</div>'
+            );
             return placeholder;
         };
         out = out.replace(/<media\s+([^>]*?)>([\s\S]*?)<\/media>/gi, function(_, attrs, body) {

@@ -36,7 +36,8 @@ html.cuttle-lightbox-open {
     /* none = allow custom pinch/pan; video stages opt back into manipulation. */
     touch-action: none;
 }
-.cuttle-lightbox-stage.is-video {
+.cuttle-lightbox-stage.is-video,
+.cuttle-lightbox-stage.is-audio {
     touch-action: manipulation;
 }
 .cuttle-lightbox-stage.is-pannable {
@@ -57,6 +58,16 @@ html.cuttle-lightbox-open {
     user-select: none;
     -webkit-user-drag: none;
     will-change: transform;
+}
+.cuttle-lightbox-stage.is-audio {
+    padding: 24px;
+}
+.cuttle-lightbox-stage audio {
+    width: min(520px, 100%);
+    max-width: 100%;
+    border-radius: 12px;
+    background: rgba(15, 23, 42, 0.9);
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.45);
 }
 .cuttle-lightbox-zoom {
     position: relative;

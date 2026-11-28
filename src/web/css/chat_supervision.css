@@ -159,6 +159,13 @@ body.light-mode .chat-supervision-paused { color: #8a5200; }
 .chat-supervision-popover button.is-primary:not(.cuttle-info) { background: var(--accent-color, #667eea); border-color: transparent; color: #fff; }
 
 .chat-supervision-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+/* Controls dock to the bottom edge of a scrolling popover (sticky offsets start inside the 12px padding, so the negative bottom and margins span it). */
+.chat-supervision-popover .chat-supervision-dock {
+    position: sticky; bottom: -12px; z-index: 1;
+    margin: 10px -12px -12px; padding: 0 12px 12px;
+    border-top: 1px solid var(--border-color);
+    background: var(--popup-bg);
+}
 .chat-supervision-popover button:not(.cuttle-info),
 .chat-supervision-dialog .chat-supervision-actions button {
     font: inherit;
