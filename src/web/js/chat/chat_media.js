@@ -925,6 +925,52 @@
             return items;
         }
 
+        /** Pin the audio dock to the measured nav-arrow center (same parent as
+         *  ←/→). CSS % + safe-area math diverged from the arrows on Android. */
+        function placeLightboxAudio() {
+            const root = _cuttleLightbox;
+            if (!root || root.hidden) return;
+            const wrap = root.querySelector('.cuttle-lightbox-audio');
+            if (!wrap) return;
+            const host = root.getBoundingClientRect();
+            if (!host.height) return;
+            const prev = root.querySelector('.cuttle-lightbox-prev');
+            const next = root.querySelector('.cuttle-lightbox-next');
+            const refs = [prev, next].filter(function (el) {
+                return el && !el.hidden && el.getClientRects().length;
+            });
+            let centerY;
+            if (refs.length) {
+                let sum = 0;
+                refs.forEach(function (el) {
+                    const r = el.getBoundingClientRect();
+                    sum += r.top + r.height / 2;
+                });
+                centerY = sum / refs.length;
+            } else {
+                const close = root.querySelector('.cuttle-lightbox-close');
+                const bar = root.querySelector('.cuttle-lightbox-bar');
+                const topEdge = close ? close.getBoundingClientRect().bottom + 8 : host.top;
+                const bottomEdge = bar ? bar.getBoundingClientRect().top - 8 : host.bottom;
+                centerY = (topEdge + bottomEdge) / 2;
+            }
+            wrap.style.top = (centerY - host.top) + 'px';
+            wrap.style.left = '50%';
+            wrap.style.transform = 'translate(-50%, -50%)';
+        }
+
+        function clearLightboxAudioDock(root) {
+            const host = root || _cuttleLightbox;
+            if (!host) return;
+            host.querySelectorAll('.cuttle-lightbox-audio').forEach(function (el) {
+                try {
+                    const a = el.querySelector('audio');
+                    if (a) a.pause();
+                } catch (_) {}
+                try { el.remove(); } catch (__) {}
+            });
+        }
+
         function showLightboxIndex(idx) {
             if (!_lightboxItems.length) return;
             const n = _lightboxItems.length;
@@ -939,6 +985,7 @@
             const shownIndex = _lightboxIndex;
             hideMediaCtxMenu();
             resetLightboxZoomState();
+            clearLightboxAudioDock(root);
             stage.innerHTML = '';
             stage.classList.remove('is-pannable', 'is-dragging', 'is-video', 'is-audio');
             const zoomEl = root.querySelector('.cuttle-lightbox-zoom');
@@ -957,7 +1004,8 @@
                 audio.preload = 'metadata';
                 audio.setAttribute('controlsList', 'nodownload');
                 wrap.appendChild(audio);
-                stage.appendChild(wrap);
+                // Same parent as ←/→ so measured centers share one box.
+                root.appendChild(wrap);
                 media = audio;
             } else if (item.kind === 'video') {
                 stage.classList.add('is-video');
@@ -991,7 +1039,15 @@
             root.hidden = false;
             lightboxSetOpenClass(true);
             updateLightboxZoomUi();
-            if (item.kind !== 'audio') onLightboxMediaReady(media);
+            if (item.kind === 'audio') {
+                // After nav hidden flags + layout, pin to the arrow midlines.
+                requestAnimationFrame(function () {
+                    placeLightboxAudio();
+                    requestAnimationFrame(placeLightboxAudio);
+                });
+            } else {
+                onLightboxMediaReady(media);
+            }
             try {
                 root.focus({ preventScroll: true });
             } catch (_) {
@@ -1041,6 +1097,7 @@
             hideMediaCtxMenu();
             const root = _cuttleLightbox;
             if (!root) return;
+            clearLightboxAudioDock(root);
             const playing = root.querySelector('video, audio');
             if (playing) {
                 try {
@@ -1099,6 +1156,10 @@
 
         function onLightboxHostResize() {
             if (!_cuttleLightbox || _cuttleLightbox.hidden || !_cuttleLightbox.isConnected) return;
+            if (_cuttleLightbox.querySelector('.cuttle-lightbox-audio')) {
+                placeLightboxAudio();
+                return;
+            }
             measureLightboxFitScale();
             applyLightboxZoom();
         }
