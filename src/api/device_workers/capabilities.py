@@ -173,6 +173,11 @@ def _gpus() -> tuple:
         gpus = parse_nvidia_gpus(_nvidia_smi(
             "--query-gpu=index,uuid,name,memory.used,memory.total,utilization.gpu"))
         apps = parse_nvidia_apps(_nvidia_smi("--query-compute-apps=gpu_uuid,pid,used_memory")) if gpus else []
+        if os.name == "nt" and gpus and not apps:
+            # WDDM: nvidia-smi prints [N/A] per process; Windows' own counters attribute it.
+            from api.device_workers import win_gpu_memory
+
+            apps = win_gpu_memory.apps(gpus)
         return gpus, apps
     except Exception:
         return [], []
@@ -203,6 +208,20 @@ def _in_job_scope(pid: int) -> bool:
         return "cuttle-job-" in Path(f"/proc/{pid}/cgroup").read_text(encoding="utf-8")
     except OSError:
         return False
+
+
+def _service_resident_mb(proc: Any, rss_mb: int) -> int:
+    """RAM a service holds that admission may credit back to its own jobs.
+
+    On Windows the working set includes shared DLL pages, so use the private
+    working set (psutil ``uss``); never commit (private bytes), which counts
+    memory paged out of RAM. Elsewhere RSS."""
+    if os.name != "nt":
+        return rss_mb
+    try:
+        return int(proc.memory_full_info().uss / (1024**2))
+    except Exception:
+        return rss_mb
 
 
 def _processes(apps: List[Dict[str, Any]], gpus: List[Dict[str, Any]]) -> tuple:
@@ -252,7 +271,7 @@ def _processes(apps: List[Dict[str, Any]], gpus: List[Dict[str, Any]]) -> tuple:
         elif service:
             entry = services.setdefault(service, {"pids": [], "rss_mb": 0, "vram_mb": {}})
             entry["pids"].append(pid)
-            entry["rss_mb"] += rss_mb
+            entry["rss_mb"] += _service_resident_mb(proc, rss_mb)
             for idx, mb in vram_by_pid.get(pid, {}).items():
                 entry["vram_mb"][str(idx)] = entry["vram_mb"].get(str(idx), 0) + mb
             kind = f"service:{service}"
