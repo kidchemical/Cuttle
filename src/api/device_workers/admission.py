@@ -30,6 +30,27 @@ TELEMETRY_STALE_SEC = 60.0
 INTERACTIVE_BURST = {"Unity Editor": (3072, 2048), "Blender": (2048, 2048)}
 
 
+# Job types that run inside a long-lived service on the worker.
+SERVICE_JOB_TYPES = {"comfyui_prompt": "comfyui"}
+
+
+def with_service(job_type: str, params: Optional[Dict[str, Any]],
+                 requirements: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """``requirements`` with the service a job type runs in, and whether the job can
+    start it itself (``params.start_recipe``), so :func:`admit` can refuse a worker
+    where the service is not running instead of placing a job that fails on arrival."""
+    service = SERVICE_JOB_TYPES.get(str(job_type or ""))
+    out = dict(requirements or {})
+    if not service:
+        return out
+    resources = dict(out.get("resources") or {}) if isinstance(out.get("resources"), dict) else {}
+    resources.setdefault("service", service)
+    if str((params or {}).get("start_recipe") or "").strip():
+        resources["service_autostart"] = True
+    out["resources"] = resources
+    return out
+
+
 def requested(requirements: Optional[Dict[str, Any]], worker_id: Optional[str] = None) -> Dict[str, Any]:
     """The ``resources`` block of a job's requirements, normalised; ``{}`` when none.
 
@@ -55,6 +76,8 @@ def requested(requirements: Optional[Dict[str, Any]], worker_id: Optional[str] =
     service = str(raw.get("service") or "").strip().lower()
     if service:
         out["service"] = service
+        if raw.get("service_autostart"):
+            out["service_autostart"] = True
     return out
 
 
@@ -121,6 +144,8 @@ def admit(
         return None, f"telemetry {int(telemetry_age)}s old"
     held = reserved_totals(reservations)
     service_name = need.get("service") or ""
+    if service_name and not need.get("service_autostart") and service_name not in (load.get("services") or {}):
+        return None, f"{service_name} is not running here and the job has no start_recipe"
     service = (load.get("services") or {}).get(service_name) or {}
     burst_ram, burst_vram, burst_apps = _burst(load)
     reservation: Dict[str, Any] = {}

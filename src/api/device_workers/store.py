@@ -504,9 +504,12 @@ class DeviceWorkerStore:
             resolve_max_attempts,
         )
 
+        from api.device_workers.admission import with_service
+
         jtype = normalize_job_type((job_type or "").strip())
         if not jtype:
             raise ValueError("type required")
+        requirements = with_service(jtype, params if isinstance(params, dict) else {}, requirements)
         if jtype != "agent_turn" and self.submissions_paused():
             raise ValueError("mesh job submissions are paused for a host upgrade; submit again once it is done")
         params = params if isinstance(params, dict) else {}

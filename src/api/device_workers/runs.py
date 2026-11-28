@@ -37,7 +37,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from api.device_workers import metrics, run_watch
-from api.device_workers.admission import VRAM_MARGIN_MB, admit, requested
+from api.device_workers.admission import VRAM_MARGIN_MB, admit, requested, with_service
 from api.device_workers.config import device_workers_enabled, heartbeat_stale_seconds
 from api.device_workers.executor import validate_job_submission
 from api.device_workers.store import _requirements_met, get_store
@@ -71,7 +71,7 @@ def _job_specs(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
         if not ok:
             raise ValueError(f"jobs[{i}] ({params.get('label') or job['type']}): {err}")
         out.append({"type": str(job["type"]), "params": params,
-                    "requirements": dict(job.get("requirements") or {}),
+                    "requirements": with_service(str(job["type"]), params, job.get("requirements")),
                     "priority": int(job.get("priority") or 50)})
     return out
 

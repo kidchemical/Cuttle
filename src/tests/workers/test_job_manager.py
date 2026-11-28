@@ -833,9 +833,12 @@ KLEIN = {"title": "Klein", "jobs": [{"type": "comfyui_prompt", "template": "klei
                                                                    "service": "comfyui"}}}]}
 
 
+COMFY_UP = {"comfyui": {"pids": [4200], "rss_mb": 0, "vram_mb": {}}}
+
+
 def _desk_and_laptop(store, **lap_load):
-    _register(store, "desk")  # 24 GB GPU
-    _register(store, "lap", **{"vram_total": 8151, "vram_used": 1400, **lap_load})
+    _register(store, "desk", services=COMFY_UP)  # 24 GB GPU
+    _register(store, "lap", **{"vram_total": 8151, "vram_used": 1400, "services": COMFY_UP, **lap_load})
 
 
 def _planned(store):
@@ -888,7 +891,7 @@ def test_per_worker_figures_still_refuse_a_machine_that_is_full_or_blind(worker_
     _, _, fit = _planned(worker_db)
     assert fit["lap"]["fits_now"] == 0 and "VRAM" in fit["lap"]["reasons"][0]
     worker_db.upsert_worker(worker_id="lap", hostname="lap", capabilities={"shell": True},
-                            load={"ram_total_gb": 32.0, "ram_available_gb": 24.0,
+                            load={"ram_total_gb": 32.0, "ram_available_gb": 24.0, "services": COMFY_UP,
                                   "gpus": [{"index": 0, "vram_total_mb": 8151}]})  # no used reading
     _, res, fit = _planned(worker_db)
     assert res["by_worker"]["lap"]["vram_mb"] == 6000
@@ -1130,3 +1133,26 @@ def test_drain_check_lists_running_and_still_held_jobs(worker_db, capsys):
     assert cli.main(["drain-check"]) == 0
     assert cli.main(["resume-submissions"]) == 0
     worker_db.submit_job(job_type="ping")
+
+
+def test_a_service_job_is_refused_where_its_service_is_not_running(worker_db):
+    _desk_and_laptop(worker_db)
+    _register(worker_db, "desk")  # ComfyUI stopped on the desk
+    _, _, fit = _planned(worker_db)
+    assert fit["desk"]["fits_now"] == 0
+    assert fit["desk"]["reasons"] == ["comfyui is not running here and the job has no start_recipe"]
+    assert fit["lap"]["fits_now"] == 1
+    # The claim refuses it the same way: the desk never takes the job.
+    job = worker_db.submit_job(job_type="comfyui_prompt", params=KLEIN["jobs"][0]["params"])
+    assert job["requirements"]["resources"] == {"service": "comfyui"}
+    assert worker_db.claim_jobs(worker_id="desk", capabilities={"shell": True}) == []
+
+
+def test_a_start_recipe_lets_a_worker_without_the_service_take_the_job():
+    need = admission.requested(admission.with_service(
+        "comfyui_prompt", {"start_recipe": "comfy.start"}, {"resources": {"vram_mb": 5000}}))
+    assert need == {"vram_mb": 5000, "gpu_slots": 1, "service": "comfyui", "service_autostart": True}
+    res, why = admission.admit(need, _load(), [], telemetry_age=5)
+    assert why == "" and res["service"] == "comfyui"
+    # Other job types are untouched.
+    assert admission.with_service("ping", {}, {"resources": {"ram_mb": 1}}) == {"resources": {"ram_mb": 1}}

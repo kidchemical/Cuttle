@@ -244,7 +244,8 @@ them) goes through a **run**, not a hand-written runner, poll loop or `watch-uni
 1. Write a spec: `{"title", "resume_message", "ask_after_s", "jobs": [{"type", "label", "template", "params",
    "requirements": {"resources": {"ram_mb", "vram_mb", "service"}}}]}`. ComfyUI: `type: comfyui_prompt`,
    `params.prompt` = API-format graph. Declare what you know; Cuttle raises a reservation to the peak it
-   measured on past runs of the same workload and says so in the form.
+   measured on past runs of the same workload and says so in the form. A ComfyUI job only goes to a worker
+   where ComfyUI is running, unless `params.start_recipe` can start it.
 2. `PYTHONPATH=src .venv/bin/python -m api.device_workers.cli run-plan --spec run.json` → paste its `card`
    (approval form: per-worker fit with what is using the memory, offline machines, ETA, reservations) and end
    the turn. Never submit without the user's pick.
