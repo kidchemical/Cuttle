@@ -493,6 +493,27 @@ def refresh_boot_marker() -> str:
     return _BOOT_GIT_REV
 
 
+# Dependencies before dependents: ``executor`` imports ``admission`` at call time and
+# the adapters import ``executor``'s exception classes, so reloading only ``executor``
+# left the new executor calling the old ``admission.requested`` (and an adapter raising
+# a class the new executor no longer catches).
+RELOAD_ORDER = (
+    "api.device_workers.long_run",
+    "api.device_workers.job_policy",
+    "api.device_workers.profiles",
+    "api.device_workers.config",
+    "api.device_workers.admission",
+    "api.device_workers.win_gpu_memory",
+    "api.device_workers.capabilities",
+    "api.device_workers.isolation",
+    "api.device_workers.executor",
+    "api.device_workers.adapters.comfyui",
+    "api.device_workers.adapters",
+    "api.device_workers.intent",
+    "api.device_workers.platform",
+)
+
+
 def reload_device_workers_modules() -> Dict[str, Any]:
     """Hot-reload worker execution modules after a git pull without full process exit.
 
@@ -502,17 +523,9 @@ def reload_device_workers_modules() -> Dict[str, Any]:
     import importlib
     import sys
 
-    names = [
-        "api.device_workers.long_run",
-        "api.device_workers.job_policy",
-        "api.device_workers.profiles",
-        "api.device_workers.executor",
-        "api.device_workers.intent",
-        "api.device_workers.platform",
-    ]
     reloaded: List[str] = []
     errors: List[str] = []
-    for name in names:
+    for name in RELOAD_ORDER:
         mod = sys.modules.get(name)
         if mod is None:
             continue
