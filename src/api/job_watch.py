@@ -1140,8 +1140,10 @@ def _resolve_unit_watch(record: Dict[str, Any], outcome: Dict[str, Any]) -> Opti
         return None
     stopped = bool(record.get("stopped_by_user") or outcome.get("stopped_by_user"))
     if stopped:
+        # A mesh run's record label is the submit-time "Queued: …" placeholder; its outcome has the counts.
+        base = outcome.get("label") if record.get("mesh_jobs") else record.get("label")
         outcome = {**outcome, "state": "failed", "stopped_by_user": True,
-                   "label": "Stopped" + (f" — {record.get('label')}" if record.get("label") else "")}
+                   "label": "Stopped" + (f" — {base}" if base else "")}
     state = outcome.get("state")
     card_state = "done" if state == "done" else "failed"
     label = outcome.get("label") or ""

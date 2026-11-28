@@ -170,8 +170,10 @@ def summarize(
         eta = int(sum(remaining) / lanes)  # type: ignore[arg-type]
 
     parts = [f"{counts['succeeded']}/{n} done"]
-    if counts["failed"] or counts["cancelled"]:
-        parts.append(f"{counts['failed'] + counts['cancelled']} failed")
+    if counts["failed"]:
+        parts.append(f"{counts['failed']} failed")
+    if counts["cancelled"]:
+        parts.append(f"{counts['cancelled']} cancelled")
     if active:
         focus = active[0]
         parts.append(f"{_job_label(focus, jobs.index(focus))}: {(focus.get('progress') or {}).get('message') or 'running'}")

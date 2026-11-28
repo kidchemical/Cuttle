@@ -622,7 +622,8 @@ def test_stopping_every_job_from_jobs_is_a_stop_too(worker_db):
         assert worker_db.cancel_job(jid, reason="cancelled from Jobs")["stopped"] is True
     resolved = jw.poll_unit_watches()
     assert resolved and resolved[0]["resume"] == "cancelled"
-    assert jw.read_status(p["run_id"])["label"].startswith("Stopped")
+    label = jw.read_status(p["run_id"])["label"]
+    assert label.startswith("Stopped — 0/2 done · 2 cancelled") and "Queued" not in label
     assert not [o for o in ops.listing(2819) if o["kind"] == "notice"]
 
 
