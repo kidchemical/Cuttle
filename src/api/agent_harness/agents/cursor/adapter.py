@@ -1,7 +1,8 @@
 """Cursor Agent CLI harness adapter.
 
 Wraps ``scripts.utilities.cursor_cli_tool`` (stream-json, multi-segment continue,
-resume). Meta slash commands (``/model``, ``/plan``, …) stay in
+resume). Mid-turn steers run as extra ``--resume`` segments of the same turn
+(``segment_steer``; off switch ``agent_steer: {"cursor": false}``). Meta slash commands (``/model``, ``/plan``, …) stay in
 ``api.cursor_agent_commands`` and are answered here without starting a CLI turn.
 """
 
@@ -262,6 +263,9 @@ class Adapter:
             fresh_notice = None
         put_status(status_queue, "Calling Cursor Agent…")
         run_meta: dict = {}
+        from api.agent_harness.agents.cursor.segment_steer import build_cursor_steer
+
+        steer = build_cursor_steer(chat_session_id, lambda msg: put_status(status_queue, msg))
 
         def _run():
             return _cursor_agent_oneline_prompt(
@@ -274,9 +278,14 @@ class Adapter:
                 model=mid,
                 run_meta_out=run_meta,
                 cancel_event=cancel_event,
+                steer=steer,
             )
 
-        output = await asyncio.to_thread(_run)
+        try:
+            output = await asyncio.to_thread(_run)
+        finally:
+            if steer is not None:
+                steer.close()
         if output is None:
             output = await asyncio.to_thread(handle_cursor_cli_command, prompt)
 
@@ -370,6 +379,13 @@ class Adapter:
             meta["agent_model"] = mid
         except Exception:
             pass
+        if steer is not None:
+            if steer.received_count:
+                meta["steered"] = steer.received_count
+            closing = steer.closing_notice()
+            if closing:
+                meta["undelivered_steers"] = steer.delivery.undelivered
+                output = f"{output}\n\n{closing}".strip() if (output or "").strip() else closing
         if fresh_notice:
             suffix = f"_{fresh_notice}_"
             output = f"{output}\n\n{suffix}" if (output or "").strip() else suffix

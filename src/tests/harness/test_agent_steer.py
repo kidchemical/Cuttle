@@ -105,7 +105,8 @@ def test_steer_enabled_reads_settings(monkeypatch):
     monkeypatch.setattr(sm, "get_settings_manager", lambda: _SM({"codex": False}))
     assert steer.steer_enabled("codex") is False
     assert steer.steer_enabled("muse") is True
-    assert steer.steer_enabled("cursor") is False
+    assert steer.steer_enabled("cursor") is True
+    assert steer.steer_enabled("deepseek") is False
     monkeypatch.setenv("CUTTLE_AGENT_STEER", "0")
     assert steer.steer_enabled("muse") is False
 
