@@ -1488,3 +1488,24 @@ def test_script_button_is_not_qa_even_when_it_can_resume(tmp_path):
         project_path=str(tmp_path))
     assert not is_qa_resume_spec(spec)
     assert build_runs_from_submission(spec, {"custom_text": "run another script"}) == []
+
+
+def test_a_json_action_result_toasts_a_sentence_and_resumes_with_a_code_block(tmp_path, monkeypatch):
+    """workers.run prints JSON (with an escaped watch card): the toast showed it raw
+    and the resumed bubble rendered it as mangled markdown."""
+    _write_action(tmp_path, "workers", "name: workers.run\ntype: shell\nrun: echo run\n")
+    spec = normalize_action_form_spec({"mode": "choice", "resume": True, "options": [
+        {"id": "go", "label": "Run on lap only", "action": "workers.run"}]}, project_path=str(tmp_path))
+    printed = json.dumps({"success": True, "run_id": "r1", "toast": "Queued 2 job(s) on lap",
+                          "card": "<cuttle_action_form>\n{\"title\": \"Mesh run\"}\n</cuttle_action_form>"}, indent=2)
+    monkeypatch.setattr("api.action_forms._run_one", lambda *a, **k: {"success": True, "response": printed})
+    res = execute_action_form_submission(form_token=encode_form_fallback(spec), selection={"option": "go"})
+    assert res["toast"] == "Queued 2 job(s) on lap"
+    head, summary, rest = res["answer_text"].split("\n", 2)
+    assert head == "[action-result] Run on lap only" and summary == "Queued 2 job(s) on lap"
+    assert rest.startswith("```json\n") and rest.endswith("\n```")
+    assert json.loads(rest[8:-4])["card"].startswith("<cuttle_action_form>")  # the agent still gets the card
+    # JSON without a sentence of its own falls back to the label, never the raw dump.
+    monkeypatch.setattr("api.action_forms._run_one", lambda *a, **k: {"success": True, "response": '{"ok": 1}'})
+    res = execute_action_form_submission(form_token=encode_form_fallback(spec), selection={"option": "go"})
+    assert res["toast"] == "Ran Run on lap only"

@@ -360,5 +360,7 @@ def submit(run_id: str, *, spec_sha256: str, target: str = "") -> Dict[str, Any]
                                 title=f"Mesh run — {stored['title']}", resume_message=resume)
     stored.update({"submitted": time.time(), "job_ids": ids, "target": target})
     _save(run_id, stored)
+    where = f"on {target}" if target else "on any worker as resources free up"
     return {"success": True, "run_id": run_id, "jobs": ids, "target": target or "any",
+            "toast": f"Queued {len(ids)} job(s) {where}",
             "status_url": watch["url"], "card": watch["card"]}

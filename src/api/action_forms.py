@@ -1981,11 +1981,8 @@ def execute_action_form_submission(
                 "error": None if ok else (res.get("response") or "failed"),
             }
         )
-        if ok:
-            label = run.get("label") or action
-            toasts.append(str(res.get("response") or f"Ran {label}"))
-        else:
-            toasts.append(str(res.get("response") or f"Failed: {action}"))
+        label = run.get("label") or action
+        toasts.append(_toast_text(res.get("response"), f"Ran {label}" if ok else f"Failed: {action}"))
 
     selected = [str(r.get("option_id") or "") for r in runs if r.get("option_id")]
     toast = " · ".join(t for t in toasts if t) or ("Done." if all_ok else "Failed.")
@@ -2011,11 +2008,48 @@ def execute_action_form_submission(
     out["resume"] = should_resume
     if should_resume:
         label = str(runs[0].get("label") or "Action")
-        details = "\n".join(str(r.get("response") or "") for r in results)
-        out["answer_text"] = (f"[action-result] {label}\n" + details)[:2000]
+        out["answer_text"] = _answer_text(label, [r.get("response") for r in results])
     if restart_result:
         out['flask_restart'] = restart_result
     return out
+
+
+def _json_object(text: Any) -> Optional[Dict[str, Any]]:
+    try:
+        value = json.loads(str(text or "").strip())
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _toast_text(response: Any, fallback: str) -> str:
+    """One readable line for the toast: a shell action that prints a JSON result
+    names its own (``toast`` / ``message`` / ``error``), else ``fallback``. Never
+    the raw JSON, which filled the notification panel with escaped form markup."""
+    data = _json_object(response)
+    if data is None:
+        return str(response or fallback)
+    for key in ("toast", "message", "error"):
+        if isinstance(data.get(key), str) and data[key].strip():
+            return data[key].strip()
+    return fallback
+
+
+def _answer_text(label: str, responses: List[Any], limit: int = 2000) -> str:
+    """The resumed agent's ``[action-result]`` message. JSON goes in a fenced block so
+    the chat bubble shows code, not markdown-mangled escapes; the agent still reads it."""
+    head = f"[action-result] {label}"
+    parts = []
+    for response in responses:
+        data = _json_object(response)
+        if data is None:
+            parts.append(str(response or ""))
+            continue
+        summary = _toast_text(response, "")
+        body = json.dumps(data, ensure_ascii=False, indent=2)
+        room = max(0, limit - len(head) - len(summary) - 16)
+        parts.append((summary + "\n" if summary else "") + "```json\n" + body[:room] + "\n```")
+    return (head + "\n" + "\n".join(parts))[:limit] if parts else head
 
 
 def parse_action_form_chat_message(message: str) -> Optional[Tuple[str, Dict[str, Any]]]:
