@@ -654,6 +654,67 @@ def _spared_pids(keep) -> Set[int]:
     return out
 
 
+def descendant_snapshot(root_pid, keep=()) -> Dict[int, float]:
+    """``{pid: create_time}`` of ``root_pid``'s descendants, ``keep`` subtrees left out.
+
+    By ancestry, not a list of the kept work's children taken a moment earlier:
+    a kept loop spawns a ``sleep`` every second."""
+    spared = _spared_pids(keep)
+    out: Dict[int, float] = {}
+    try:
+        import psutil
+    except Exception:
+        return out
+    for pid in list_descendant_pids(root_pid):
+        if pid in spared:
+            continue
+        try:
+            proc = psutil.Process(pid)
+            if any(p.pid in spared for p in proc.parents()):
+                continue
+            out[pid] = proc.create_time()
+        except Exception:
+            continue
+    return out
+
+
+def same_process(pid: int, created: float) -> bool:
+    """``pid`` is alive and is the process created at ``created`` (not a reused pid)."""
+    try:
+        import psutil
+
+        proc = psutil.Process(int(pid))
+        return abs(proc.create_time() - float(created)) <= 1.0 and proc.status() != psutil.STATUS_ZOMBIE
+    except Exception:
+        return False
+
+
+def sweep_snapshot(born: Dict[int, float], keep=()) -> List[int]:
+    """Kill what is left of a tree taken with ``descendant_snapshot``; the pids killed.
+
+    For a CLI that exits on its own at end of input: it stops its tool shells,
+    not the processes those shells put in another process group, which
+    reparent to the session's subreaper and stay attributed to the chat
+    (CH-002819: a Monitor's ``tail -f | grep`` still running 14 h later).
+    ``keep`` pids and their current descendants are spared."""
+    try:
+        from api.process_kill_safety import is_forbidden_kill_target
+        import psutil
+    except Exception:
+        return []
+    spared = _spared_pids(keep)
+    killed = []
+    for pid, created in born.items():
+        if pid in spared or is_forbidden_kill_target(pid) or not same_process(pid, created):
+            continue
+        try:
+            psutil.Process(pid).kill()
+            killed.append(pid)
+        except Exception:
+            continue
+    return killed
+
+
 def kill_pid_tree(pid, keep=()) -> bool:
     """Kill ``pid`` and its children (``taskkill /T`` on Windows).
 
@@ -689,7 +750,7 @@ def kill_pid_tree(pid, keep=()) -> bool:
     except Exception:
         pass
     spared = _spared_pids(keep)
-    descendants = [c for c in list_descendant_pids(pid_i) if int(c) not in spared]
+    born = descendant_snapshot(pid_i, keep=spared)
     killed = False
     try:
         if os.name == "nt":
@@ -711,13 +772,13 @@ def kill_pid_tree(pid, keep=()) -> bool:
         killed = False
     except Exception:
         return False
-    for child in descendants:
-        try:
-            child_i = int(child)
-        except (TypeError, ValueError):
-            continue
+    for child_i, created in born.items():
+        # Not "still our descendant": the root's own shutdown can orphan a child
+        # (a ``cmd | grep &`` pipeline in its own process group outlives the
+        # tool shell Claude Code stops). The snapshot plus its create time
+        # proves it is the same process.
         if coerce_pid is not None:
-            if is_forbidden_kill_target(child_i) or not may_kill_pid(child_i):
+            if is_forbidden_kill_target(child_i) or not same_process(child_i, created):
                 continue
         elif child_i <= 1 or child_i == os.getpid():
             continue
@@ -742,8 +803,8 @@ def kill_pid_tree(pid, keep=()) -> bool:
     if spared and os.name != "nt":
         # A root that shuts down gracefully takes the spared work with it:
         # Claude Code stops its background shells on SIGTERM (their output ends
-        # "[killed]"), so it gets no shutdown handler. Last, not first: the
-        # sweep above may only signal pids that are still this root's tree.
+        # "[killed]"), so it gets no shutdown handler. Last, not first: until
+        # the sweep above is done the spared work is still this root's tree.
         try:
             os.kill(pid_i, 9)
             killed = True

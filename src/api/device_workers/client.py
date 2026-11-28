@@ -91,20 +91,33 @@ class DeviceWorkerClient:
                 "capabilities": capabilities or {},
             },
         )
+        release = data.get("release")
+        self.release = list(release) if isinstance(release, list) else []
         jobs = data.get("jobs") or []
         return list(jobs) if isinstance(jobs, list) else []
 
+    def release_job(self, job_id: str) -> None:
+        """Tell the host a held job's workload stopped (see ``DeviceWorkerStore.release_hold``)."""
+        self._request("POST", f"/api/workers/jobs/{job_id}/release", json_body={"worker_id": self.worker_id})
+
     def job_heartbeat(
         self, job_id: str, *, progress: Optional[Dict[str, Any]] = None
-    ) -> None:
+    ) -> bool:
+        """False when the host no longer has the job claimed by us (cancelled, reclaimed)."""
         body: Dict[str, Any] = {"worker_id": self.worker_id}
         if isinstance(progress, dict) and progress:
             body["progress"] = progress
-        self._request(
-            "POST",
-            f"/api/workers/jobs/{job_id}/heartbeat",
-            json_body=body,
-        )
+        try:
+            self._request(
+                "POST",
+                f"/api/workers/jobs/{job_id}/heartbeat",
+                json_body=body,
+            )
+        except RuntimeError as e:
+            if "HTTP 409" in str(e):
+                return False
+            raise
+        return True
 
     def fetch_agent_turn(self, job_id: str) -> Dict[str, Any]:
         """Payload of an ``agent_turn`` job this worker claimed (api.exec_nodes)."""
@@ -139,12 +152,15 @@ class DeviceWorkerClient:
         retry: bool = False,
         params_update: Optional[Dict[str, Any]] = None,
         partial_result: Optional[Dict[str, Any]] = None,
+        keep_hold: bool = False,
     ) -> None:
         body: Dict[str, Any] = {
             "worker_id": self.worker_id,
             "error": (error or "")[:1000],
             "retry": bool(retry),
         }
+        if keep_hold:
+            body["keep_hold"] = True
         if isinstance(params_update, dict) and params_update:
             body["params_update"] = params_update
         if isinstance(partial_result, dict) and partial_result:

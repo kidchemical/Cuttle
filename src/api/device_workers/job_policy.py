@@ -13,6 +13,8 @@ DEFAULT_QUEUE_TTL_SECONDS: Dict[str, int] = {
     "cuttle_self_update": 45 * 60,
     # A chat turn waiting for its node: the host gives up first (api.exec_nodes).
     "agent_turn": 2 * 60,
+    # Approved batches may wait for a GPU to free up (api.device_workers.admission).
+    "comfyui_prompt": 12 * 3600,
 }
 
 # Max claim attempts before cancel on next lease expiry (1 = no requeue).
@@ -25,6 +27,8 @@ DEFAULT_MAX_ATTEMPTS: Dict[str, int] = {
     "cuttle_self_update": 1,
     # Never rerun a turn: a second attempt would repeat the agent's work.
     "agent_turn": 1,
+    # A retry reattaches to the same ComfyUI prompt id before submitting again.
+    "comfyui_prompt": 2,
 }
 
 _FALLBACK_TTL = 6 * 3600
@@ -178,6 +182,8 @@ DEFAULT_IDLE_TIMEOUT_SECONDS: Dict[str, int] = {
     # Durable units (frames) must keep advancing; stuck blender = idle kill + gap-fill.
     "blender_render": 45 * 60,
     "cuttle_self_update": 0,
+    # No ComfyUI event (node start, sampler step, queue move) for this long = hung.
+    "comfyui_prompt": 30 * 60,
 }
 
 DEFAULT_HARD_TIMEOUT_SECONDS: Dict[str, int] = {
@@ -187,6 +193,7 @@ DEFAULT_HARD_TIMEOUT_SECONDS: Dict[str, int] = {
     # Absolute safety net only — soft idle + progress keep long Cycles alive.
     "blender_render": 24 * 3600,
     "cuttle_self_update": 30 * 60,
+    "comfyui_prompt": 4 * 3600,
 }
 
 _FALLBACK_IDLE = 0

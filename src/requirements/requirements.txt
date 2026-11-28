@@ -32,6 +32,8 @@ flask>=3.1.3
 flask-cors>=6.0.5
 flask-limiter>=4.1.1
 flask-sock>=0.7.0
+# WebSocket client (sync API): mesh comfyui_prompt jobs follow ComfyUI's /ws node events
+websockets>=15.0
 pywinpty>=3.1.2; sys_platform == "win32"
 
 # Auth and transport security

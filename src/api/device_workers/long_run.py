@@ -59,6 +59,10 @@ class HardTimeoutError(TimeoutError):
         self.hard = hard
 
 
+class CancelledError(RuntimeError):
+    """The host cancelled the job (``should_stop`` returned True); the tree was killed."""
+
+
 @dataclass
 class LongRunResult:
     returncode: int
@@ -117,6 +121,7 @@ def run_long_process(
     env: Optional[Dict[str, str]] = None,
     shell: bool = False,
     creationflags: int = 0,
+    should_stop: Optional[Callable[[], bool]] = None,
 ) -> LongRunResult:
     """Run a subprocess with soft idle + hard absolute timeouts.
 
@@ -236,6 +241,10 @@ def run_long_process(
 
             if rc is not None:
                 break
+
+            if should_stop is not None and should_stop():
+                _kill_process_tree(proc)
+                raise CancelledError(f"cancelled after {int(now - started)}s")
 
             if now - started >= hard:
                 timed_out = "hard"

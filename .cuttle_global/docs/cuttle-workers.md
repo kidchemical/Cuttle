@@ -143,6 +143,9 @@ rotation on that machine, not a side effect of pairing.
 | `workers.blender-shard` | Frame shards — default **work_steal** chunks; `distribution=pinned` for equal pinned ranges; optional `chunk_size` / `batch_id` |
 | `gap-fill` (CLI) | Scan batch output for missing durable frames → enqueue stealable jobs |
 | `batch-watch` (CLI) | Write job_watch status with **overall + per-worker `bars`**; auto gap-fills when idle+incomplete |
+| `run-plan` (CLI) / `workers.run` / `run-status` | Runs: approval form → queued batch with a host-owned live card and one resume (below) |
+| `pause-submissions` / `resume-submissions` (CLI) | Refuse new mesh jobs while queued ones drain (agent turns unaffected); before a host upgrade or rollback |
+| `drain-check` (CLI) | Fails unless submissions are paused and no mesh job is queued, running or still holds a reservation |
 
 CLI: `.cuttle_global\scripts\workers-cli.ps1 <verb>` or `python -m api.device_workers.cli <verb>`.
 
@@ -231,6 +234,26 @@ PYTHONPATH=src .venv/bin/python -m api.device_workers.cli blender-shard ... --di
 # Fast preview — auto chunk OK
 PYTHONPATH=src .venv/bin/python -m api.device_workers.cli blender-shard ... --distribution work_steal
 ```
+
+### Runs (Job Manager)
+
+Long GPU/CPU work an agent starts for a chat (ComfyUI graphs, Blender bakes, Unity build recipes, batches of
+them) goes through a **run**, not a hand-written runner, poll loop or `watch-unit` glue. Design + status:
+`docs/guides/JOB_MANAGER.md`.
+
+1. Write a spec: `{"title", "resume_message", "ask_after_s", "jobs": [{"type", "label", "template", "params",
+   "requirements": {"resources": {"ram_mb", "vram_mb", "service"}}}]}`. ComfyUI: `type: comfyui_prompt`,
+   `params.prompt` = API-format graph. Declare what you know; Cuttle raises a reservation to the peak it
+   measured on past runs of the same workload and says so in the form.
+2. `PYTHONPATH=src .venv/bin/python -m api.device_workers.cli run-plan --spec run.json` → paste its `card`
+   (approval form: per-worker fit with what is using the memory, offline machines, ETA, reservations) and end
+   the turn. Never submit without the user's pick.
+3. The pick runs `workers.run`; its result carries the watch `card` — post it. The host refreshes the card from
+   heartbeats and resumes the chat **once** when every job has ended. Do not poll, sleep or re-check.
+4. If nothing can place the run for `ask_after_s` (default 10 min), the chat is resumed with a form Cuttle
+   built (move to a worker that fits, keep waiting, cancel): post it exactly as given and end the turn; its
+   `workers.run-decide` pick is applied by Cuttle. Do not retarget, resubmit or cancel jobs yourself.
+5. Results: `run-status --run-id <id>` (per-job errors, `oom`, outputs) or `workers.status` per job.
 
 ### Mesh progress bars (hard)
 

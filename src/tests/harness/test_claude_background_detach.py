@@ -85,6 +85,20 @@ if mode == "real_task":
     result("started the blender job")
     time.sleep(30)  # ignores EOF while its task runs
     sys.exit(0)
+if mode == "monitor":
+    # Like a Monitor whose command backgrounds a pipeline: under job control the
+    # pipeline gets its own process group, which the CLI's exit does not stop.
+    import signal, subprocess
+    sh = subprocess.Popen(["bash", "-c", "set -m; sleep 45 | cat & echo $! $(jobs -p) > %s; wait"
+                           % os.environ["FAKE_MON_PIDS"]], start_new_session=True,
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    while not os.path.getsize(os.environ["FAKE_MON_PIDS"]):
+        time.sleep(0.05)
+    result("watching the log")
+    while q.get(timeout=30) is not None:
+        pass
+    os.killpg(sh.pid, signal.SIGKILL)
+    sys.exit(0)
 bg([{"task_id": "b1", "task_type": "local_bash", "description": "watch CI"}])
 result("started the watcher")
 if mode == "finishes":
@@ -634,6 +648,25 @@ def test_without_a_background_wait_the_turn_ends_at_its_reply_and_hands_the_work
     text = ops[0]["payload"]["text"]
     assert "Background work from an earlier turn finished. This is its completion notice" in text
     assert "`blender job` (task b7)" in text and "blend saved" in text
+
+
+@posix_only
+def test_processes_the_cli_orphans_when_it_exits_are_ended(tmp_path, monkeypatch):
+    """CH-002819: a Monitor's ``tail -f | grep &`` outlived the CLI by 14 h,
+    reparented to systemd and still shown under the chat."""
+    import ctypes
+
+    # The pipeline reparents to the nearest subreaper; pytest standing in for
+    # systemd --user keeps it a pytest descendant, which the test kill guard needs.
+    assert ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) == 0  # PR_SET_CHILD_SUBREAPER
+    pids_file = tmp_path / "mon.pids"
+    pids_file.write_text("", encoding="utf-8")
+    monkeypatch.setenv("FAKE_MON_PIDS", str(pids_file))
+    res, _wait, took = _start(tmp_path, monkeypatch, "monitor", 6111, background=False)
+    assert res["success"] is True and res["output"].startswith("watching the log")
+    pids = [int(x) for x in pids_file.read_text(encoding="utf-8").split()]
+    assert len(pids) == 2
+    assert _until(lambda: all(_gone(p) for p in pids), timeout=5), "the orphaned pipeline must not outlive the turn"
 
 
 def test_off_switch_env_and_setting(monkeypatch):

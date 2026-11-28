@@ -33,6 +33,8 @@ start_cuttle.sh | src/scripts/cuttle_daemon.py
 
 ## Process and HTTP composition root
 
+Mesh runs (Job Manager): `api.device_workers.admission` (pure resource fit, used inside the claim transaction), `isolation` (per-job memory scopes), `adapters/` (provider job types: `comfyui`), `runs` (plan → approved submit, decision form when nothing fits), `metrics` (per-machine, per-config performance history) and `run_watch` (run status on `api.job_watch` unit-watch records, one resume). Guide: [JOB_MANAGER.md](../guides/JOB_MANAGER.md).
+
 Render completion media: `api.device_workers.render_results` owns durable
 batch-to-chat bindings and staging/reconciliation. Worker store completion and
 batch-watch writes invoke it; `AuthDatabase.add_message_once` owns atomic chat
