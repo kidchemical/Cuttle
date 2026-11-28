@@ -7,10 +7,14 @@
 
    State shape:
      { active: <space id>,
-       spaces: [{ id, name, root, groupId?, color?, projectOverride?, agentOverride? }],
+       spaces: [{ id, name, autoName?, root, groupId?, color?, projectOverride?, agentOverride? }],
        groups: [{ id, name, color, collapsed, projectOverride?, agentOverride? }] }
    `root` is the inactive-space layout tree (or null). The active space's
    live layout is owned by the shell, not this module.
+   `autoName` spaces were never named by the user: their tab shows the
+   title of the first chat open in them (`autoSpaceLabel`); `name` is only
+   the fallback for a space with no titled chat. Renaming clears the flag;
+   committing an empty name restores it.
    New-chat defaults: space override wins, else the tab's group, else the
    starred project/agent. Existing sessions are unchanged. This is a Spaces
    context-menu enhancement (color already ships), not an experimental flag.
@@ -39,6 +43,7 @@
     const STORAGE_KEY = 'shell_spaces_v1';
     const MAX_NAME = 60;
     const MAX_GROUP_NAME = 40;
+    const DEFAULT_NAME_RE = /^space(?: \d+)?$/i;
 
     function newSpaceId() {
         return 'sp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -125,7 +130,7 @@
 
     function createDefaultState() {
         const id = newSpaceId();
-        return { active: id, spaces: [{ id, name: 'Space 1', root: null }], groups: [] };
+        return { active: id, spaces: [{ id, name: 'Space 1', autoName: true, root: null }], groups: [] };
     }
 
     /**
@@ -159,6 +164,11 @@
                         name: String(s.name || 'Space').slice(0, MAX_NAME),
                         root: s.root && typeof s.root === 'object' ? s.root : null,
                     };
+                    // Saves from before `autoName` existed: a default "Space N"
+                    // name was never chosen by the user.
+                    if (s.autoName === true || (s.autoName == null && DEFAULT_NAME_RE.test(entry.name))) {
+                        entry.autoName = true;
+                    }
                     if (s.groupId && groupById.has(String(s.groupId))) {
                         entry.groupId = String(s.groupId);
                     }
@@ -208,7 +218,8 @@
     function addSpaceToState(state, entry) {
         const space = entry && entry.id
             ? { id: String(entry.id), name: String(entry.name || 'Space').slice(0, MAX_NAME), root: entry.root || null }
-            : { id: newSpaceId(), name: nextSpaceName(state.spaces), root: null };
+            : { id: newSpaceId(), name: nextSpaceName(state.spaces), autoName: true, root: null };
+        if (entry && entry.id && entry.autoName) space.autoName = true;
         state.spaces.push(space);
         return space;
     }
@@ -241,13 +252,36 @@
         return true;
     }
 
-    /** Pure state transition: rename. Returns true if renamed. */
-    function renameSpaceInState(state, id, name) {
+    /**
+     * Pure state transition: rename. Returns true if state changed. An empty
+     * name hands an explicitly named space back to auto-naming; `autoLabel`
+     * (the label the tab showed) committed unchanged keeps it auto.
+     */
+    function renameSpaceInState(state, id, name, autoLabel) {
         const space = getSpaceById(state, id);
         const clean = String(name || '').trim().slice(0, MAX_NAME);
-        if (!space || !clean) return false;
+        if (!space) return false;
+        if (!clean) {
+            if (space.autoName) return false;
+            space.autoName = true;
+            return true;
+        }
+        if (space.autoName && clean === String(autoLabel || space.name).trim()) return false;
         space.name = clean;
+        delete space.autoName;
         return true;
+    }
+
+    /**
+     * Tab label for an auto-named space: the first non-empty chat title in
+     * pane order (the tab's count badge says how many chats it holds).
+     * No titles → `fallback` (the stored name).
+     */
+    function autoSpaceLabel(titles, fallback) {
+        const first = (Array.isArray(titles) ? titles : [])
+            .map((t) => String(t == null ? '' : t).replace(/\s+/g, ' ').trim())
+            .find(Boolean);
+        return String(first || fallback || 'Space').slice(0, MAX_NAME);
     }
 
     const api = {
@@ -271,6 +305,7 @@
         planSpaceClose,
         commitSpaceClose,
         renameSpaceInState,
+        autoSpaceLabel,
     };
 
     const ns = (root.CuttleSpaces = root.CuttleSpaces || {});

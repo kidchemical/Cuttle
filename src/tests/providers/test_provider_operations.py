@@ -40,6 +40,7 @@ class SDK:
         self.responses = NS(create=create)
         self.chat = NS(completions=NS(create=create))
         self.audio = NS(speech=NS(create=create), transcriptions=NS(create=create))
+        self.images = NS(generate=create)
     def __enter__(self): return self
     def __exit__(self, *_): pass
 
@@ -58,7 +59,8 @@ def test_all_vendor_clients_and_inference_methods_are_owned_by_adapters():
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                     name = ast.unparse(node.func)
                     if name.endswith(('.chat.completions.create', '.messages.create', '.responses.create',
-                                      '.audio.speech.create', '.audio.transcriptions.create', '.generate_content')):
+                                      '.audio.speech.create', '.audio.transcriptions.create',
+                                      '.images.generate', '.generate_content')):
                         violations.append(f'{file.name}:{node.lineno}:{name}')
     assert not violations, violations
 
@@ -140,6 +142,82 @@ def test_openai_speech_transcription_and_builtin_voices(monkeypatch):
         service.synthesize_speech('openai',SpeechRequest('hello','tts-1','coral'))
     assert service.transcribe('openai',TranscriptionRequest(b'audio','whisper-1',prompt='hint',language='en')) == 'spoken words'
     assert sdk.calls[-1]['file'][1] == b'audio'
+
+
+@pytest.mark.parametrize("share", [False, True])
+def test_image_generation_cli_writes_png_and_records_usage(tmp_path, monkeypatch, capsys, share):
+    from api.media_generate import main
+    from api.model_providers import usage
+    from api.model_providers.openai import adapter
+
+    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    monkeypatch.setenv("CUTTLE_CHAT_SESSION_ID", "123")
+    png = b"\x89PNG\r\n\x1a\n"
+    sdk = SDK(NS(data=[NS(b64_json=base64.b64encode(png).decode())],
+                 usage=NS(model_dump=lambda **_: {"input_tokens": 3, "output_tokens": 8})))
+    monkeypatch.setattr(adapter, "client", lambda *_: sdk)
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("A purple octopus", encoding="utf-8")
+
+    command = ["image", "--provider", "openai", "--model", "gpt-image-2.6-flare",
+               "--input-file", str(prompt), "--size", "1536x1024"]
+    if share:
+        command.append("--share")
+    assert main(command) == 0
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["schema_version"] == 1 and receipt["success"]
+    assert sdk.calls == [{"model": "gpt-image-2.6-flare", "prompt": "A purple octopus",
+                          "size": "1536x1024", "quality": "medium", "n": 1, "output_format": "png"}]
+    path = Path(receipt["artifact"]["path"])
+    assert path.parent == tmp_path / "generated-media" and path.read_bytes() == png
+    if share:
+        url = receipt["artifact"]["url"]
+        assert url.startswith("/output/shared/")
+        assert (tmp_path / url.lstrip("/")).read_bytes() == png
+    else:
+        assert "url" not in receipt["artifact"]
+    [row] = usage.calls_for_sessions([123])
+    assert row["operation"] == "image_generation" and row["total_tokens"] == 11
+
+
+def test_speech_cli_shares_native_format_and_checks_length(tmp_path, monkeypatch, capsys):
+    from api import media_generate
+    from api.model_providers.openai import adapter
+
+    monkeypatch.setenv("OPENAI_API_KEY", "temporary-test-value")
+    monkeypatch.delenv("OPENAI_API_KEY")
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=fake\n", encoding="utf-8")
+    sdk = SDK(NS(content=b"mp3"))
+    monkeypatch.setattr(adapter, "client", lambda *_: sdk)
+    command = ["speech", "--provider", "openai", "--voice", "alloy", "--share", "--name", "voice-test"]
+
+    monkeypatch.setattr(media_generate.sys, "stdin", io.StringIO("Hello."))
+    assert media_generate.main(command) == 0
+    receipt = json.loads(capsys.readouterr().out)
+    artifact = receipt["artifact"]
+    assert artifact["mime"] == "audio/mpeg" and artifact["url"].startswith("/output/generated-media/")
+    assert Path(artifact["path"]).read_bytes() == b"mp3"
+    assert sdk.calls[0]["input"] == "Hello."
+
+    monkeypatch.setattr(media_generate.sys, "stdin", io.StringIO(" " * 4001 + "silent truncation"))
+    assert media_generate.main(command) == 1
+    assert "exceeds" in json.loads(capsys.readouterr().out)["error"]
+    assert len(sdk.calls) == 1
+
+
+def test_media_cli_redacts_provider_error_bodies(monkeypatch, capsys):
+    from api import media_generate
+    from api.model_providers.openai import adapter
+
+    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    monkeypatch.setattr(media_generate.sys, "stdin", io.StringIO("Generate speech."))
+    def bad_client(*_):
+        raise requests.HTTPError("secret body", response=NS(status_code=401))
+
+    monkeypatch.setattr(adapter, "client", bad_client)
+    assert media_generate.main(["speech", "--provider", "openai", "--voice", "alloy"]) == 1
+    error = json.loads(capsys.readouterr().out)["error"]
+    assert "HTTP 401" in error and "secret body" not in error
 
 
 @pytest.mark.parametrize('provider', ['openai','anthropic'])

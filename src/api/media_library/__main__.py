@@ -1,6 +1,6 @@
 """``python -m api.media_library list`` — media shared in a user's chats.
 
-    python -m api.media_library list [--chat CH-000182] [--kind image|video]
+    python -m api.media_library list [--chat CH-000182] [--kind image|video|audio]
         [--available] [--limit 50] [--json] [--user-id N]
 
 Default user is the install's first account (the single-user owner).
@@ -26,9 +26,9 @@ def _chat_id(raw: str):
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="python -m api.media_library")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    ls = sub.add_parser("list", help="List images/videos shared in chats, newest first")
+    ls = sub.add_parser("list", help="List images/videos/audio shared in chats, newest first")
     ls.add_argument("--chat", default="", help="Only this chat (CH-… handle or id)")
-    ls.add_argument("--kind", choices=("image", "video"))
+    ls.add_argument("--kind", choices=("image", "video", "audio"))
     ls.add_argument("--available", action="store_true", help="Skip expired / missing files")
     ls.add_argument("--limit", type=int, default=50)
     ls.add_argument("--user-id", type=int)

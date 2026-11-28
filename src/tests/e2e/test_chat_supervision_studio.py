@@ -223,6 +223,16 @@ def test_studio_chip_panel_shows_timeline_pages_and_refreshes(browser, static_se
         # Markup in server text is shown as text on the older page too.
         expect(panel.locator(".sup-tl-detail").filter(has_text="<b>boom</b>")).to_have_count(1)
         assert panel.locator(".sup-tl-detail b").count() == 0
+
+        # A panel taller than the viewport scrolls, but its controls stay docked
+        # at the visible bottom edge instead of under the last row.
+        panel.evaluate("e => { e.style.maxHeight = '220px'; e.scrollTop = 0; }")
+        assert panel.evaluate("e => e.scrollHeight > e.clientHeight + 40")
+        dock = panel.locator(".chat-supervision-dock")
+        panel_box, dock_box = panel.bounding_box(), dock.bounding_box()
+        assert abs((dock_box["y"] + dock_box["height"]) - (panel_box["y"] + panel_box["height"])) < 2
+        expect(dock.locator('[data-sup-act="cancel"]')).to_be_in_viewport()
+        panel.evaluate("e => { e.style.maxHeight = ''; }")
         older = panel.locator(".sup-tl-row").last.locator(".sup-tl-time")
         three_days = datetime.fromtimestamp(time.time() - 3 * 86400)
         expect(older).to_contain_text(f"{three_days:%b} {three_days.day}")

@@ -22,6 +22,9 @@ runbooks" directory above; the rules below are the invariants it does not carry.
    Do device-capable work on the mesh yourself; ask the user only when no capable
    worker is online or a step needs their click. A `stale` / ⚠ worker → run
    `workers.self-update`, do not ask.
+   Heavy job (render, build, benchmark) while this machine's GPU/CPU/RAM is taken
+   by other work → look for another machine before queueing behind it
+   (`expensive-runs.md` → "This machine is busy").
 5. **New / registered project** → ensure `{project}/.cuttle/` exists
    (`python -m managers.cuttle_scaffold <path>`) before calling it done.
 6. Git undo / discard → `git.md`. Never `git checkout -- <file>` (or restore) unless that

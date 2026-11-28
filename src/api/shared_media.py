@@ -1,5 +1,5 @@
 """
-Shared chat media staging for markdown images / video in Cuttle bubbles.
+Shared chat media staging for markdown images / video / audio in Cuttle bubbles.
 
 Agents (and auto-rewrite) copy files into ``<home>/output/shared/`` so LAN/phone
 clients can preview via ``/output/shared/<id>.ext``. Staged copies expire after
@@ -7,14 +7,24 @@ clients can preview via ``/output/shared/<id>.ext``. Staged copies expire after
 Electron host start.
 
 Videos also get a mid-frame ``*.poster.jpg`` sidecar (ffmpeg) for chat thumbs.
+Audio opens in the shared lightbox player (same thumb → lightbox path as video).
+
+Agent CLI (preferred over importing this module in a throwaway script)::
+
+    python -m api.shared_media stage /path/to/clip.mp3 --json
+    python -m api.shared_media meta /output/shared/clip-….mp3 --json
+    python -m api.shared_media purge --json
 """
 
 from __future__ import annotations
 
+import argparse
+import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -28,7 +38,11 @@ shared_media_bp = Blueprint("shared_media", __name__)
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
 VIDEO_EXTS = {".mp4", ".webm", ".mov", ".m4v", ".ogg", ".ogv"}
-MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS
+# Clear audio-only containers. ``.ogg`` / ``.webm`` stay in VIDEO_EXTS (existing
+# thumbs + video element still play audio-only files); use ``type="audio"`` on
+# ``<media>`` when the agent wants the audio thumb/lightbox path for those.
+AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".aac", ".opus", ".oga"}
+MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS | AUDIO_EXTS
 
 # Markdown image + <media src="..."/> local-path rewrite
 _MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
@@ -69,6 +83,8 @@ def media_kind(path_or_name: str) -> Optional[str]:
     ext = Path(path_or_name).suffix.lower()
     if ext in IMAGE_EXTS:
         return "image"
+    if ext in AUDIO_EXTS:
+        return "audio"
     if ext in VIDEO_EXTS:
         return "video"
     # poster sidecars are images for serving, but named *.poster.jpg
@@ -693,7 +709,7 @@ def rewrite_local_media_refs(
 @shared_media_bp.route("/api/shared-media/stage", methods=["POST"])
 @owner_required
 def api_shared_media_stage():
-    """Copy a local image/video into /output/shared/ for chat previews (LAN-safe)."""
+    """Copy a local image/video/audio into /output/shared/ for chat previews (LAN-safe)."""
     try:
         data = request.get_json(silent=True) or {}
         raw_path = (data.get("path") or data.get("src") or "").strip()
@@ -756,3 +772,66 @@ def api_shared_media_purge():
         return jsonify(result)
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """``python -m api.shared_media`` — stage / meta / purge for agents."""
+    parser = argparse.ArgumentParser(
+        prog="python -m api.shared_media",
+        description="Stage local image/video/audio into /output/shared/ for chat previews.",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    stage_p = sub.add_parser("stage", help="Copy a local media file into /output/shared/")
+    stage_p.add_argument("path", help="Filesystem path to the image, video, or audio file")
+    stage_p.add_argument(
+        "--name",
+        "--filename",
+        dest="name",
+        default="",
+        help="Preferred original filename (staging still adds a unique suffix)",
+    )
+    stage_p.add_argument("--json", action="store_true", help="Print the full JSON result")
+
+    meta_p = sub.add_parser("meta", help="Read the staging sidecar for a /output/shared/ URL")
+    meta_p.add_argument("url", help="Hosted URL or staged filename (e.g. /output/shared/clip-….mp3)")
+    meta_p.add_argument("--json", action="store_true", help="Print the full JSON result")
+
+    purge_p = sub.add_parser("purge", help="Delete staged copies older than the TTL")
+    purge_p.add_argument("--ttl-days", type=int, default=None, help="Override CUTTLE_SHARED_MEDIA_TTL_DAYS")
+    purge_p.add_argument("--json", action="store_true", help="Print the full JSON result")
+
+    args = parser.parse_args(argv)
+
+    if args.cmd == "stage":
+        preferred = (args.name or "").strip() or None
+        result = stage_file(args.path, preferred_name=preferred)
+        if args.json or not result.get("success"):
+            print(json.dumps(result, indent=2 if args.json else None))
+        else:
+            print(result["url"])
+            if result.get("kind"):
+                print(f"kind={result['kind']}", file=sys.stderr)
+        return 0 if result.get("success") else 2
+
+    if args.cmd == "meta":
+        result = read_stage_meta(args.url)
+        print(json.dumps(result, indent=2 if args.json else None))
+        return 0 if result.get("success") else 2
+
+    if args.cmd == "purge":
+        result = purge_expired(ttl=args.ttl_days)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"deleted {result.get('deleted', 0)} file(s) (ttl={result.get('ttl_days')}d)")
+            for name in result.get("files") or []:
+                print(f"  {name}")
+        return 0 if result.get("success") else 2
+
+    parser.error(f"unknown command: {args.cmd}")
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

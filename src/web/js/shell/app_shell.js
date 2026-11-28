@@ -693,6 +693,7 @@ window.addEventListener('message', function(e) {
         if (!live || live.contentWindow !== e.source) return;
         // Chat iframe reports its open session so the shell can batch live-status.
         registerPaneChatSession(e.source, e.data.sessionId);
+        try { shellSpaces.syncActivityTabs(); } catch (_) {}
         if (e.data.preferFocus) setFocusedColumn(colIdx);
     } else if (e.data.type === 'cuttle-pending-project') {
         const colIdx = findColumnIndexForSource(e.source);

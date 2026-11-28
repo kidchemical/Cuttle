@@ -668,6 +668,30 @@ body.is-electron.fullscreen .shell-zoom-hud {
     padding-right: 4px;
 }
 
+/* Chats-in-space badge (2+ chats). */
+.shell-space-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 4px;
+    margin-right: 3px;
+    box-sizing: border-box;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.14);
+    color: inherit;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    pointer-events: none;
+}
+
+.shell-space-count[hidden] {
+    display: none;
+}
+
 .shell-space-rename {
     width: 110px;
     height: 18px;

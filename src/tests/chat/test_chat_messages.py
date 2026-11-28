@@ -386,8 +386,13 @@ eval(span('    function clamp(n, min, max) {',
 const deps = { escapeHtmlInline, clamp,
   renderMdLinkChip: (label, url) => '<a data-url="' + url + '">' + label + '</a>',
   renderCuttlePricingHtml: (raw) => '<price:' + String(raw).slice(0, 12) + '>',
-  mediaKindFromUrl: (u) => (/\\.(mp4|webm)$/i.test(String(u).split('?')[0]) ? 'video' : 'image'),
-  buildMediaThumbHtml: (src, o) => '<thumb src="' + src + '" title="' + ((o && o.title) || '') + '">' };
+  mediaKindFromUrl: (u) => {
+    const p = String(u).split('?')[0];
+    if (/\\.(mp3|wav|m4a)$/i.test(p)) return 'audio';
+    if (/\\.(mp4|webm)$/i.test(p)) return 'video';
+    return 'image';
+  },
+  buildMediaThumbHtml: (src, o) => '<thumb src="' + src + '" kind="' + ((o && o.kind) || '') + '" title="' + ((o && o.title) || '') + '">' };
 const E = (text) => A.extractHeadStructuredBlocks(text, deps);
 const T = (text) => A.extractTailStructuredBlocks(text, deps);
 const out = {};
@@ -495,7 +500,8 @@ def test_structured_tail_blocks_attributes_and_fallbacks():
     assert "refresh /usage" in res["unblockFmtPast"]
     assert res["pricing"]["blocks"]["pricing"] == ['<price:{"model": "m>']
     assert "msg-audio" not in res["mediaAudio"]["blocks"]["media"][0]
-    assert "<audio" in res["mediaAudio"]["blocks"]["media"][0]
+    assert 'kind="audio"' in res["mediaAudio"]["blocks"]["media"][0]
+    assert 'src="s.mp3"' in res["mediaAudio"]["blocks"]["media"][0]
     # quote-bearing attrs truncate at the inner quote (inherited regex behavior)
     assert 'ui-title">T</div>' in res["mediaAudio"]["blocks"]["media"][0]
     assert "<thumb" in res["mediaImg"]["blocks"]["media"][0]

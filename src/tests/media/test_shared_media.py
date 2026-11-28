@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -39,6 +40,31 @@ def test_stage_rejects_non_media(project: Path):
     src.write_text("hi", encoding="utf-8")
     result = sm.stage_file(src)
     assert result["success"] is False
+
+
+def test_stage_audio_file(project: Path):
+    src = project / "clip.mp3"
+    src.write_bytes(b"ID3fake-mp3-bytes")
+    result = sm.stage_file(src, preferred_name="clip.mp3")
+    assert result["success"] is True
+    assert result["kind"] == "audio"
+    assert result["url"].endswith(".mp3")
+    assert result["url"].startswith("/output/shared/")
+    dest = project / "home" / "output" / "shared" / result["filename"]
+    assert dest.is_file()
+    assert dest.read_bytes() == src.read_bytes()
+
+
+def test_rewrite_media_tag_local_audio(project: Path):
+    src = project / "voice.wav"
+    src.write_bytes(b"RIFFfake")
+    text = f'<media type="audio" src="{src.as_posix()}" title="Voice"/>'
+    out, n = sm.rewrite_local_media_refs(text, project_root=project)
+    assert n == 1
+    assert "/output/shared/" in out
+    assert 'type="audio"' in out
+    assert sm.media_kind("voice.wav") == "audio"
+    assert sm.media_kind("clip.m4a") == "audio"
 
 
 def test_purge_expired_by_mtime(project: Path, monkeypatch):
@@ -176,3 +202,50 @@ def test_ensure_poster_sidecar_lazy(project: Path, monkeypatch):
     assert path is not None
     assert path.is_file()
     assert path.name == "demo-aaaaaaaaaa.poster.jpg"
+
+
+def test_cli_stage_prints_url(project: Path, capsys):
+    src = project / "hello.wav"
+    src.write_bytes(b"RIFFfake")
+    code = sm.main(["stage", str(src)])
+    assert code == 0
+    out = capsys.readouterr().out.strip()
+    assert out.startswith("/output/shared/")
+    assert out.endswith(".wav")
+
+
+def test_cli_stage_json_and_reject(project: Path, capsys):
+    src = project / "clip.mp3"
+    src.write_bytes(b"ID3audio")
+    code = sm.main(["stage", str(src), "--name", "narration.mp3", "--json"])
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["success"] is True
+    assert payload["kind"] == "audio"
+    assert payload["url"].startswith("/output/shared/")
+    assert "narration" in payload["filename"]
+
+    bad = project / "notes.txt"
+    bad.write_text("nope", encoding="utf-8")
+    code = sm.main(["stage", str(bad), "--json"])
+    assert code == 2
+    err = json.loads(capsys.readouterr().out)
+    assert err["success"] is False
+
+
+def test_cli_meta_and_purge(project: Path, capsys):
+    src = project / "shot.png"
+    src.write_bytes(PNG_1PX)
+    staged = sm.stage_file(src, preferred_name="shot.png")
+    assert staged["success"] is True
+    code = sm.main(["meta", staged["url"], "--json"])
+    assert code == 0
+    meta = json.loads(capsys.readouterr().out)
+    assert meta["success"] is True
+    assert meta["meta"]["original_name"] == "shot.png"
+
+    code = sm.main(["purge", "--ttl-days", "7", "--json"])
+    assert code == 0
+    purged = json.loads(capsys.readouterr().out)
+    assert purged["success"] is True
+    assert "deleted" in purged

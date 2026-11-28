@@ -138,15 +138,16 @@
                 + '</div>';
         }
 
+        // Docked: the controls stay pinned to the bottom of a long, scrolling panel.
         function controls(id, paused, openHandle, openLabel) {
-            return '<div class="chat-supervision-actions">'
+            return '<div class="chat-supervision-dock"><div class="chat-supervision-actions">'
                 + '<button type="button" data-sup-chat="' + esc(openHandle) + '">' + esc(openLabel) + '</button>'
                 + '<button type="button" data-sup-act="edit" data-sup-id="' + esc(id) + '">Edit…</button>'
                 + '<button type="button" data-sup-act="' + (paused ? 'resume' : 'pause-menu') + '" data-sup-id="' + esc(id) + '">'
                 + (paused ? 'Resume now' : 'Pause…') + '</button>'
                 + '<button type="button" class="is-danger" data-sup-act="cancel" data-sup-id="' + esc(id) + '">Cancel</button>'
                 + '</div>'
-                + (!paused && pauseMenuFor === id ? pauseMenuHtml(id) : '');
+                + (!paused && pauseMenuFor === id ? pauseMenuHtml(id) : '') + '</div>';
         }
 
         // Header (who + state), one status line (when), facts (how): each said once.

@@ -8,7 +8,8 @@ from typing import Any
 
 from . import cache, capabilities, models_dev, usage as provider_usage
 from .catalog import get_adapter, get_provider, manifests
-from .types import TextRequest, TextResult, SpeechRequest, SpeechResult, TranscriptionRequest
+from .types import (ImageGenerationRequest, ImageGenerationResult, SpeechRequest,
+                    SpeechResult, TextRequest, TextResult, TranscriptionRequest)
 
 _LOCKS = {p.id: threading.Lock() for p in manifests()}
 
@@ -231,6 +232,21 @@ def synthesize_speech(provider_id: str, request: SpeechRequest, *, usage_task: s
         raise
     _record_call(provider_id, "speech_generation", request.model, usage_task,
                  session_id, start, result=result, cost=usage_cost)
+    return result
+
+
+def generate_image(provider_id: str, request: ImageGenerationRequest, *, usage_task: str = "",
+                   session_id=None) -> ImageGenerationResult:
+    manifest, adapter, _ = _operation(provider_id, "image_generation", request.model)
+    start = time.time()
+    try:
+        result = adapter.generate_image(manifest, request)
+    except Exception:
+        _record_call(provider_id, "image_generation", request.model, usage_task,
+                     session_id, start, error=True)
+        raise
+    _record_call(provider_id, "image_generation", request.model, usage_task,
+                 session_id, start, result=result)
     return result
 
 

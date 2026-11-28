@@ -11,6 +11,7 @@ default_model: gpt-4o-mini
 operations:
 - text_generation
 - speech_generation
+- image_generation
 - audio_transcription
 defaults:
   temperature_range: [0, 2]
@@ -87,6 +88,11 @@ model_rules:
     operations:
     - speech_generation
 - match:
+  - gpt-image-*
+  capabilities:
+    operations:
+    - image_generation
+- match:
   - '*transcribe*'
   - whisper-*
   capabilities:
@@ -97,6 +103,8 @@ models:
 - id: gpt-4o
 - id: gpt-4.1-mini
 - id: gpt-4.1
+- id: gpt-image-2.6-flare
+- id: gpt-image-2.6-sunburst
 - id: gpt-4o-mini-tts
   label: gpt-4o-mini-tts (recommended)
   capabilities:

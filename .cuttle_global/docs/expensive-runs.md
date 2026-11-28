@@ -42,6 +42,33 @@ foundational change deserves an immediate check before anything is stacked on it
   wins when it has one. Never stop another chat's job to free the resource.
 - CPU-only work (edits, unit tests, analysis of the last result) can proceed
   while an exclusive job runs.
+
+### This machine is busy: use another one
+
+Before a heavy job (a render, a long build, a benchmark, anything that wants the
+GPU or most of the cores), look at the load, not only at your own jobs:
+`python -m api.device_workers.cli list` reports `load` (CPU, RAM, GPU) and
+`online` for every machine the user has paired, and `nvidia-smi` / `uptime`
+show this one. Other chats, sub-agents you spawned, a game editor or an image
+generator count: a job that shares a saturated machine runs several times
+slower and slows theirs.
+
+When this machine is occupied and the job is not tied to it:
+
+1. **A capable worker is online** → run the job there through the mesh
+   ([cuttle-workers.md](cuttle-workers.md): `blender-shard`, `file_copy`, shell
+   recipes). Do not ask first; the user paired the machine for this.
+2. **A paired machine is listed but `online: false`** → it may only be its worker
+   process that is down. Try the user's remote-access tool
+   ([remote-access.md](remote-access.md), e.g. `ssh <alias> hostname`). If it
+   answers, run the job over that tool (copy the inputs, run, copy the results
+   back), and tell the user the worker is offline so they can restart it.
+3. **Nothing else is reachable** → queue behind the running work as above, and
+   say in the reply that the job waited on a busy machine.
+
+Machine names, what each is good for and which the user has offered for
+overflow belong in `<home>/personal/docs/cuttle-workers.md`. Not for short jobs
+(seconds to a couple of minutes): copying inputs costs more than the wait.
 - Long runs follow [headless-turns.md](headless-turns.md) (watch card or
   `watch-unit`, no wait loops); a batch split across agents follows
   [subagents.md](subagents.md).

@@ -1,7 +1,7 @@
 /* ================================================================
    Cuttle Chat — media thumbs, lightbox and image menu (chat_media.js).
    Owner: markdown/attachment media thumb HTML, the poster fallback, the
-   shared lightbox (opened by thumbs and by links to image/video files;
+   shared lightbox (opened by thumbs and by links to image/video/audio files;
    gallery, fit/actual/zoom/pan/pinch, captions from the
    staging sidecar `/api/shared-media/meta`, download) and the image
    right-click Copy / Save menu, plus all of their state.
@@ -27,14 +27,16 @@
 
     function mediaKindFromUrl(url) {
         const path = String(url || '').split('?')[0].split('#')[0].toLowerCase();
+        if (/\.(mp3|wav|m4a|flac|aac|opus|oga)$/i.test(path)) return 'audio';
         if (/\.(mp4|webm|mov|m4v|ogg|ogv)$/i.test(path)) return 'video';
         return 'image';
     }
 
-    /** 'image' / 'video' when a link's path names a media file, else ''. */
+    /** 'image' / 'video' / 'audio' when a link's path names a media file, else ''. */
     function mediaLinkKind(url) {
         const path = String(url || '').split('?')[0].split('#')[0].toLowerCase();
-        if (/\.(mp4|webm|mov|m4v|ogv)$/.test(path)) return 'video';
+        if (/\.(mp3|wav|m4a|flac|aac|opus|oga)$/.test(path)) return 'audio';
+        if (/\.(mp4|webm|mov|m4v|ogg|ogv)$/.test(path)) return 'video';
         if (/\.(png|jpe?g|gif|webp|avif|bmp|svg)$/.test(path)) return 'image';
         return '';
     }
@@ -185,9 +187,21 @@
                 ? String(o.poster).trim()
                 : (kind === 'video' ? mediaPosterUrl(rawSrc) : '');
             const safePoster = poster ? escapeHtmlInline(poster).replace(/"/g, '&quot;') : '';
-            const cls = 'cuttle-media-thumb' + (kind === 'video' ? ' cuttle-media-thumb--video' : '');
+            const cls = 'cuttle-media-thumb'
+                + (kind === 'video' ? ' cuttle-media-thumb--video' : '')
+                + (kind === 'audio' ? ' cuttle-media-thumb--audio' : '');
             let inner;
-            if (kind === 'video') {
+            if (kind === 'audio') {
+                const label = title
+                    || escapeHtmlInline(originalNameFromStaged(rawSrc) || mediaBasenameFromSrc(rawSrc) || 'Audio');
+                inner =
+                    '<span class="cuttle-media-audio-face">' +
+                    '<span class="cuttle-media-play" aria-hidden="true">▶</span>' +
+                    '<span class="cuttle-media-audio-label">' +
+                    label +
+                    '</span>' +
+                    '</span>';
+            } else if (kind === 'video') {
                 // Prefer mid-frame poster JPEG; fall back to muted video frame if missing.
                 if (safePoster) {
                     inner =
@@ -212,7 +226,7 @@
                     title +
                     '" loading="lazy" onerror="this.closest(\'.cuttle-media-thumb\')?.classList.add(\'cuttle-media-thumb--broken\')">';
             }
-            const tip = safeDesc || title || 'Open media';
+            const tip = safeDesc || title || (kind === 'audio' ? 'Play audio' : 'Open media');
             let html =
                 '<button type="button" class="' +
                 cls +
@@ -446,7 +460,9 @@
         function lightboxMediaEl() {
             const root = _cuttleLightbox;
             if (!root) return null;
-            return root.querySelector('.cuttle-lightbox-stage img, .cuttle-lightbox-stage video');
+            return root.querySelector(
+                '.cuttle-lightbox-stage img, .cuttle-lightbox-stage video, .cuttle-lightbox-stage audio'
+            );
         }
 
         function lightboxZoomBase() {
@@ -857,7 +873,7 @@
             return null;
         }
 
-        /** A link in a chat bubble whose href is a viewable image/video, else null. */
+        /** A link in a chat bubble whose href is a viewable image/video/audio, else null. */
         function mediaLinkFromTarget(target) {
             const a = target && target.closest && target.closest('.message a[href]');
             if (!a || a.closest('.cuttle-media-thumb')) return null;
@@ -909,6 +925,52 @@
             return items;
         }
 
+        /** Pin the audio dock to the measured nav-arrow center (same parent as
+         *  ←/→). CSS % + safe-area math diverged from the arrows on Android. */
+        function placeLightboxAudio() {
+            const root = _cuttleLightbox;
+            if (!root || root.hidden) return;
+            const wrap = root.querySelector('.cuttle-lightbox-audio');
+            if (!wrap) return;
+            const host = root.getBoundingClientRect();
+            if (!host.height) return;
+            const prev = root.querySelector('.cuttle-lightbox-prev');
+            const next = root.querySelector('.cuttle-lightbox-next');
+            const refs = [prev, next].filter(function (el) {
+                return el && !el.hidden && el.getClientRects().length;
+            });
+            let centerY;
+            if (refs.length) {
+                let sum = 0;
+                refs.forEach(function (el) {
+                    const r = el.getBoundingClientRect();
+                    sum += r.top + r.height / 2;
+                });
+                centerY = sum / refs.length;
+            } else {
+                const close = root.querySelector('.cuttle-lightbox-close');
+                const bar = root.querySelector('.cuttle-lightbox-bar');
+                const topEdge = close ? close.getBoundingClientRect().bottom + 8 : host.top;
+                const bottomEdge = bar ? bar.getBoundingClientRect().top - 8 : host.bottom;
+                centerY = (topEdge + bottomEdge) / 2;
+            }
+            wrap.style.top = (centerY - host.top) + 'px';
+            wrap.style.left = '50%';
+            wrap.style.transform = 'translate(-50%, -50%)';
+        }
+
+        function clearLightboxAudioDock(root) {
+            const host = root || _cuttleLightbox;
+            if (!host) return;
+            host.querySelectorAll('.cuttle-lightbox-audio').forEach(function (el) {
+                try {
+                    const a = el.querySelector('audio');
+                    if (a) a.pause();
+                } catch (_) {}
+                try { el.remove(); } catch (__) {}
+            });
+        }
+
         function showLightboxIndex(idx) {
             if (!_lightboxItems.length) return;
             const n = _lightboxItems.length;
@@ -923,12 +985,31 @@
             const shownIndex = _lightboxIndex;
             hideMediaCtxMenu();
             resetLightboxZoomState();
+            clearLightboxAudioDock(root);
             stage.innerHTML = '';
-            stage.classList.remove('is-pannable', 'is-dragging', 'is-video');
+            stage.classList.remove('is-pannable', 'is-dragging', 'is-video', 'is-audio');
+            const zoomEl = root.querySelector('.cuttle-lightbox-zoom');
             const ownerDoc = root.ownerDocument || lightboxHostDocument();
             let media = null;
-            if (item.kind === 'video') {
+            if (item.kind === 'audio') {
+                stage.classList.add('is-audio');
+                if (zoomEl) zoomEl.hidden = true;
+                const wrap = ownerDoc.createElement('div');
+                wrap.className = 'cuttle-lightbox-audio';
+                const audio = ownerDoc.createElement('audio');
+                audio.className = 'cuttle-lightbox-audio-el';
+                audio.src = item.src;
+                audio.controls = true;
+                audio.autoplay = true;
+                audio.preload = 'metadata';
+                audio.setAttribute('controlsList', 'nodownload');
+                wrap.appendChild(audio);
+                // Same parent as ←/→ so measured centers share one box.
+                root.appendChild(wrap);
+                media = audio;
+            } else if (item.kind === 'video') {
                 stage.classList.add('is-video');
+                if (zoomEl) zoomEl.hidden = false;
                 const video = ownerDoc.createElement('video');
                 video.src = item.src;
                 video.controls = true;
@@ -938,6 +1019,7 @@
                 stage.appendChild(video);
                 media = video;
             } else {
+                if (zoomEl) zoomEl.hidden = false;
                 const img = ownerDoc.createElement('img');
                 img.src = item.src;
                 img.alt = item.title || '';
@@ -957,7 +1039,15 @@
             root.hidden = false;
             lightboxSetOpenClass(true);
             updateLightboxZoomUi();
-            onLightboxMediaReady(media);
+            if (item.kind === 'audio') {
+                // After nav hidden flags + layout, pin to the arrow midlines.
+                requestAnimationFrame(function () {
+                    placeLightboxAudio();
+                    requestAnimationFrame(placeLightboxAudio);
+                });
+            } else {
+                onLightboxMediaReady(media);
+            }
             try {
                 root.focus({ preventScroll: true });
             } catch (_) {
@@ -1007,16 +1097,17 @@
             hideMediaCtxMenu();
             const root = _cuttleLightbox;
             if (!root) return;
-            const video = root.querySelector('video');
-            if (video) {
+            clearLightboxAudioDock(root);
+            const playing = root.querySelector('video, audio');
+            if (playing) {
                 try {
-                    video.pause();
+                    playing.pause();
                 } catch (_) {}
             }
             const stage = root.querySelector('.cuttle-lightbox-stage');
             if (stage) {
                 stage.innerHTML = '';
-                stage.classList.remove('is-pannable', 'is-dragging', 'is-video');
+                stage.classList.remove('is-pannable', 'is-dragging', 'is-video', 'is-audio');
             }
             root.hidden = true;
             lightboxSetOpenClass(false);
@@ -1044,23 +1135,31 @@
             } else if (e.key === 'ArrowRight') {
                 e.preventDefault();
                 showLightboxIndex(_lightboxIndex + 1);
-            } else if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {
+            } else if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd'
+                || e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract'
+                || e.key === '0' || e.code === 'Numpad0'
+                || e.key === '1' || e.code === 'Numpad1') {
+                const cur = _lightboxItems && _lightboxItems[_lightboxIndex];
+                if (cur && cur.kind === 'audio') return;
                 e.preventDefault();
-                lightboxZoomBy(_LIGHTBOX_ZOOM_STEP);
-            } else if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') {
-                e.preventDefault();
-                lightboxZoomBy(1 / _LIGHTBOX_ZOOM_STEP);
-            } else if (e.key === '0' || e.code === 'Numpad0') {
-                e.preventDefault();
-                setLightboxSizeMode('fit');
-            } else if (e.key === '1' || e.code === 'Numpad1') {
-                e.preventDefault();
-                setLightboxSizeMode('actual');
+                if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') {
+                    lightboxZoomBy(_LIGHTBOX_ZOOM_STEP);
+                } else if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') {
+                    lightboxZoomBy(1 / _LIGHTBOX_ZOOM_STEP);
+                } else if (e.key === '0' || e.code === 'Numpad0') {
+                    setLightboxSizeMode('fit');
+                } else {
+                    setLightboxSizeMode('actual');
+                }
             }
         }
 
         function onLightboxHostResize() {
             if (!_cuttleLightbox || _cuttleLightbox.hidden || !_cuttleLightbox.isConnected) return;
+            if (_cuttleLightbox.querySelector('.cuttle-lightbox-audio')) {
+                placeLightboxAudio();
+                return;
+            }
             measureLightboxFitScale();
             applyLightboxZoom();
         }
@@ -1320,8 +1419,8 @@
                     e.preventDefault();
                     e.stopPropagation();
                     if (link) {
-                        // Image/video links open in the lightbox, not a _blank window
-                        // that replaces the app view with no way back.
+                        // Image/video/audio links open in the lightbox, not a _blank
+                        // window that replaces the app view with no way back.
                         const linkItems = collectBubbleMediaItems(link);
                         const linkSrc = mediaLinkItem(link).src;
                         const linkIdx = linkItems.findIndex(function (it) { return it.src === linkSrc; });

@@ -24,45 +24,50 @@ const items = [
   it('c', { message_id: 3, source: 'upload', shared_at: '2026-11-01T11:00:00Z', size: null, project: '' }),
   it('d', { message_id: 2, available: false, shared_at: '2026-11-15T11:00:00Z' }),
   it('e', { message_id: 1, chat_archived: true, title: 'Glowing gem', shared_at: '2025-01-01T00:00:00Z', size: 1 }),
+  it('f', { message_id: 6, kind: 'audio', url: '/output/shared/f.mp3', name: 'f.mp3', shared_at: '2026-11-17T11:30:00Z', size: 20 }),
 ];
 const ids = (xs) => xs.map((x) => x.id);
 
 // Defaults: expired hidden, archived shown, newest first; unknown prefs dropped.
 const p = M.normalizePrefs({ sort: 'bogus', kind: 'video', showExpired: 'yes', chat: 7 });
 assert.equal(p.sort, 'newest'); assert.equal(p.kind, 'video'); assert.equal(p.showExpired, false); assert.equal(p.chat, '7');
-assert.deepEqual(ids(M.sortItems(M.filterItems(items, {}, now), 'newest')), ['a', 'b', 'c', 'e']);
-assert.deepEqual(ids(M.filterItems(items, { showExpired: true }, now)), ['a', 'b', 'c', 'd', 'e']);
-assert.deepEqual(ids(M.filterItems(items, { showArchived: false }, now)), ['a', 'b', 'c']);
+assert.equal(M.normalizePrefs({ kind: 'audio' }).kind, 'audio');
+assert.deepEqual(ids(M.sortItems(M.filterItems(items, {}, now), 'newest')), ['f', 'a', 'b', 'c', 'e']);
+assert.deepEqual(ids(M.filterItems(items, { showExpired: true }, now)), ['a', 'b', 'c', 'd', 'e', 'f']);
+assert.deepEqual(ids(M.filterItems(items, { showArchived: false }, now)), ['a', 'b', 'c', 'f']);
 assert.deepEqual(ids(M.filterItems(items, { kind: 'video' }, now)), ['b']);
+assert.deepEqual(ids(M.filterItems(items, { kind: 'audio' }, now)), ['f']);
 assert.deepEqual(ids(M.filterItems(items, { source: 'mine' }, now)), ['c']);
-assert.deepEqual(ids(M.filterItems(items, { source: 'agents' }, now)), ['a', 'b', 'e']);
+assert.deepEqual(ids(M.filterItems(items, { source: 'agents' }, now)), ['a', 'b', 'e', 'f']);
 assert.deepEqual(ids(M.filterItems(items, { chat: '2' }, now)), ['b']);
 assert.deepEqual(ids(M.filterItems(items, { project: '-' }, now)), ['c']);
-assert.deepEqual(ids(M.filterItems(items, { range: 'week' }, now)), ['a', 'b']);
+assert.deepEqual(ids(M.filterItems(items, { range: 'week' }, now)), ['a', 'b', 'f']);
 assert.deepEqual(ids(M.filterItems(items, { query: 'GEM glowing' }, now)), ['e']);
 assert.deepEqual(ids(M.filterItems(items, { query: 'bravo' }, now)), ['b']);
 
 // Sorts (unknown sizes last when smallest first).
 const shown = M.filterItems(items, {}, now);
-assert.deepEqual(ids(M.sortItems(shown, 'oldest')), ['e', 'c', 'b', 'a']);
-assert.deepEqual(ids(M.sortItems(shown, 'size-desc')), ['b', 'a', 'e', 'c']);
-assert.deepEqual(ids(M.sortItems(shown, 'size-asc')), ['e', 'a', 'b', 'c']);
-assert.deepEqual(ids(M.sortItems(shown, 'chat')), ['a', 'c', 'e', 'b']);
-assert.deepEqual(ids(M.sortItems(shown, 'name-desc')), ['e', 'c', 'b', 'a']);
+assert.deepEqual(ids(M.sortItems(shown, 'oldest')), ['e', 'c', 'b', 'a', 'f']);
+assert.deepEqual(ids(M.sortItems(shown, 'size-desc')), ['b', 'f', 'a', 'e', 'c']);
+assert.deepEqual(ids(M.sortItems(shown, 'size-asc')), ['e', 'a', 'f', 'b', 'c']);
+assert.deepEqual(ids(M.sortItems(shown, 'chat')), ['f', 'a', 'c', 'e', 'b']);
+assert.deepEqual(ids(M.sortItems(shown, 'name-desc')), ['f', 'e', 'c', 'b', 'a']);
 
 // Groups keep sort order; chat groups carry the chat handle.
 const byChat = M.groupItems(M.sortItems(shown, 'newest'), 'chat', now);
-assert.deepEqual(byChat.map((g) => [g.label, ids(g.items)]), [['A', ['a', 'c', 'e']], ['Bravo', ['b']]]);
+assert.deepEqual(byChat.map((g) => [g.label, ids(g.items)]), [['A', ['f', 'a', 'c', 'e']], ['Bravo', ['b']]]);
 assert.equal(byChat[0].chat.handle, 'CH-000001');
 const byDay = M.groupItems(M.sortItems(shown, 'newest'), 'day', now);
 assert.equal(byDay[0].label, 'Today'); assert.equal(byDay[1].label, 'Yesterday');
-assert.deepEqual(M.groupItems(shown, 'none', now).map((g) => g.items.length), [4]);
+assert.deepEqual(M.groupItems(shown, 'none', now).map((g) => g.items.length), [5]);
 assert.deepEqual(M.groupItems([], 'none', now), []);
 
 // Gallery: expired skipped, captions name the chat, uploads downloadable.
+// Order follows the filtered input (not re-sorted).
 const gallery = M.galleryItems(M.filterItems(items, { showExpired: true }, now));
-assert.deepEqual(gallery.map((g) => g.id), ['a', 'b', 'c', 'e']);
+assert.deepEqual(gallery.map((g) => g.id), ['a', 'b', 'c', 'e', 'f']);
 assert.equal(gallery[1].kind, 'video');
+assert.equal(gallery[4].kind, 'audio');
 assert.equal(gallery[3].description, 'Glowing gem — A · CH-000001-1');
 assert.equal(gallery[0].download, '/output/shared/a.png?download=1');
 

@@ -33,7 +33,10 @@ def session_context(session_id, *, user_id=None, db=None):
 MAX_LINKS = 50
 # Ops that change which items are done (these reactivate an archived list).
 DONE_ITEM_OPS = ('items', 'add', 'remove', 'set_done', 'set_undone')
+# Visibility is opt-in and allowed on agent-managed lists (UI eye toggle).
+VISIBILITY_OPS = ('set_hidden', 'clear_hidden')
 # Every op that edits items; the UI may send these only on a shared list.
+# Visibility ops are separate: users may hide/unhide on any list they own.
 ITEM_EDIT_OPS = DONE_ITEM_OPS + ('set_text', 'set_label', 'set_owner', 'set_in_progress', 'clear_in_progress')
 
 
@@ -223,7 +226,7 @@ def patch(gizmo_id, ops, *, user_id=None, session_id=None, actor=None, db=None, 
         raise GizmoError('patch must be an object')
     db = database(db)
     for key in ('set_done', 'set_undone', 'remove', 'add', 'items', 'link', 'unlink', 'linked_sessions',
-                'set_in_progress', 'clear_in_progress'):
+                'set_in_progress', 'clear_in_progress', 'set_hidden', 'clear_hidden'):
         if key in ops and not isinstance(ops[key], list):
             raise GizmoError(f'{key} must be an array')
     for key in ('set_text', 'set_label', 'set_owner'):
@@ -249,7 +252,9 @@ def patch(gizmo_id, ops, *, user_id=None, session_id=None, actor=None, db=None, 
         if expected is not None and int(row['revision']) != expected:
             raise GizmoError('This Tasks list changed since you opened it; reload to see the latest.',
                              'conflict')
-        if item_edit and row.get('edit_mode') != 'shared':
+        # Hide/unhide is allowed on agent-managed lists; content edits are not.
+        content_edit = any(key in ops for key in ITEM_EDIT_OPS)
+        if item_edit and content_edit and row.get('edit_mode') != 'shared':
             raise GizmoError('This Tasks list is agent-managed; switch to Shared to edit.', 'forbidden')
         scope = ops.get('scope', row['scope'])
         edit = ops.get('edit_mode', row.get('edit_mode', 'agent'))

@@ -170,6 +170,10 @@ def _ensure_item_ids(items: Any, prefix: str = "t", *, strict: bool = False) -> 
             if strict:
                 raise ValueError(f"task {iid} is done and cannot be in progress")
             in_progress = False  # invariant repair for stored rows
+        raw_hidden = raw.get("hidden")
+        if strict and raw_hidden is not None and not isinstance(raw_hidden, bool):
+            raise ValueError("hidden must be a boolean")
+        hidden = raw_hidden is True
         node: Dict[str, Any] = {
             "id": iid,
             "text": str(raw.get("text") or raw.get("content") or "").strip(),
@@ -184,6 +188,9 @@ def _ensure_item_ids(items: Any, prefix: str = "t", *, strict: bool = False) -> 
             node["owner"] = owner
         if in_progress:
             node["in_progress"] = True
+        # Opt-in only: checking done never sets or clears hidden.
+        if hidden:
+            node["hidden"] = True
         out.append(node)
     return out
 
@@ -369,6 +376,16 @@ def apply_tasks_patch(
         node = _find_item(items, str(iid))
         if node is not None:
             node.pop("in_progress", None)
+
+    for iid in patch.get("set_hidden") or []:
+        node = _find_item(items, str(iid))
+        if node is not None:
+            node["hidden"] = True
+
+    for iid in patch.get("clear_hidden") or []:
+        node = _find_item(items, str(iid))
+        if node is not None:
+            node.pop("hidden", None)
 
     replace_items = patch.get("items")
     if isinstance(replace_items, list):

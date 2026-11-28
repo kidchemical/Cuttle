@@ -91,13 +91,16 @@ def task_related(gizmo_id):
 @tasks_bp.route('/<gizmo_id>/items/<item_id>', methods=['PATCH'])
 @authenticated_required
 def task_item(gizmo_id, item_id):
-    """Body: ``done`` (bool), ``owner`` (object or null), ``in_progress`` (bool).
+    """Body: ``done`` (bool), ``owner`` (object or null), ``in_progress`` (bool),
+    ``hidden`` (bool).
 
-    ``done`` stays required unless ``owner`` or ``in_progress`` is sent.
+    ``done`` stays required unless ``owner``, ``in_progress`` or ``hidden`` is sent.
+    ``hidden`` may be toggled on agent-managed lists; other item edits need Shared.
     """
     data = _body()
     ops = {}
-    if ('owner' not in data and 'in_progress' not in data) or 'done' in data:
+    optional = ('owner' in data, 'in_progress' in data, 'hidden' in data)
+    if (not any(optional)) or 'done' in data:
         if not isinstance(data.get('done'), bool):
             raise GizmoError('done must be a boolean')
         ops['set_done' if data['done'] else 'set_undone'] = [item_id]
@@ -107,6 +110,10 @@ def task_item(gizmo_id, item_id):
         if not isinstance(data['in_progress'], bool):
             raise GizmoError('in_progress must be a boolean')
         ops['set_in_progress' if data['in_progress'] else 'clear_in_progress'] = [item_id]
+    if 'hidden' in data:
+        if not isinstance(data['hidden'], bool):
+            raise GizmoError('hidden must be a boolean')
+        ops['set_hidden' if data['hidden'] else 'clear_hidden'] = [item_id]
     row = tasks.patch(gizmo_id, ops, user_id=current_user()['id'], session_id=data.get('session_id'),
                       actor=_actor(data), item_edit=True)
     return jsonify(success=True, gizmo=row)

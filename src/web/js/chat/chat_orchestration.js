@@ -135,7 +135,7 @@
                 + '<div class="chat-supervision-section">Agents' + (c.agents.length ? ' · ' + c.agents.length
                     + (live ? ', ' + live + ' running' : '') : '') + '</div>'
                 + agentsHtml(c.agents)
-                + '<div class="chat-supervision-actions">'
+                + '<div class="chat-supervision-dock"><div class="chat-supervision-actions">'
                 + c.actions.map((a) => '<button type="button"' + (a === 'halt' ? ' class="is-danger"' : '')
                     + ' data-orch-act="' + a + '" title="' + esc(CONTROL[a].tip) + '">' + CONTROL[a].label + '</button>').join('')
                 + '</div>'
@@ -143,7 +143,7 @@
                 + '<button type="button" data-orch-act="edit">Edit…</button>'
                 + '<button type="button" data-orch-act="playbooks">Open playbooks</button>'
                 + '<button type="button" data-orch-act="stop" title="Drop the playbook from this chat. Running work is not stopped.">End orchestration</button>'
-                + '</div>';
+                + '</div></div>';
         }
 
         function openPopover(anchor) {
