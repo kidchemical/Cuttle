@@ -87,6 +87,10 @@ public class MainActivity extends BridgeActivity {
     private int errorPageShows = 0;
     private static final long CONNECTION_WATCHDOG_MS = 18000;
     private volatile boolean cuttleDocumentReady = false;
+    // The remote shell document has committed; only its scripts and styles are still loading.
+    private volatile boolean cuttleDocumentCommitted = false;
+    // Highest load progress the watchdog has seen for the current attempt.
+    private int watchdogProgress = -1;
     // Main-thread generation fences late probe results when the user changes screens.
     private int connectionAttempt = 0;
     private final StartupCover startupCover = new StartupCover(this);
@@ -107,8 +111,27 @@ public class MainActivity extends BridgeActivity {
         if (url.startsWith("https://localhost") || url.startsWith("http://localhost") || url.startsWith("data:")) {
             return;
         }
+        // A slow link (cellular, VPN) can need several windows to fetch the shell's
+        // scripts and styles. Once the document has committed the PC is answering,
+        // so only a full window with no load progress counts as offline.
+        if (cuttleDocumentCommitted) {
+            int progress = wv.getProgress();
+            if (progress >= 100) {
+                return;
+            }
+            if (progress > watchdogProgress) {
+                watchdogProgress = progress;
+                rearmConnectionWatchdog();
+                return;
+            }
+        }
         showServerOffline(readBaseUrl());
     };
+
+    private void rearmConnectionWatchdog() {
+        mainHandler.removeCallbacks(connectionWatchdog);
+        mainHandler.postDelayed(connectionWatchdog, CONNECTION_WATCHDOG_MS);
+    }
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -331,6 +354,8 @@ public class MainActivity extends BridgeActivity {
                 handler.cancel();
                 mainHandler.removeCallbacks(connectionWatchdog);
                 cuttleDocumentReady = false;
+                cuttleDocumentCommitted = false;
+                watchdogProgress = -1;
                 showErrorPage("ERR_CERT_AUTHORITY_INVALID", "This PC's certificate isn't trusted or has changed. "
                     + "Open Server settings and connect again to review it.");
             }
@@ -345,6 +370,9 @@ public class MainActivity extends BridgeActivity {
             @Override
             public void onPageCommitVisible(WebView view, String url) {
                 super.onPageCommitVisible(view, url);
+                if (url != null && url.contains("app_shell.html") && isCuttleRemote(url)) {
+                    cuttleDocumentCommitted = true;
+                }
                 releaseStartupCover(url, false);
             }
 
@@ -411,6 +439,8 @@ public class MainActivity extends BridgeActivity {
                     if (error != null && error.getErrorCode() == ERROR_FAILED_SSL_HANDSHAKE) {
                         mainHandler.removeCallbacks(connectionWatchdog);
                         cuttleDocumentReady = false;
+                        cuttleDocumentCommitted = false;
+                        watchdogProgress = -1;
                         showErrorPage("ERR_SSL_PROTOCOL_ERROR", "HTTPS connection failed. Check the server certificate and address.");
                         return;
                     }
@@ -608,6 +638,8 @@ public class MainActivity extends BridgeActivity {
             return;
         }
         cuttleDocumentReady = false;
+        cuttleDocumentCommitted = false;
+        watchdogProgress = -1;
         mainHandler.removeCallbacks(connectionWatchdog);
         int attempt = ++connectionAttempt;
         probeCuttle(baseUrl, entry, attempt, 0);
@@ -743,6 +775,8 @@ public class MainActivity extends BridgeActivity {
         mainHandler.removeCallbacks(connectionWatchdog);
         startupCover.hide();
         cuttleDocumentReady = false;
+        cuttleDocumentCommitted = false;
+        watchdogProgress = -1;
         WebView webView = bridge != null ? bridge.getWebView() : null;
         if (webView == null) {
             return;
