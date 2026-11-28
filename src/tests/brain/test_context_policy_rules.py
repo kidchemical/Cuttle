@@ -10,6 +10,7 @@ claims.
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
@@ -24,13 +25,17 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # Generous dump guardrail for the global always-on body (current ~10.1K;
 # the old ~12.3K payload fails). Catches a future full-runbook paste;
 # never freeze an exact length.
-# Ceilings, not targets: measured 2026-11-20 after the context trim at
-# 6,706 (global rule bodies), 13,845 (Cuttle-repo envelope) and the guest
-# figure printed below. Raising one means always-on text grew: move the
-# procedure to its runbook instead (`rule-authoring.md`).
-GLOBAL_RULE_BODY_BUDGET = 7500
-CUTTLE_ENVELOPE_BUDGET = 15500
-GUEST_ENVELOPE_BUDGET = 11500
+# Ceilings, not targets, measured with paths replaced (`_measured`) on
+# 2026-11-28 at 7,438 (global rule bodies), 14,684 (Cuttle-repo envelope)
+# and 11,860 (guest), about 3% headroom each. That set came after the
+# desktop-control rule and skill and the busy-machine pointer were trimmed.
+# Raising one means always-on text grew. The change that crosses a ceiling
+# trims first, starting with its own text, then moves procedure to its
+# runbook (`rule-authoring.md`). The assertion message gives each section's
+# size.
+GLOBAL_RULE_BODY_BUDGET = 7700
+CUTTLE_ENVELOPE_BUDGET = 15100
+GUEST_ENVELOPE_BUDGET = 12200
 
 CUTTLE_POINTERS = (
     "ARCHITECTURE_PRINCIPLES.md",
@@ -201,13 +206,44 @@ def test_global_rule_body_budget_with_counts(tmp_path, capsys):
     assert total < GLOBAL_RULE_BODY_BUDGET
 
 
+def _measured(envelope, project, tmp_path):
+    """Envelope text with checkout and temp paths replaced by short placeholders.
+
+    The briefing names the project root, the docs folder and each skill's
+    SKILL.md, so raw length depends on where the tree is checked out.
+    """
+    for root, mark in ((Path(project), "<project>"), (tmp_path, "<tmp>"), (REPO_ROOT, "<repo>")):
+        for form in {str(root), root.as_posix()}:
+            envelope = envelope.replace(form, mark)
+    return envelope
+
+
+def _sections(envelope):
+    """Size of each briefing section, so an overflow names the part that grew."""
+    sizes, name, start = {}, "preamble", 0
+    heads = r"^(<cuttle_ui_capabilities>|### \S+\.md|## (?:Project rules|Profile|Runtime context).*)$"
+    for match in re.finditer(heads, envelope, re.M):
+        sizes[name] = sizes.get(name, 0) + match.start() - start
+        name, start = match.group(1).strip("<>#: "), match.start()
+    sizes[name] = sizes.get(name, 0) + len(envelope) - start
+    return ", ".join(f"{key}={size}" for key, size in sizes.items())
+
+
 def test_fresh_envelope_stays_inside_its_budget(tmp_path, capsys):
     """A fresh `hello` briefing (tracked rules, no personal overlay, no ranker)."""
-    cuttle = len(_env("hello", _cuttle_project(tmp_path)))
-    guest = len(_env("hello", _guest(tmp_path)))
-    print(f"cuttle_envelope={cuttle} guest_envelope={guest}")
-    assert cuttle < CUTTLE_ENVELOPE_BUDGET
-    assert guest < GUEST_ENVELOPE_BUDGET
+    cuttle_root, guest_root = _cuttle_project(tmp_path), _guest(tmp_path)
+    cuttle = _measured(_env("hello", cuttle_root), cuttle_root, tmp_path)
+    guest = _measured(_env("hello", guest_root), guest_root, tmp_path)
+    print(f"cuttle_envelope={len(cuttle)} guest_envelope={len(guest)}")
+    assert len(cuttle) < CUTTLE_ENVELOPE_BUDGET, _sections(cuttle)
+    assert len(guest) < GUEST_ENVELOPE_BUDGET, _sections(guest)
+
+
+def test_envelope_measure_ignores_the_checkout_path(tmp_path):
+    short, deep = tmp_path / "a", tmp_path / ("very-long-checkout-folder-" * 4)
+    roots = [_guest(base) for base in (short, deep)]
+    sizes = {len(_measured(_env("hello", root), root, tmp_path)) for root in roots}
+    assert len(sizes) == 1
 
 
 @pytest.mark.parametrize("prompt", ["hello", "Fix the native input integration"])

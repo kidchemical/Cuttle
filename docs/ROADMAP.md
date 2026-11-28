@@ -23,14 +23,6 @@ Day-to-day backlog: [GitHub issues](https://github.com/kidchemical/Cuttle/issues
 - Public packaging: secrets hygiene, first-run OOBE, this docs set
 - Extracting `web_chat_api.py` is **backlog**, not a gate on product work — read the dependency map first
 
-## Technical debt
-
-- **Context-size budget test is fragile.** `test_fresh_envelope_stays_inside_its_budget` asserts a fixed character
-  count (guest 11,500) on a briefing that embeds the checkout path, so the same tree passes in a short worktree
-  path and fails in a longer clone, and independent rule edits collide: `655201d2` alone passes with 32 characters
-  to spare, but adding a pending 3-line `00-core.md` rule plus capability text gives 11,775. Measure the briefing
-  without path-dependent text (or budget per section) and decide who trims when two changes together overflow.
-
 ## Not on the table
 
 - Docker-as-the-sandbox story, a public skills marketplace, 20-chat-platform parity, a Node/TypeScript rewrite, or competing with Cursor/Codex **inside** Cuttle
