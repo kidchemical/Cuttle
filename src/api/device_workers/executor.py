@@ -195,7 +195,7 @@ def execute_job(job: Dict[str, Any], auth_token: Optional[str] = None) -> Dict[s
     if job.get("id") and "_job_id" not in params:
         params = {**params, "_job_id": str(job.get("id"))}
     # Declared resources size the job's memory scope (api.device_workers.isolation).
-    params = {**params, "_resources": requested(job.get("requirements"))}
+    params = {**params, "_resources": requested(job.get("requirements"), job.get("claimed_by"))}
     adapter = adapters.get(jtype)
     if adapter is not None:
         return adapter.run(params)

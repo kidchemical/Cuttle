@@ -30,11 +30,18 @@ TELEMETRY_STALE_SEC = 60.0
 INTERACTIVE_BURST = {"Unity Editor": (3072, 2048), "Blender": (2048, 2048)}
 
 
-def requested(requirements: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """The ``resources`` block of a job's requirements, normalised; ``{}`` when none."""
+def requested(requirements: Optional[Dict[str, Any]], worker_id: Optional[str] = None) -> Dict[str, Any]:
+    """The ``resources`` block of a job's requirements, normalised; ``{}`` when none.
+
+    ``resources.by_worker[worker_id]`` (set by the run planner from that
+    machine's history) overrides the amounts for that worker; any other worker
+    gets the block's own amounts."""
     raw = (requirements or {}).get("resources")
     if not isinstance(raw, dict):
         return {}
+    mine = (raw.get("by_worker") or {}).get(worker_id) if worker_id and isinstance(raw.get("by_worker"), dict) else None
+    if isinstance(mine, dict):
+        raw = {**raw, **mine}
     out: Dict[str, Any] = {}
     for key in ("ram_mb", "vram_mb", "gpu_slots"):
         try:

@@ -12,7 +12,8 @@ chat once when the run ends.
 
 Durations and reservations come from ``api.device_workers.metrics``: a job
 whose history measured a higher peak than it declared reserves the measured
-peak (+15 %) instead, and the form says so.
+peak (+15 %) instead, worked out per worker (``resources.by_worker``), and the
+form says so with each worker's basis.
 
 When nothing can place a job, Cuttle never queues silently: the approval form
 says why for every worker (named processes, offline machines), and a run that
@@ -75,28 +76,57 @@ def _job_specs(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
-def _with_history(jobs: List[Dict[str, Any]], workers: List[Dict[str, Any]]) -> List[str]:
-    """Raise each job's reservation to what its history measured; notes for the form."""
-    vram_cap = max((int(g.get("vram_total_mb") or 0) for w in workers for g in (w.get("load") or {}).get("gpus") or []),
-                   default=0) - VRAM_MARGIN_MB
+def _gpu_sizes(workers: List[Dict[str, Any]]) -> Dict[str, int]:
+    """Each worker's largest GPU in MB (0 without GPU telemetry)."""
+    return {w["worker_id"]: max((int(g.get("vram_total_mb") or 0) for g in (w.get("load") or {}).get("gpus") or []
+                                 if isinstance(g, dict)), default=0) for w in workers}
+
+
+def _gb(mb: Any) -> str:
+    return f"{int(mb or 0) / 1024:.1f}"
+
+
+def _with_history(jobs: List[Dict[str, Any]], workers: List[Dict[str, Any]],
+                  known: List[Dict[str, Any]]) -> List[str]:
+    """Raise each job's reservation to what its history measured; notes for the form.
+
+    ``resources`` keeps the declared amounts raised by any machine's history,
+    for a worker that comes online after planning. ``resources.by_worker`` gives
+    each online worker its own figure: its own history first, and VRAM peaks
+    only from a GPU no larger than its own (``metrics.estimate``)."""
+    gpu_mb = _gpu_sizes(known)
+    vram_cap = max((gpu_mb.get(w["worker_id"], 0) for w in workers), default=0) - VRAM_MARGIN_MB
     notes = []
     for job in jobs:
-        declared = dict((job["requirements"] or {}).get("resources") or {})
+        declared = {k: v for k, v in ((job["requirements"] or {}).get("resources") or {}).items() if k != "by_worker"}
+        label = job["params"].get("label") or job["type"]
         est = metrics.estimate(job)
         if not est["samples"]:
             continue
         wanted = metrics.suggest(declared, est)
         if vram_cap > 0 and int(wanted.get("vram_mb") or 0) > vram_cap:
             wanted["vram_mb"] = max(int(declared.get("vram_mb") or 0), vram_cap)
-        raised = [k for k in ("ram_mb", "vram_mb") if int(wanted.get(k) or 0) > int(declared.get(k) or 0)]
-        if not raised:
-            continue
-        job["requirements"] = {**job["requirements"], "resources": wanted}
-        what = ", ".join(f"{k[:-3].upper()} {int(declared.get(k) or 0) / 1024:.1f} → {wanted[k] / 1024:.1f} GB"
-                         for k in raised)
-        notes.append(f"{job['params'].get('label') or job['type']}: reservation from {est['samples']} past run(s) "
-                     f"({est['basis']}): {what}")
-    return notes
+        by_worker: Dict[str, Dict[str, int]] = {}
+        for w in workers:
+            wid = w["worker_id"]
+            mine_est = metrics.estimate(job, wid, gpu_mb)
+            mine = metrics.suggest(declared, mine_est)
+            cap = gpu_mb.get(wid, 0) - VRAM_MARGIN_MB
+            if cap > 0 and int(mine.get("vram_mb") or 0) > cap:
+                mine["vram_mb"] = max(int(declared.get("vram_mb") or 0), cap)
+            by_worker[wid] = {k: int(mine[k]) for k in ("ram_mb", "vram_mb") if mine.get(k)}
+            changes = [f"{k[:-3].upper()} {_gb(declared.get(k))} → {_gb(mine[k])} GB"
+                       for k in ("ram_mb", "vram_mb") if int(mine.get(k) or 0) > int(declared.get(k) or 0)]
+            basis = f"{mine_est['samples']} past run(s): {mine_est['basis']}"
+            if mine.get("vram_mb"):
+                basis += f"; VRAM: {mine_est.get('vram_basis')}"
+            if changes:
+                notes.append(f"{label} on {wid}: {', '.join(changes)} ({basis})")
+            elif int(wanted.get("vram_mb") or 0) > int(declared.get("vram_mb") or 0):
+                notes.append(f"{label} on {wid}: VRAM {_gb(declared.get('vram_mb'))} GB as declared "
+                             f"({mine_est.get('vram_basis')})")
+        job["requirements"] = {**job["requirements"], "resources": {**wanted, "by_worker": by_worker}}
+    return notes[:12]
 
 
 def _offline(store) -> List[str]:
@@ -113,7 +143,7 @@ def _worker_fit(worker: Dict[str, Any], jobs: List[Dict[str, Any]], held: List[D
         if not _requirements_met(job["requirements"], caps):
             reasons.append("missing capability")
             continue
-        reservation, reason = admit(requested(job["requirements"]), worker.get("load") or {}, held,
+        reservation, reason = admit(requested(job["requirements"], worker["worker_id"]), worker.get("load") or {}, held,
                                     telemetry_age=age)
         if reservation is None:
             reasons.append(reason)
@@ -145,7 +175,7 @@ def plan(spec: Dict[str, Any], *, chat_session_id: Any = None) -> Dict[str, Any]
         return {"success": False, "error": "no chat to resume: pass --chat CH-…"}
     store = get_store()
     workers = [w for w in store.list_workers(stale_after=float(heartbeat_stale_seconds())) if w.get("online")]
-    history_notes = _with_history(jobs, workers)
+    history_notes = _with_history(jobs, workers, store.list_workers())
     fit = [_worker_fit(w, jobs, _held(store, w["worker_id"])) for w in workers]
 
     estimates = [metrics.estimate(j) for j in jobs]
@@ -171,7 +201,7 @@ def plan(spec: Dict[str, Any], *, chat_session_id: Any = None) -> Dict[str, Any]
         lines.insert(0, f"Nothing can start right now. If it still cannot after {ask_after // 60} min, "
                         "Cuttle asks you again with the alternatives; it never waits silently.")
     if peak_ram or peak_vram:
-        lines.append(f"Largest job reserves {peak_ram / 1024:.1f} GB RAM, {peak_vram / 1024:.1f} GB VRAM.")
+        lines.append(f"Largest job reserves up to {peak_ram / 1024:.1f} GB RAM, {peak_vram / 1024:.1f} GB VRAM.")
     lines += history_notes
     for f in fit:
         why = f" — {'; '.join(f['reasons'])}" if f["reasons"] else ""

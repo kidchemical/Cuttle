@@ -139,14 +139,21 @@ def _rows(workload: str, config: Optional[str], worker_id: Optional[str]) -> Lis
         conn.close()
 
 
-def estimate(job: Dict[str, Any], worker_id: Optional[str] = None) -> Dict[str, Any]:
+def estimate(job: Dict[str, Any], worker_id: Optional[str] = None,
+             gpu_mb: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
     """Expected duration and peaks for ``job`` (on ``worker_id`` when given).
 
-    ``{"seconds", "peak_ram_mb", "peak_vram_mb", "samples", "basis", "oom_reserved_ram_mb"}``;
-    ``seconds`` is None with no history."""
+    ``{"seconds", "peak_ram_mb", "peak_vram_mb", "samples", "basis", "oom_reserved_ram_mb",
+    "vram_basis"}``; ``seconds`` is None with no history.
+
+    With ``gpu_mb`` (each worker's largest GPU, MB) the VRAM peak comes from
+    :func:`_vram_peak` instead: services such as ComfyUI keep more resident on
+    a bigger card, so a peak only carries to a GPU at least as large."""
     workload, config = workload_key(job), config_key(job)
     tiers = ([("this machine, same settings", config, worker_id)] if worker_id else []) + [
         ("same settings, any machine", config, None), ("same workload", None, None)]
+    out: Dict[str, Any] = {"seconds": None, "peak_ram_mb": None, "peak_vram_mb": None,
+                           "oom_reserved_ram_mb": None, "samples": 0, "basis": "no history"}
     for basis, cfg, wid in tiers:
         rows = _rows(workload, cfg, wid)
         done = [r for r in rows if r["outcome"] == "succeeded" and r["duration_s"]][:SAMPLES]
@@ -154,7 +161,7 @@ def estimate(job: Dict[str, Any], worker_id: Optional[str] = None) -> Dict[str, 
             continue
         peaks = [r for r in rows if r["outcome"] in ("succeeded", "oom")][:SAMPLES]
         ooms = [r["reserved_ram_mb"] for r in rows if r["outcome"] == "oom" and r["reserved_ram_mb"]]
-        return {
+        out = {
             "seconds": statistics.median(r["duration_s"] for r in done),
             "peak_ram_mb": max((r["peak_ram_mb"] or 0 for r in peaks), default=0) or None,
             "peak_vram_mb": max((r["peak_vram_mb"] or 0 for r in peaks), default=0) or None,
@@ -162,8 +169,29 @@ def estimate(job: Dict[str, Any], worker_id: Optional[str] = None) -> Dict[str, 
             "samples": len(done),
             "basis": basis,
         }
-    return {"seconds": None, "peak_ram_mb": None, "peak_vram_mb": None, "oom_reserved_ram_mb": None,
-            "samples": 0, "basis": "no history"}
+        break
+    if gpu_mb is not None and worker_id:
+        out["peak_vram_mb"], out["vram_basis"] = _vram_peak(workload, config, worker_id, gpu_mb)
+    return out
+
+
+def _vram_peak(workload: str, config: str, worker_id: str,
+               gpu_mb: Dict[str, int]) -> "tuple[Optional[int], str]":
+    """Measured VRAM peak for ``worker_id``: its own runs first, then runs on a
+    GPU no larger than its own. ``(None, why)`` when neither exists."""
+    mine = int(gpu_mb.get(worker_id) or 0)
+    def measured(rows):
+        return [r for r in rows if r["outcome"] in ("succeeded", "oom") and r["peak_vram_mb"]]
+
+    for basis, cfg in (("same settings", config), ("same workload", None)):
+        here = measured(_rows(workload, cfg, worker_id))[:SAMPLES]
+        if here:
+            return max(r["peak_vram_mb"] for r in here), f"this machine, {basis}"
+        smaller = [r for r in measured(_rows(workload, cfg, None))
+                   if mine and 0 < int(gpu_mb.get(r["worker_id"]) or 0) <= mine][:SAMPLES]
+        if smaller:
+            return max(r["peak_vram_mb"] for r in smaller), f"{basis}, GPU no larger"
+    return None, "no history from a GPU this size or smaller"
 
 
 def suggest(declared: Dict[str, Any], est: Dict[str, Any]) -> Dict[str, Any]:

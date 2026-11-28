@@ -829,7 +829,7 @@ class DeviceWorkerStore:
                     reqs = job.get("requirements") or {}
                     if not _requirements_met(reqs, caps):
                         continue
-                    need = requested(reqs)
+                    need = requested(reqs, wid)
                     # Re-claiming a job this worker still holds takes over its own hold.
                     others = [r for jid, r in held.items() if jid != job["id"]]
                     reservation, reason = admit(need, load, others, telemetry_age=telemetry_age)

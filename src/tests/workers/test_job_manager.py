@@ -746,12 +746,13 @@ def test_losing_comfyui_mid_prompt_retries_with_the_hold(fake_comfy):
 
 # ── Performance history ──────────────────────────────────────────────────────
 
-def _finished(store, wid, *, seconds, peak_ram=0, template="hunyuan", steps=30, outcome="succeeded", reserved=0):
+def _finished(store, wid, *, seconds, peak_ram=0, template="hunyuan", steps=30, outcome="succeeded", reserved=0,
+              peak_vram=0):
     from api.device_workers import metrics
 
     job = {"id": __import__("uuid").uuid4().hex, "type": "comfyui_prompt", "status": outcome if outcome != "oom" else "failed",
            "params": {"template": template, "prompt": {"3": {"class_type": "KSampler", "inputs": {"steps": steps, "seed": 1}}}},
-           "result": {"elapsed_seconds": seconds, "peak_ram_mb": peak_ram},
+           "result": {"elapsed_seconds": seconds, "peak_ram_mb": peak_ram, "peak_vram_mb": peak_vram},
            "error": "oom: past its scope" if outcome == "oom" else None,
            "reserved": {"ram_mb": reserved} if reserved else {}, "created_at": 1.0, "started_at": 2.0,
            "completed_at": 2.0 + seconds}
@@ -821,8 +822,86 @@ def test_plan_raises_a_reservation_to_the_measured_peak(worker_db):
     planned = runs.plan(spec, chat_session_id="CH-002819")
     stored = runs._load(planned["run_id"])
     assert stored["jobs"][0]["requirements"]["resources"]["ram_mb"] == 9421
-    assert "nacre: reservation from 2 past run(s)" in planned["form"]["description"]
+    assert "nacre on desk: RAM 4.0 → 9.2 GB (2 past run(s): this machine, same settings)" \
+        in planned["form"]["description"]
     assert planned["estimate_seconds"] == 60
+
+
+KLEIN = {"title": "Klein", "jobs": [{"type": "comfyui_prompt", "template": "klein", "label": "klein",
+                                    "params": {"prompt": {"3": {"class_type": "KSampler", "inputs": {"steps": 30}}}},
+                                    "requirements": {"resources": {"ram_mb": 9000, "vram_mb": 6000,
+                                                                   "service": "comfyui"}}}]}
+
+
+def _desk_and_laptop(store, **lap_load):
+    _register(store, "desk")  # 24 GB GPU
+    _register(store, "lap", **{"vram_total": 8151, "vram_used": 1400, **lap_load})
+
+
+def _planned(store):
+    from api.device_workers import runs
+
+    planned = runs.plan(KLEIN, chat_session_id="CH-002819")
+    res = runs._load(planned["run_id"])["jobs"][0]["requirements"]["resources"]
+    return planned, res, {f["worker_id"]: f for f in planned["workers"]}
+
+
+def test_a_big_gpus_vram_peak_does_not_lock_out_a_smaller_gpu(worker_db):
+    _desk_and_laptop(worker_db)
+    _finished(worker_db, "desk", seconds=30, peak_ram=8000, peak_vram=8600, template="klein")
+    planned, res, fit = _planned(worker_db)
+    assert res["by_worker"]["desk"]["vram_mb"] == 9890  # its own peak + 15 %
+    assert res["by_worker"]["lap"]["vram_mb"] == 6000  # declared: the desk card is larger
+    assert res["vram_mb"] == 9890  # a worker that was offline at planning gets the cautious figure
+    assert fit["lap"]["fits_now"] == 1 and fit["desk"]["fits_now"] == 1
+    lap_note = next(line for line in planned["form"]["description"].splitlines() if line.startswith("klein on lap"))
+    assert "RAM 8.8 → 9.0 GB" in lap_note and "VRAM: no history from a GPU this size or smaller" in lap_note
+
+
+def test_a_machines_own_history_comes_first_and_an_oom_grows_it_there(worker_db):
+    _desk_and_laptop(worker_db)
+    _finished(worker_db, "desk", seconds=30, peak_ram=8000, peak_vram=8600, template="klein")
+    _finished(worker_db, "lap", seconds=90, peak_ram=7000, peak_vram=5800, template="klein")
+    _, res, _ = _planned(worker_db)
+    assert res["by_worker"]["lap"] == {"ram_mb": 9000, "vram_mb": 6670}
+    # A smaller GPU's peak does carry to a larger one (never lowering its own).
+    assert res["by_worker"]["desk"]["vram_mb"] == 9890
+    _finished(worker_db, "lap", seconds=40, peak_ram=9000, template="klein", outcome="oom", reserved=9000)
+    _, res, _ = _planned(worker_db)
+    assert res["by_worker"]["lap"]["ram_mb"] == 13500
+
+
+def test_a_smaller_gpus_peak_carries_to_a_machine_without_history(worker_db):
+    from api.device_workers import metrics
+
+    _desk_and_laptop(worker_db)
+    _finished(worker_db, "lap", seconds=90, peak_ram=7000, peak_vram=7000, template="klein")
+    est = metrics.estimate({"type": "comfyui_prompt", "params": KLEIN["jobs"][0]["params"] | {"template": "klein"}},
+                           "desk", {"desk": 24576, "lap": 8151})
+    assert est["peak_vram_mb"] == 7000 and est["vram_basis"] == "same settings, GPU no larger"
+
+
+def test_per_worker_figures_still_refuse_a_machine_that_is_full_or_blind(worker_db):
+    _desk_and_laptop(worker_db, vram_used=4000)
+    _finished(worker_db, "desk", seconds=30, peak_ram=8000, peak_vram=8600, template="klein")
+    _, _, fit = _planned(worker_db)
+    assert fit["lap"]["fits_now"] == 0 and "VRAM" in fit["lap"]["reasons"][0]
+    worker_db.upsert_worker(worker_id="lap", hostname="lap", capabilities={"shell": True},
+                            load={"ram_total_gb": 32.0, "ram_available_gb": 24.0,
+                                  "gpus": [{"index": 0, "vram_total_mb": 8151}]})  # no used reading
+    _, res, fit = _planned(worker_db)
+    assert res["by_worker"]["lap"]["vram_mb"] == 6000
+    assert fit["lap"]["reasons"] == ["worker reports no GPU telemetry"]
+
+
+def test_the_claim_reserves_the_claiming_workers_own_figure(worker_db):
+    _desk_and_laptop(worker_db)
+    _register(worker_db, "tower")
+    resources = {"ram_mb": 9000, "vram_mb": 9890, "by_worker": {"lap": {"ram_mb": 9000, "vram_mb": 6000}}}
+    for wid, vram in (("lap", 6000), ("tower", 9890)):
+        jid = worker_db.submit_job(job_type="ping", requirements={"resources": resources})["id"]
+        assert [j["id"] for j in worker_db.claim_jobs(worker_id=wid)] == [jid]
+        assert worker_db.get_job(jid)["reserved"]["vram_mb"] == vram
 
 
 # ── Nothing fits: explicit, never silent ────────────────────────────────────
