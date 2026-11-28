@@ -306,8 +306,9 @@ settings contracts: [Chat prompts](../../.cuttle/docs/chat-prompts.md).
 **Direct model APIs:** `api.model_providers` owns validated provider manifests,
 account-scoped discovery, shared raw models.dev metadata, capability provenance,
 and operation-specific adapters under `<provider>/`. It executes typed
-text/vision, speech, transcription, and structured Jev decisions; future
-image/video generation contracts extend this owner. `api.background_helpers` owns global/task executor preferences, explicit fallback
+text/vision, speech, image generation, transcription, and structured Jev decisions.
+`api.media_generate` is the agent CLI for speech and image files and owns
+artifact storage and sharing. `api.background_helpers` owns global/task executor preferences, explicit fallback
 chains, deadlines and CLI concurrency. It selects API adapters or restricted
 agent helper contracts, never the chat dispatcher. `api.completion_providers`
 preserves legacy API preferences/resolution; `api.llm_complete` owns cleaned

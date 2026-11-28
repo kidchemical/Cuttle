@@ -25,6 +25,7 @@ agent toolkit.
 | Message / inspect / supervise an existing chat | `python -m api.chat_cli` (status, snapshot, send, stop, supervise, operations) | `chat-history.md` |
 | Chat visual effects | `python -m api.chat_vfx` | `chat-vfx.md` |
 | Model API provider catalogs | `python -m api.model_providers` (list, models, inspect) | Cuttle `.cuttle/docs/model-providers.md` |
+| Generate speech or images | `python -m api.media_generate` (speech, image) | [Media generation](media-generation.md) |
 | Background helper execution catalogs | `python -m api.background_helpers` (list, models, inspect; no inference) | Cuttle `.cuttle/docs/model-providers.md` |
 | Experimental flags | `python -m api.experimental` (list, get, set, reset) | Cuttle `.cuttle/docs/experimental-features.md` |
 | Execution nodes (experimental `exec_nodes`; which machine runs a chat's agent) | `python -m api.exec_nodes` (list, show, set, node) | `feature/exec_nodes/docs/execution-nodes.md` (loaded while enabled) |

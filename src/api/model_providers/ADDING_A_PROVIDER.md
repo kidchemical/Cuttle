@@ -37,6 +37,10 @@ returning `SpeechResult(audio, mime, usage)` and `list_voices(manifest, model)`.
 The manifest's validated `speech` declaration owns fallback models/voices,
 default model, speed range, stability, and `fetch_voices`. Account discovery
 filters by operation while sharing a provider's full model snapshot.
+`image_generation` adds `generate_image(manifest, ImageGenerationRequest)`
+returning `ImageGenerationResult(image, mime, usage)`. The adapter returns
+image bytes and accounting data. `api.media_generate` handles file output and
+sharing.
 `audio_transcription` adds `transcribe(manifest, TranscriptionRequest)` and a
 manifest `transcription: {default_model, fallback_model?}`; the provider then
 appears under Settings → Voice → Speech to text with no further wiring.
@@ -45,7 +49,7 @@ appears under Settings → Voice → Speech to text with no further wiring.
 `structured_decision` adds `decide(manifest, DecisionRequest)` for Jev's native
 question API. Jev retains answer parsing and configuration policy. `check_key`
 uses an explicitly supplied credential for a read, without changing global env.
-Future image/video generation and embedding execution should add separate typed
+Future video generation and embedding execution should add separate typed
 request/result contracts and operation-specific methods here. Do not overload text with arbitrary keyword dictionaries or split shared
 credentials/discovery into separate modality registries.
 

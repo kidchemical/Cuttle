@@ -132,7 +132,12 @@ def get_adapter(provider_id: str) -> ProviderAdapter:
     methods = ["discovery_identity", "list_models"]
     if "text_generation" in manifest.operations:
         methods.extend(["complete_text", "generate_text"])
-    for operation, method in (("speech_generation", "synthesize_speech"), ("audio_transcription", "transcribe"), ("structured_decision", "decide")):
+    for operation, method in (
+        ("speech_generation", "synthesize_speech"),
+        ("image_generation", "generate_image"),
+        ("audio_transcription", "transcribe"),
+        ("structured_decision", "decide"),
+    ):
         if operation in manifest.operations:
             methods.append(method)
     if "speech_generation" in manifest.operations:
