@@ -39,6 +39,10 @@ def add_parser(sub):
                            help='mark item(s) as being worked on, comma-separated; repeatable')
             p.add_argument('--not-working', action='append', metavar='ITEM',
                            help='clear the in-progress mark, comma-separated; repeatable')
+            p.add_argument('--hide', action='append', metavar='ITEM',
+                           help='hide item(s) from the chat UI (still in get/context), comma-separated; repeatable')
+            p.add_argument('--unhide', action='append', metavar='ITEM',
+                           help='show previously hidden item(s) again, comma-separated; repeatable')
             p.add_argument('--description')
             p.add_argument('--title')
             p.add_argument('--status', choices=['active', 'archived'])
@@ -134,12 +138,18 @@ def run(args):
         not_working = _split(args.not_working)
         if not_working:
             ops['clear_in_progress'] = list(ops.get('clear_in_progress') or []) + not_working
+        hide = _split(args.hide)
+        if hide:
+            ops['set_hidden'] = list(ops.get('set_hidden') or []) + hide
+        unhide = _split(args.unhide)
+        if unhide:
+            ops['clear_hidden'] = list(ops.get('clear_hidden') or []) + unhide
         for key in ('description', 'title', 'status'):
             value = getattr(args, key)
             if value is not None:
                 ops[key] = value
         if not ops:
-            raise GizmoError('pass --ops, --set-done, --owner, --working or another patch option')
+            raise GizmoError('pass --ops, --set-done, --owner, --working, --hide or another patch option')
         return {'success': True, 'gizmo': tasks.patch(args.gizmo_id, ops, user_id=uid,
                                                      session_id=sid, actor=actor)}
     row = tasks.get(args.gizmo_id, user_id=uid)

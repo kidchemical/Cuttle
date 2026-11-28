@@ -123,6 +123,69 @@ def test_tasks_refresh_preserves_each_list_scroll_and_skips_unchanged_paint(widt
             browser.close()
 
 
+def test_tasks_hide_item_and_show_hidden_toggle():
+    """Eye control hides an item from the dock; Show hidden reveals it again."""
+    playwright = pytest.importorskip('playwright.sync_api')
+    row = {'id': 'plan', 'type': 'tasks', 'title': 'Plan', 'scope': 'session',
+           'status': 'active', 'edit_mode': 'agent', 'revision': 1,
+           'payload': {'items': [
+               {'id': 'a', 'text': 'Visible', 'done': False},
+               {'id': 'b', 'text': 'Secret', 'done': False, 'hidden': True},
+           ]}}
+    state = {'revision': 1, 'patches': [], 'rows': [row]}
+    fixture = '''<div id="chatWidgetsStrip" hidden></div>
+      <script src="/tasks.js"></script><script>
+      window.ctrl = CuttleTaskGizmos.create({getSessionId: () => 7, getProjectPath: () => ''});
+      ctrl.refresh();</script>'''
+    with playwright.sync_playwright() as driver:
+        browser = launch_chromium(driver)
+        page = browser.new_page()
+
+        def route(route):
+            path = urlparse(route.request.url).path
+            if path == '/fixture':
+                return route.fulfill(body=fixture, content_type='text/html')
+            if path == '/tasks.js':
+                return route.fulfill(body=SCRIPT.read_text(encoding='utf-8'), content_type='text/javascript')
+            if path == '/api/gizmos/tasks':
+                return route.fulfill(json={'success': True, 'gizmos': state['rows'],
+                                           'revision': state['revision']})
+            if '/items/' in path:
+                body = route.request.post_data_json
+                state['patches'].append(body)
+                iid = path.rsplit('/', 1)[-1]
+                for item in row['payload']['items']:
+                    if item['id'] == iid:
+                        if body.get('hidden') is True:
+                            item['hidden'] = True
+                        elif body.get('hidden') is False:
+                            item.pop('hidden', None)
+                state['revision'] += 1
+                return route.fulfill(json={'success': True, 'gizmo': row})
+            return route.abort()
+
+        page.route('**/*', route)
+        page.goto('http://tasks.test/fixture')
+        page.locator('[data-widget-toggle]').click()
+        assert page.locator('[data-item-id="a"]').count() == 1
+        assert page.locator('[data-item-id="b"]').count() == 0
+        playwright.expect(page.locator('[data-widget-show-hidden]')).to_have_text('Show hidden (1)')
+        page.locator('[data-item-id="a"] [data-item-hide]').click()
+        page.wait_for_function(
+            '() => document.querySelectorAll("[data-item-id=\\"a\\"]").length === 0')
+        assert state['patches'] == [{'hidden': True, 'session_id': '7'}]
+        playwright.expect(page.locator('[data-widget-show-hidden]')).to_have_text('Show hidden (2)')
+        page.locator('[data-widget-show-hidden]').click()
+        assert page.locator('[data-item-id="a"]').count() == 1
+        assert page.locator('[data-item-id="b"]').count() == 1
+        page.locator('[data-item-id="b"] [data-item-hide]').click()
+        page.wait_for_function(
+            '() => document.querySelector("[data-item-id=\\"b\\"] [data-item-hide]")'
+            + '.getAttribute("aria-pressed") === "false"')
+        assert state['patches'][-1] == {'hidden': False, 'session_id': '7'}
+        browser.close()
+
+
 def test_linked_lists_say_linked_and_open_the_tasks_app():
     """A list linked into this chat is labeled Linked; its scope chip and ↗ open
     the Tasks App instead of moving another chat's list here."""

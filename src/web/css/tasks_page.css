@@ -126,6 +126,14 @@ body.compact-shell-page .orch-page textarea.tasks-text[readonly] { cursor: defau
     background: transparent; color: var(--orch-muted); font-weight: 550;
 }
 .orch-page button.tasks-add:hover:not(:disabled) { color: var(--orch-text); border-color: var(--orch-accent); background: color-mix(in srgb, var(--orch-accent) 7%, transparent); }
+.tasks-item.is-hidden-item > .tasks-row textarea.tasks-text { opacity: .72; }
+.orch-page .tasks-row-actions .tasks-hide-btn.is-on { color: var(--orch-text); opacity: 1; }
+.orch-page button.tasks-show-hidden {
+    display: inline-block; margin: 8px 0 0 4px; padding: 0; border: 0; background: transparent;
+    color: var(--orch-muted); font: inherit; font-size: 12px; cursor: pointer;
+    text-decoration: underline; text-underline-offset: 2px;
+}
+.orch-page button.tasks-show-hidden:hover { color: var(--orch-text); }
 
 /* ── Segmented control / chips / chat rows ───────────────────────── */
 .tasks-seg { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--orch-border); border-radius: 9px; background: var(--orch-subtle); }

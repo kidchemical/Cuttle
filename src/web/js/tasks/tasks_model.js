@@ -20,21 +20,39 @@
     function clone(value) { return JSON.parse(JSON.stringify(value == null ? null : value)); }
 
     function normalizeItems(items) {
-        return (Array.isArray(items) ? items : []).filter((n) => n && typeof n === 'object').map((n) => ({
-            id: String(n.id || ''),
-            text: String(n.text == null ? '' : n.text),
-            done: !!n.done,
-            children: normalizeItems(n.children),
-        }));
+        return (Array.isArray(items) ? items : []).filter((n) => n && typeof n === 'object').map((n) => {
+            const out = {
+                id: String(n.id || ''),
+                text: String(n.text == null ? '' : n.text),
+                done: !!n.done,
+                children: normalizeItems(n.children),
+            };
+            if (n.hidden === true) out.hidden = true;
+            return out;
+        });
     }
 
     function count(items) {
         let done = 0;
         let total = 0;
+        let hidden = 0;
         (function walk(nodes) {
-            (nodes || []).forEach((n) => { total += 1; if (n.done) done += 1; walk(n.children); });
+            (nodes || []).forEach((n) => {
+                total += 1;
+                if (n.done) done += 1;
+                if (n.hidden === true) hidden += 1;
+                walk(n.children);
+            });
         })(items);
-        return { done, total, pct: total ? Math.round((done / total) * 100) : 0 };
+        return { done, total, hidden, pct: total ? Math.round((done / total) * 100) : 0 };
+    }
+
+    function setHidden(items, id, hidden) {
+        const at = locate(items, id);
+        if (!at) return false;
+        if (hidden) at.node.hidden = true;
+        else delete at.node.hidden;
+        return true;
     }
 
     function allIds(items, out) {
@@ -314,7 +332,7 @@
 
     const api = {
         MAX_DEPTH, esc, clone, normalizeItems, count, newId, locate, addItem, removeItem, setText,
-        setDone, move, indent, outdent, prune, sameItems, items, parseTime, relativeTime, projectName,
+        setDone, setHidden, move, indent, outdent, prune, sameItems, items, parseTime, relativeTime, projectName,
         reachLabel, reachChats, chatsInProject, filterLists, statusCounts, actorLabel, describeChange,
         historyEntries, RELATION_LABELS,
     };

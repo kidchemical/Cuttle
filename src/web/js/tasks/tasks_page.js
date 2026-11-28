@@ -28,7 +28,7 @@
         status: 'active', query: '',
         selected: '', mode: '', tab: 'tasks',
         base: null, draft: null,
-        hideDone: false, conflict: false, remote: false, busy: false,
+        hideDone: false, showHidden: false, conflict: false, remote: false, busy: false,
         history: null, historyReads: false, related: null,
         focusId: '',
     };
@@ -147,16 +147,25 @@
 
     function itemHtml(n, depth, canEdit, siblingCount, index) {
         if (state.hideDone && n.done && state.mode === 'edit') return '';
+        if (n.hidden === true && !state.showHidden && state.mode === 'edit') return '';
         const kids = (n.children || []).map((k, i) => itemHtml(k, depth + 1, canEdit, n.children.length, i)).join('');
+        const hideLabel = n.hidden ? 'Show task' : 'Hide task';
+        const eye = n.hidden
+            ? '<svg viewBox="0 0 20 20" width="12" height="12" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M2.5 10s2.8-5 7.5-5 7.5 5 7.5 5-2.8 5-7.5 5-7.5-5-7.5-5z"/><circle fill="none" stroke="currentColor" stroke-width="1.5" cx="10" cy="10" r="2.2"/><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M3.5 3.5l13 13"/></svg>'
+            : '<svg viewBox="0 0 20 20" width="12" height="12" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M2.5 10s2.8-5 7.5-5 7.5 5 7.5 5-2.8 5-7.5 5-7.5-5-7.5-5z"/><circle fill="none" stroke="currentColor" stroke-width="1.5" cx="10" cy="10" r="2.2"/></svg>';
+        const hideBtn = state.mode === 'edit'
+            ? `<button type="button" class="orch-icon-btn tasks-hide-btn${n.hidden ? ' is-on' : ''}" data-act="hide" title="${hideLabel}" aria-label="${hideLabel}" aria-pressed="${n.hidden ? 'true' : 'false'}">${eye}</button>`
+            : '';
         const actions = canEdit ? `<span class="tasks-row-actions">
+                ${hideBtn}
                 <button type="button" class="orch-icon-btn" data-act="up" title="Move up (Alt+↑)" aria-label="Move up" ${index === 0 ? 'disabled' : ''}>↑</button>
                 <button type="button" class="orch-icon-btn" data-act="down" title="Move down (Alt+↓)" aria-label="Move down" ${index >= siblingCount - 1 ? 'disabled' : ''}>↓</button>
                 <button type="button" class="orch-icon-btn" data-act="outdent" title="Outdent (Shift+Tab)" aria-label="Outdent" ${depth === 0 ? 'disabled' : ''}>⇤</button>
                 <button type="button" class="orch-icon-btn" data-act="indent" title="Make sub-task (Tab)" aria-label="Indent" ${index === 0 ? 'disabled' : ''}>⇥</button>
                 <button type="button" class="orch-icon-btn" data-act="sub" title="Add sub-task" aria-label="Add sub-task">＋</button>
                 <button type="button" class="orch-icon-btn is-danger" data-act="remove" title="Delete task" aria-label="Delete task">✕</button>
-            </span>` : '';
-        return `<li class="tasks-item${n.done ? ' is-done' : ''}" data-id="${M.esc(n.id)}">
+            </span>` : (hideBtn ? `<span class="tasks-row-actions">${hideBtn}</span>` : '');
+        return `<li class="tasks-item${n.done ? ' is-done' : ''}${n.hidden ? ' is-hidden-item' : ''}" data-id="${M.esc(n.id)}">
             <div class="tasks-row">
                 <label class="tasks-check"><input type="checkbox" data-act="toggle" ${n.done ? 'checked' : ''} ${canEdit ? '' : 'disabled'} aria-label="Done"><span aria-hidden="true"></span></label>
                 <textarea class="tasks-text" rows="1" maxlength="4000" data-item="${M.esc(n.id)}" placeholder="Describe the task" ${canEdit ? '' : 'readonly tabindex="-1"'} aria-label="Task">${M.esc(n.text)}</textarea>
@@ -170,11 +179,18 @@
         const items = state.draft.items;
         const canEdit = editable();
         const rows = items.map((n, i) => itemHtml(n, 0, canEdit, items.length, i)).join('');
-        const hidden = state.hideDone && state.mode === 'edit' && M.count(items).done;
+        const counts = M.count(items);
+        const hiddenDone = state.hideDone && state.mode === 'edit' && counts.done;
+        const hiddenItems = state.mode === 'edit' && counts.hidden && !state.showHidden;
         const empty = !items.length
             ? `<li class="tasks-empty-row">${canEdit ? 'No tasks yet.' : 'This list is empty.'}</li>`
-            : (!rows && hidden ? '<li class="tasks-empty-row">Every task is done. Turn off “Hide completed” to see them.</li>' : '');
+            : (!rows && hiddenDone ? '<li class="tasks-empty-row">Every task is done. Turn off “Hide completed” to see them.</li>'
+                : (!rows && hiddenItems ? '<li class="tasks-empty-row">Hidden tasks are tucked away. Use “Show hidden” to restore them.</li>' : ''));
+        const showHiddenToggle = state.mode === 'edit' && counts.hidden
+            ? `<button type="button" class="tasks-show-hidden" data-act="show-hidden" aria-pressed="${state.showHidden ? 'true' : 'false'}">${state.showHidden ? 'Hide hidden' : 'Show hidden'} (${counts.hidden})</button>`
+            : '';
         return `<ul class="tasks-tree" id="tasksTree">${rows}${empty}</ul>
+            ${showHiddenToggle}
             ${canEdit ? '<button type="button" class="tasks-add" data-act="add"><span aria-hidden="true">＋</span> Add task</button>' : ''}`;
     }
 
@@ -476,6 +492,7 @@
             state.tab = opts.tab || 'tasks';
             state.history = null;
             state.related = null;
+            state.showHidden = false;
         }
         renderList();
         renderEditor();
@@ -679,6 +696,36 @@
         if (Object.keys(ops).length) patchNow(ops).then((row) => { if (!row) load({ force: true }); });
     }
 
+    /** Hide/unhide: allowed on agent-managed lists; keeps items for agents/context. */
+    function toggleHidden(itemId) {
+        const at = M.locate(state.draft.items, itemId);
+        if (!at) return;
+        const wantHidden = at.node.hidden !== true;
+        if (state.mode === 'new' || itemsDirty()) {
+            M.setHidden(state.draft.items, itemId, wantHidden);
+            if (!wantHidden) state.showHidden = true;
+            renderTree();
+            return;
+        }
+        M.setHidden(state.draft.items, itemId, wantHidden);
+        M.setHidden(state.base.items, itemId, wantHidden);
+        if (!wantHidden) state.showHidden = true;
+        renderTree();
+        const sid = state.draft.session_id || (find(state.selected) || {}).session_id;
+        call(`/api/gizmos/tasks/${encodeURIComponent(state.selected)}/items/${encodeURIComponent(itemId)}`,
+            'PATCH', { hidden: wantHidden, session_id: sid })
+            .then((data) => {
+                if (data && data.gizmo) {
+                    const idx = state.lists.findIndex((x) => x.id === state.selected);
+                    if (idx >= 0) state.lists[idx] = data.gizmo;
+                    state.draft.items = M.items(data.gizmo);
+                    state.base.items = M.clone(state.draft.items);
+                    renderTree();
+                }
+            })
+            .catch((err) => { toast(err.message, 'error'); load({ force: true }); });
+    }
+
     // ── Loading + live refresh ──────────────────────────────────────────
 
     async function load(opts) {
@@ -793,6 +840,8 @@
         const id = itemIdOf(btn);
         const items = state.draft.items;
         if (act === 'add') { const created = M.addItem(items, {}); state.focusId = created; renderTree(); return true; }
+        if (act === 'show-hidden') { state.showHidden = !state.showHidden; renderTree(); return true; }
+        if (act === 'hide' && id) { toggleHidden(id); return true; }
         if (!id) return false;
         if (act === 'up' || act === 'down') structural((xs) => M.move(xs, id, act === 'up' ? -1 : 1), id);
         else if (act === 'indent') structural((xs) => M.indent(xs, id), id);

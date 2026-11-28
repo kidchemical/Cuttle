@@ -40,6 +40,7 @@ PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --workin
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --set-done api --working test
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --ops '{"add":[{"item":{"id":"docs","text":"Update the auth docs","label":"Docs"}}],"description":"Validation remains"}'
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --label api="Token refresh"
+PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --hide api --unhide test
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks get auth-refactor
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks history auth-refactor
 PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --link CH-900006,CH-900007 --unlink CH-900005
@@ -56,7 +57,15 @@ to the same project. `--edit-mode shared` lets users toggle items; default
 Completing every item auto-archives; undoing an item or adding open work reopens
 the list. `--status archived` manually archives. Patch supports `set_done`,
 `set_undone`, `set_text`, `set_label`, `add`, `remove`, `items`, `description`, `title`,
-`scope`, and `edit_mode`; scope changes require `--session`.
+`scope`, `edit_mode`, `set_hidden`, and `clear_hidden`; scope changes require `--session`.
+
+**Hide items from the chat UI.** `--hide <item>` / `--unhide <item>` (ops
+`set_hidden` / `clear_hidden`) mark an item so the Tasks panel and work checklist
+omit it; `tasks get` and the agent context digest still include it. Checking an
+item done never hides it — hiding is strictly opt-in. The user can also toggle
+visibility with the eye control in the Tasks dock / Tasks App (works on
+agent-managed lists too). When a list has hidden items, the panel shows
+`Show hidden (N)`.
 
 **Linked chats.** Besides its home chat (or project), a list can be linked to
 specific chats: `--link CH-…` on `create`/`patch` (repeatable or comma-separated),
@@ -84,7 +93,9 @@ Authenticated REST (each caller can access only their own tasks/chats):
 - `GET|PATCH|DELETE /api/gizmos/tasks/<id>` → `{success, gizmo}`; PATCH accepts task ops, `session_id`, and
   `expected_revision` (409 `conflict` when the list changed since it was read); `?summary=1` adds chat names
 - `GET /api/gizmos/tasks/<id>/related` → orchestration-family chats (sub-agent parent/children, supervisors)
-- `PATCH /api/gizmos/tasks/<id>/items/<item_id>` `{done: true, session_id}` (shared lists)
+- `PATCH /api/gizmos/tasks/<id>/items/<item_id>` `{done: true, session_id}` (shared lists);
+  `{hidden: true|false, session_id}` toggles visibility on any list the user owns
+  (including agent-managed)
 - `GET /api/gizmos/tasks/<id>/history?limit=100` → `{success, events}`
 
 ### Owners and work in progress
@@ -102,9 +113,10 @@ PYTHONPATH=src .venv/bin/python -m api.gizmos tasks patch auth-refactor --not-wo
 ```
 
 Patch ops: `set_owner {item: owner|null}`, `set_in_progress [ids]`,
-`clear_in_progress [ids]`; `set_done` clears `in_progress`. The item route
-`PATCH /api/gizmos/tasks/<id>/items/<item>` accepts `owner` and `in_progress`
-(`done` stays required unless one of them is sent). A sub-agent spawned with
+`clear_in_progress [ids]`, `set_hidden [ids]`, `clear_hidden [ids]`; `set_done`
+clears `in_progress` but leaves `hidden` alone. The item route
+`PATCH /api/gizmos/tasks/<id>/items/<item>` accepts `owner`, `in_progress` and
+`hidden` (`done` stays required unless one of them is sent). A sub-agent spawned with
 `"task":"<gizmo>:<item>"` sets that item's owner and in-progress flag (see
 `subagents.md`). `origin_turn_id` records the chat turn that created the list;
 it is read-only.
